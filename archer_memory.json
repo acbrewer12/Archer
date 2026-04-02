@@ -147,6 +147,32 @@
       "road": "unknown",
       "ethanol": 82,
       "weather": "62F partly cloudy"
+    },
+    {
+      "date": "April 02 2026",
+      "time": "05:31 AM",
+      "duration": 3,
+      "peak_rpm": 750,
+      "peak_boost": 0,
+      "best_060": null,
+      "hard_events": 0,
+      "quality": 100,
+      "road": "unknown",
+      "ethanol": 82,
+      "weather": "62F partly cloudy"
+    },
+    {
+      "date": "April 02 2026",
+      "time": "05:47 AM",
+      "duration": 1,
+      "peak_rpm": 750,
+      "peak_boost": 0,
+      "best_060": null,
+      "hard_events": 0,
+      "quality": 100,
+      "road": "unknown",
+      "ethanol": 82,
+      "weather": "63F partly cloudy"
     }
   ],
   "trusted_devices": {},
