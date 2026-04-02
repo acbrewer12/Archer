@@ -1,0 +1,37 @@
+{
+  "name": "Archer AI",
+  "forwardPorts": [5001, 5002, 5003, 5004, 5005, 7681],
+  "portsAttributes": {
+    "5001": {
+      "label": "Archer Main",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "5002": {
+      "label": "Archer Ayden T1",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "5003": {
+      "label": "Archer Passenger T2",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "5004": {
+      "label": "Archer Family T3",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "5005": {
+      "label": "Archer Valet T4",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    },
+    "7681": {
+      "label": "Archer Terminal",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  },
+  "postStartCommand": "pip install flask edge-tts SpeechRecognition ollamafreeapi --break-system-packages -q"
+}
