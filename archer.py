@@ -254,6 +254,18 @@ def save_state():
         'fuel_range':        fuel_tank['range_est'],
         'fuel_gal':          fuel_tank['current_gal'],
         'remote_start':      remote_start['status'],
+        'radar_band':        radar_detector['band'],
+        'radar_strength':    radar_detector['strength'],
+        'radar_alert':       radar_detector['alert_level'],
+        'radar_direction':   radar_detector['direction'],
+        'rival':             rivalry.get('rival',''),
+        'passenger_mode':    passenger_mode['active'],
+        'trailer_connected': trailer['connected'],
+        'fuel_range':        fuel_tank['range_est'],
+        'fuel_gal':          round(fuel_tank['current_gal'],1),
+        'record_best_et':    record_wall['best_et'],
+        'record_best_060':   record_wall['best_060'],
+        'record_top_speed':  record_wall['highest_speed'],
         'parking_mode':      parking_mode,
         'audio_system':      audio_system,
         'location_data':     location_data,
@@ -789,6 +801,14 @@ def get_mood():
     else:                                        return 'chill'
 
 # ── WEATHER MONITOR ──────────────────────
+def curfew_monitor():
+    while True:
+        check_curfew()
+        limit_msg = check_speed_limit()
+        if limit_msg:
+            speak(limit_msg)
+        time.sleep(30)
+
 def weather_monitor():
     time.sleep(15)
     while True:
@@ -1472,7 +1492,7 @@ sensor_data = {
 def update_sensors_from_truck():
     sensor_data['rpm']          = truck_state['rpm']
     sensor_data['boost_psi']    = truck_state['boost']
-    sensor_data['coolant_temp'] = truck_state['coolant']
+    sensor_data['coolant_temp'] = truck_state['coolant_temp']
     sensor_data['oil_temp']     = truck_state['oil_temp']
     sensor_data['battery_v']    = truck_state['battery_main']
     sensor_data['throttle_pct'] = min(100, int(truck_state['rpm'] / 65))
@@ -2343,6 +2363,562 @@ def tune_recommendation():
         recs.append('Conditions are favorable. No tune changes needed.')
 
     return ' '.join(recs)
+
+
+# ══════════════════════════════════════════
+# POLICE RADAR DETECTOR INTEGRATION
+# ══════════════════════════════════════════
+radar_detector = {
+    'enabled':      True,
+    'band':         None,       # X, K, Ka, Laser, MRCD, POP
+    'strength':     0,          # 1-5 bars
+    'alert_level':  'clear',    # clear, weak, moderate, strong, laser
+    'direction':    'unknown',  # front, rear, side
+    'last_alert':   None,
+    'alert_log':    [],
+    'muted':        False,
+    'city_mode':    False,      # reduces false positives in city
+    'highway_mode': True,
+    'known_alerts': [],         # confirmed radar locations
+    'false_alerts': [],         # marked as false positives
+    'alert_count_session': 0,
+}
+
+RADAR_BANDS = {
+    'X':    {'freq': '10.5 GHz', 'range': 'medium', 'common': 'older speed signs, some police'},
+    'K':    {'freq': '24.1 GHz', 'range': 'medium', 'common': 'most common police radar'},
+    'Ka':   {'freq': '33-36 GHz','range': 'long',   'common': 'most modern police radar'},
+    'Laser':{'freq': 'laser',    'range': 'precise', 'common': 'LIDAR — point and shoot'},
+    'MRCD': {'freq': '24.1 GHz', 'range': 'short',  'common': 'photo radar — sneaky'},
+    'POP':  {'freq': 'K/Ka',     'range': 'instant', 'common': 'instant-on Ka — hardest to detect'},
+}
+
+def radar_alert(band, strength, direction='front'):
+    if radar_detector['muted']:
+        return
+    radar_detector['band']        = band
+    radar_detector['strength']    = strength
+    radar_detector['direction']   = direction
+    radar_detector['last_alert']  = datetime.now().strftime('%I:%M %p')
+    radar_detector['alert_count_session'] += 1
+
+    entry = {
+        'band':      band,
+        'strength':  strength,
+        'direction': direction,
+        'time':      datetime.now().strftime('%I:%M %p'),
+        'road':      road_memory[current_road]['name'] if current_road else 'unknown',
+        'speed':     sensor_data.get('speed_mph', 0),
+    }
+    radar_detector['alert_log'].append(entry)
+    if len(radar_detector['alert_log']) > 200:
+        radar_detector['alert_log'].pop(0)
+
+    level_map = {1: 'weak', 2: 'moderate', 3: 'moderate', 4: 'strong', 5: 'strong'}
+    radar_detector['alert_level'] = 'laser' if band == 'Laser' else level_map.get(strength, 'weak')
+
+    # Speak alert based on severity
+    if band == 'Laser':
+        speak(f'Laser. {direction}. Slow down now.')
+    elif band == 'POP':
+        speak(f'POP radar. Instant on. {direction}.')
+    elif strength >= 4:
+        speak(f'{band} band. Strong. {direction}.')
+    elif strength >= 2:
+        speak(f'{band} band. {direction}.')
+    else:
+        speak(f'{band} weak.')
+
+def radar_clear():
+    radar_detector['band']        = None
+    radar_detector['strength']    = 0
+    radar_detector['alert_level'] = 'clear'
+    radar_detector['direction']   = 'unknown'
+
+def mark_false_alert():
+    if radar_detector['last_alert']:
+        radar_detector['false_alerts'].append({
+            'road': road_memory[current_road]['name'] if current_road else 'unknown',
+            'time': radar_detector['last_alert'],
+        })
+        return 'Marked as false alert. Learning your area.'
+    return 'No recent alert to mark.'
+
+def mark_confirmed_alert():
+    if radar_detector['band']:
+        radar_detector['known_alerts'].append({
+            'band':  radar_detector['band'],
+            'road':  road_memory[current_road]['name'] if current_road else 'unknown',
+            'time':  datetime.now().strftime('%I:%M %p'),
+        })
+        save_state()
+        return f'Location saved. {radar_detector["band"]} confirmed at this spot.'
+    return 'No active alert to confirm.'
+
+def check_known_radar_spots():
+    current = road_memory[current_road]['name'] if current_road else ''
+    spots   = [s for s in radar_detector['known_alerts'] if s.get('road') == current]
+    if spots:
+        bands = list(set(s['band'] for s in spots))
+        return f'Heads up. Known radar on {current}. {", ".join(bands)} band{"s" if len(bands)>1 else ""}.'
+    return None
+
+def show_radar_log():
+    log = radar_detector['alert_log']
+    if not log:
+        return 'No radar alerts this session.'
+    print('\n── RADAR ALERT LOG ──────────────────────')
+    for e in log[-15:]:
+        print(f'  [{e["time"]}] {e["band"]} — {e["strength"]} bars — {e["direction"]} — {e["road"]}')
+    print(f'\n  Session total: {radar_detector["alert_count_session"]} alerts')
+    print('─────────────────────────────────────────\n')
+    return f'{radar_detector["alert_count_session"]} radar alerts this session.'
+
+# ══════════════════════════════════════════
+# SPEED TRAP / HAZARD MEMORY
+# ══════════════════════════════════════════
+hazard_map = {
+    'speed_traps':   [],    # {road, location_desc, band, confirmed, times_seen}
+    'potholes':      [],    # {road, location_desc, severity, date}
+    'cameras':       [],    # {road, location_desc, type}
+    'low_clearance': [],    # {road, location_desc, height_ft}
+    'dangerous':     [],    # {road, location_desc, reason}
+    'construction':  [],    # {road, location_desc, active}
+}
+
+def add_hazard(htype, location_desc, **kwargs):
+    road = road_memory[current_road]['name'] if current_road else 'unknown'
+    entry = {
+        'road':         road,
+        'location_desc': location_desc,
+        'date':         datetime.now().strftime('%B %d %Y'),
+        **kwargs
+    }
+    hazard_map[htype].append(entry)
+    save_state()
+    return f'{htype.replace("_"," ").title()} logged on {road}. {location_desc}.'
+
+def check_hazards_on_road(road_name):
+    alerts = []
+    for htype, entries in hazard_map.items():
+        matches = [e for e in entries if road_name.lower() in e.get('road','').lower()]
+        for m in matches:
+            alerts.append(f'{htype.replace("_"," ")}: {m["location_desc"]}')
+    return alerts
+
+# ══════════════════════════════════════════
+# SPEED LIMITER BY PROFILE
+# ══════════════════════════════════════════
+speed_limits = {
+    'ayden':     None,      # no limit
+    'girlfriend': 85,
+    'family':    70,
+    'valet':     40,
+}
+
+def check_speed_limit():
+    profile_key = current_profile
+    limit = speed_limits.get(profile_key)
+    if limit and sensor_data.get('speed_mph', 0) > limit:
+        return f'Speed limit for this profile is {limit} MPH. Ease up.'
+    return None
+
+# ══════════════════════════════════════════
+# CURFEW MODE
+# ══════════════════════════════════════════
+curfew = {
+    'enabled':    False,
+    'hour':       24,       # midnight default
+    'warned':     False,
+    'override':   False,
+}
+
+def check_curfew():
+    if not curfew['enabled'] or curfew['override']:
+        return
+    hour = datetime.now().hour
+    if hour >= curfew['hour'] and not curfew['warned']:
+        curfew['warned'] = True
+        speak(f'It is past {curfew["hour"]}. Head home.')
+
+def set_curfew(hour):
+    curfew['enabled'] = True
+    curfew['hour']    = int(hour)
+    curfew['warned']  = False
+    save_state()
+    return f'Curfew set for {hour}:00.'
+
+# ══════════════════════════════════════════
+# 60-0 BRAKE TEST
+# ══════════════════════════════════════════
+brake_test = {
+    'active':        False,
+    'start_speed':   60,
+    'start_time':    None,
+    'stop_time':     None,
+    'distance_ft':   None,
+    'best_distance': None,
+    'runs':          [],
+}
+
+def start_brake_test():
+    brake_test['active']     = True
+    brake_test['start_time'] = time.time()
+    speak('Brake test started. Sixty MPH then stop.')
+    return None
+
+def _check_brake_test():
+    if brake_test['active'] and brake_test['start_time']:
+        elapsed = time.time() - brake_test['start_time']
+        speed   = sensor_data.get('speed_mph', 60)
+        if speed <= 2 and elapsed > 1:
+            brake_test['active']    = False
+            brake_test['stop_time'] = time.time()
+            # Estimate distance from time (rough: 60mph stop ~120ft)
+            dist = round(elapsed * 18)
+            brake_test['distance_ft'] = dist
+            run = {'distance_ft': dist, 'time_s': round(elapsed,2), 'date': datetime.now().strftime('%B %d %Y')}
+            brake_test['runs'].append(run)
+            if brake_test['best_distance'] is None or dist < brake_test['best_distance']:
+                brake_test['best_distance'] = dist
+                speak(f'New best stop. {dist} feet.')
+            else:
+                speak(f'Stopped in {dist} feet.')
+
+# ══════════════════════════════════════════
+# CONSISTENT ET PREDICTOR
+# ══════════════════════════════════════════
+def predict_et():
+    temp   = weather['temp']
+    humid  = weather.get('humidity', 50)
+    eth    = truck_state['ethanol']
+    boost  = truck_state['boost']
+
+    # Base ET for LSA-swapped Sierra (~12.8 stock tune)
+    base_et = 12.8
+
+    # Temperature correction — colder is faster
+    temp_factor = (temp - 60) * 0.007
+    base_et += temp_factor
+
+    # Ethanol boost
+    eth_factor = -((eth - 50) / 100) * 0.4
+    base_et += eth_factor
+
+    # Boost level
+    boost_factor = -(boost / 15) * 0.3
+    base_et += boost_factor
+
+    # Humidity penalty
+    humid_factor = (humid - 50) / 100 * 0.1
+    base_et += humid_factor
+
+    predicted = round(base_et, 2)
+    return f'Predicted ET today: {predicted} seconds. Based on {temp}F, E{eth}, {boost} PSI boost.'
+
+# ══════════════════════════════════════════
+# PERSONAL RECORD WALL
+# ══════════════════════════════════════════
+record_wall = {
+    'best_et':           None,
+    'best_et_date':      None,
+    'best_060':          None,
+    'best_060_date':     None,
+    'best_60ft':         None,
+    'best_60ft_date':    None,
+    'best_trap_mph':     None,
+    'best_trap_date':    None,
+    'best_60_0':         None,
+    'best_60_0_date':    None,
+    'highest_boost':     None,
+    'highest_rpm':       None,
+    'highest_speed':     None,
+    'total_runs':        0,
+    'total_miles':       0,
+}
+
+def update_record(key, value, date=None):
+    date = date or datetime.now().strftime('%B %d %Y')
+    current = record_wall.get(key)
+    if current is None or value < current:
+        record_wall[key]              = value
+        record_wall[key + '_date']    = date
+        save_state()
+        return True
+    return False
+
+def show_records():
+    print('\n── PERSONAL RECORD WALL ─────────────────')
+    records = [
+        ('Best ET',       record_wall['best_et'],       record_wall['best_et_date'],       's'),
+        ('Best 0-60',     record_wall['best_060'],      record_wall['best_060_date'],      's'),
+        ('Best 60ft',     record_wall['best_60ft'],     record_wall['best_60ft_date'],     's'),
+        ('Trap Speed',    record_wall['best_trap_mph'], record_wall['best_trap_date'],     'MPH'),
+        ('Best 60-0',     record_wall['best_60_0'],     record_wall['best_60_0_date'],     'ft'),
+        ('Highest Boost', record_wall['highest_boost'], None,                               'PSI'),
+        ('Highest RPM',   record_wall['highest_rpm'],   None,                               'RPM'),
+        ('Top Speed',     record_wall['highest_speed'], None,                               'MPH'),
+    ]
+    for name, val, date, unit in records:
+        if val is not None:
+            d = f' — {date}' if date else ''
+            print(f'  {name:<14} {val} {unit}{d}')
+        else:
+            print(f'  {name:<14} --')
+    print(f'\n  Total runs: {record_wall["total_runs"]}')
+    print('─────────────────────────────────────────\n')
+    if record_wall['best_et']:
+        return f'Best ET {record_wall["best_et"]}s. Best 0-60 {record_wall["best_060"]}s. Top speed {record_wall["highest_speed"]} MPH.'
+    return 'No records set yet. Time to make some runs.'
+
+# ══════════════════════════════════════════
+# TRAILER / TOW MODE
+# ══════════════════════════════════════════
+trailer = {
+    'connected':      False,
+    'est_weight_lbs': 0,
+    'type':           '',       # flatbed, enclosed, boat, dump
+    'brake_gain':     5,        # 1-10
+    'sway_detected':  False,
+    'tow_rating_lbs': 13000,    # Sierra 2500HD rating
+    'tongue_weight':  0,
+}
+
+def connect_trailer(ttype='', weight=0):
+    trailer['connected']      = True
+    trailer['type']           = ttype or 'trailer'
+    trailer['est_weight_lbs'] = int(weight)
+    # Switch to tow tune
+    set_air_height('tow')
+    truck_state['exhaust'] = 15
+    save_state()
+    msg = f'Trailer connected. {ttype}. {weight} lbs estimated.'
+    if int(weight) > trailer['tow_rating_lbs']:
+        msg += f' WARNING — over tow rating of {trailer["tow_rating_lbs"]} lbs.'
+    return msg
+
+def disconnect_trailer():
+    trailer['connected']      = False
+    trailer['est_weight_lbs'] = 0
+    set_air_height('drive')
+    save_state()
+    return 'Trailer disconnected. Returning to drive height.'
+
+# ══════════════════════════════════════════
+# MILEAGE / TAX LOG
+# ══════════════════════════════════════════
+mileage_log = {
+    'trips':          [],
+    'total_miles':    0,
+    'business_miles': 0,
+    'personal_miles': 0,
+    'year':           datetime.now().year,
+}
+
+def log_mileage_trip(start, end, purpose='personal', notes=''):
+    miles = abs(end - start)
+    entry = {
+        'start':   start,
+        'end':     end,
+        'miles':   miles,
+        'purpose': purpose,
+        'date':    datetime.now().strftime('%B %d %Y'),
+        'notes':   notes,
+    }
+    mileage_log['trips'].append(entry)
+    mileage_log['total_miles']    += miles
+    if purpose == 'business':
+        mileage_log['business_miles'] += miles
+    else:
+        mileage_log['personal_miles'] += miles
+    save_state()
+    return f'Trip logged. {miles} miles. {purpose}.'
+
+def mileage_summary():
+    irs_rate = 0.67  # 2024 IRS rate per mile
+    deduction = mileage_log['business_miles'] * irs_rate
+    return (f'Total: {mileage_log["total_miles"]} miles. '
+            f'Business: {mileage_log["business_miles"]} miles. '
+            f'Est deduction: ${deduction:.2f}.')
+
+# ══════════════════════════════════════════
+# RIVALRY MODE
+# ══════════════════════════════════════════
+rivalry = {
+    'rival':          '',
+    'rival_et':       None,
+    'rival_mph':      None,
+    'sessions':       [],
+    'wins':           0,
+    'losses':         0,
+    'active':         False,
+}
+
+def set_rival(name, et=None, mph=None):
+    rivalry['rival']    = name
+    rivalry['rival_et'] = et
+    rivalry['rival_mph']= mph
+    rivalry['active']   = True
+    save_state()
+    if et:
+        return f'Rival set: {name}. Their ET is {et}. We will beat it.'
+    return f'Rival set: {name}. Time to chase them down.'
+
+def check_rival_result(our_et):
+    if not rivalry['rival'] or not rivalry['rival_et']:
+        return None
+    if our_et < rivalry['rival_et']:
+        rivalry['wins'] += 1
+        save_state()
+        return f'You beat {rivalry["rival"]}. Their ET was {rivalry["rival_et"]}. You ran {our_et}.'
+    else:
+        rivalry['losses'] += 1
+        save_state()
+        diff = round(our_et - rivalry['rival_et'], 3)
+        return f'Still chasing {rivalry["rival"]} by {diff} seconds. Keep working.'
+
+# ══════════════════════════════════════════
+# SARCASM / MOOD PERSONALITY ENGINE
+# ══════════════════════════════════════════
+archer_mood = {
+    'mode':           'normal',   # normal, sarcastic, focused, chill, hype
+    'repeat_count':   {},         # track repeated questions
+    'last_commands':  [],
+    'aggressive_pct': 0,          # % of drive that was aggressive
+}
+
+def get_sarcasm_level(command):
+    cmd = command.lower()
+    count = archer_mood['repeat_count'].get(cmd, 0) + 1
+    archer_mood['repeat_count'][cmd] = count
+    return count
+
+def should_be_sarcastic(command):
+    level = get_sarcasm_level(command)
+    return level >= 3 and archer_mood['mode'] in ['normal', 'sarcastic']
+
+SARCASTIC_RESPONSES = {
+    'weather':    ['Still {temp}F. Still {condition}. Has not changed in the last 30 seconds.', 'Same weather. Still {temp}F.'],
+    'rpm':        ['Still {rpm}. You have asked {count} times.', 'RPM has not changed. Still {rpm}.'],
+    'boost':      ['Boost is {boost}. Same as before.', 'Still {boost} PSI. Are you watching the display?'],
+    'default':    ['Asked and answered.', 'Same answer as last time.', 'You sure you do not have the display open?'],
+}
+
+# ══════════════════════════════════════════
+# PASSENGER / GIRLFRIEND MODE
+# ══════════════════════════════════════════
+passenger_mode = {
+    'active':         False,
+    'name':           'Girlfriend',
+    'preferences':    {
+        'music':      True,
+        'temp':       72,
+        'no_exhaust': True,
+        'no_shows':   False,
+    }
+}
+
+def activate_passenger_mode(name=''):
+    passenger_mode['active'] = True
+    passenger_mode['name']   = name or 'Girlfriend'
+    # Auto adjust comfort settings
+    truck_state['exhaust']   = 0 if passenger_mode['preferences']['no_exhaust'] else truck_state['exhaust']
+    truck_state['heat_on']   = True
+    truck_state['temp_setting'] = passenger_mode['preferences']['temp']
+    save_state()
+    return f'Passenger mode on. {passenger_mode["name"]} is in the truck. Keeping it comfortable.'
+
+def deactivate_passenger_mode():
+    passenger_mode['active'] = False
+    save_state()
+    return f'{passenger_mode["name"]} dropped off. Back to normal.'
+
+# ══════════════════════════════════════════
+# DAILY GREETING ENGINE
+# ══════════════════════════════════════════
+def get_daily_greeting():
+    hour = datetime.now().hour
+    temp = weather['temp']
+    cond = weather['condition']
+
+    if hour < 6:
+        base = 'Late night.'
+    elif hour < 12:
+        base = 'Morning.'
+    elif hour < 17:
+        base = 'Afternoon.'
+    elif hour < 21:
+        base = 'Evening.'
+    else:
+        base = 'Night.'
+
+    # Add weather context
+    if temp < 32:
+        base += f' Freezing out. {temp}F.'
+    elif temp > 90:
+        base += f' Hot one. {temp}F.'
+    else:
+        base += f' {temp}F out.'
+
+    # Add condition
+    if 'rain' in cond.lower():
+        base += ' Raining. Roads are wet.'
+    elif 'snow' in cond.lower():
+        base += ' Snow on the ground. Take it easy.'
+    elif 'clear' in cond.lower() and temp > 40 and temp < 75:
+        base += ' Good day to run.'
+
+    # Add record check
+    if record_wall['best_et']:
+        base += f' Best ET still {record_wall["best_et"]}s.'
+
+    return base
+
+# ══════════════════════════════════════════
+# INSURANCE / VEHICLE INFO STORAGE
+# ══════════════════════════════════════════
+vehicle_info = {
+    'vin':            '1GTHK23U06F000000',  # placeholder
+    'plate':          '',
+    'year':           2006,
+    'make':           'GMC',
+    'model':          'Sierra 2500HD',
+    'color':          'Matte Black',
+    'insurance_co':   '',
+    'policy_num':     '',
+    'agent_phone':    '',
+    'registered_to':  'Ayden',
+    'state':          'Missouri',
+}
+
+# ══════════════════════════════════════════
+# WEATHER RADAR FEED
+# ══════════════════════════════════════════
+def get_weather_radar_url():
+    # NWS radar for Salem MO area — Springfield MO radar
+    return 'https://radar.weather.gov/ridge/standard/KSGF_loop.gif'
+
+def get_detailed_weather():
+    try:
+        url = 'https://api.open-meteo.com/v1/forecast?latitude=37.64&longitude=-91.54&current=temperature_2m,weathercode,windspeed_10m,precipitation,visibility&hourly=temperature_2m,precipitation_probability&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=America%2FChicago&forecast_days=1'
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read())
+            curr = data['current']
+            hourly = data.get('hourly', {})
+            temp   = round(curr['temperature_2m'])
+            wind   = round(curr['windspeed_10m'])
+            precip = curr.get('precipitation', 0)
+            vis    = curr.get('visibility', 10000)
+            # Next 3 hours precip probability
+            prec_prob = hourly.get('precipitation_probability', [0,0,0])[:3]
+            avg_prob  = sum(prec_prob) // len(prec_prob) if prec_prob else 0
+            result = f'{temp}F, wind {wind} MPH'
+            if precip > 0: result += f', {precip}mm precip'
+            if avg_prob > 30: result += f', {avg_prob}% rain chance next 3hrs'
+            if vis < 5000: result += ', low visibility'
+            return result
+    except:
+        return f'{weather["temp"]}F {weather["condition"]}'
 
 # ── ARCHER MEMORY FUNCTIONS ──────────────
 def log_moment(category, description):
@@ -3385,6 +3961,10 @@ canvas.graph { width:100%; border-radius:2px; }
 
 <div id="warning-banner">&#9888; WARNING &mdash; <span id="warning-text"></span></div>
 
+<div id="radar-banner" style="display:none;padding:3px 10px;font-size:10px;letter-spacing:2px;font-family:monospace;text-align:center;flex-shrink:0">
+  <span id="radar-band">Ka</span> &bull; <span id="radar-bars">●●●○○</span> &bull; <span id="radar-dir">FRONT</span>
+</div>
+
 <div id="header">
   <h1>ARCHER</h1>
   <div class="hdr-right">
@@ -4097,6 +4677,8 @@ function updateDisplay(d) {
     updateControlPanel(d);
     updateLiveTab(d);
     updateCamsTab(d);
+    updateRadar(d);
+    updateStatusExtras(d);
 
     // Health
     const items = [
@@ -4445,6 +5027,77 @@ function parkHere() {
     if (loc) loc.value = '';
 }
 
+// ── RADAR ALERT DISPLAY ─────────────────
+const RADAR_COLORS = {
+    clear:    null,
+    weak:     '#ffaa00',
+    moderate: '#ff6600',
+    strong:   '#cc0000',
+    laser:    '#ff00ff',
+};
+const RADAR_BG = {
+    clear:    null,
+    weak:     '#1a0e00',
+    moderate: '#1a0800',
+    strong:   '#1a0000',
+    laser:    '#1a001a',
+};
+let radarFlash = false;
+let radarFlashInterval = null;
+
+function updateRadar(d) {
+    const banner = document.getElementById('radar-banner');
+    if (!banner) return;
+    const level = d.radar_alert || 'clear';
+    if (level === 'clear') {
+        banner.style.display = 'none';
+        if (radarFlashInterval) { clearInterval(radarFlashInterval); radarFlashInterval = null; }
+        return;
+    }
+    banner.style.display = 'block';
+    banner.style.background = RADAR_BG[level] || '#1a0000';
+    banner.style.color       = RADAR_COLORS[level] || '#ff6600';
+    banner.style.border      = '1px solid ' + (RADAR_COLORS[level] || '#ff6600');
+
+    const band   = document.getElementById('radar-band');
+    const bars   = document.getElementById('radar-bars');
+    const dir    = document.getElementById('radar-dir');
+    if (band) band.textContent = (d.radar_band || 'Ka') + ' BAND';
+    if (dir)  dir.textContent  = (d.radar_direction || 'FRONT').toUpperCase();
+    const str = d.radar_strength || 0;
+    if (bars) bars.textContent = '●'.repeat(str) + '○'.repeat(Math.max(0,5-str));
+
+    // Flash on strong/laser
+    if ((level === 'strong' || level === 'laser') && !radarFlashInterval) {
+        radarFlashInterval = setInterval(() => {
+            radarFlash = !radarFlash;
+            banner.style.opacity = radarFlash ? '1' : '0.3';
+        }, 200);
+    }
+}
+
+// ── RECORDS / RIVALRY IN HEADER ──────────
+function updateStatusExtras(d) {
+    // Passenger mode indicator
+    const prof = document.getElementById('profile-name');
+    if (prof) {
+        let label = (d.profile || 'AYDEN').toUpperCase();
+        if (d.passenger_mode) label += ' + PASS';
+        if (d.trailer_connected) label += ' + TOW';
+        prof.textContent = label;
+    }
+
+    // Fuel range in footer
+    const fw = document.getElementById('f-weather');
+    if (fw) fw.textContent = d.weather + ' | ' + (d.fuel_range || '--') + 'mi range';
+
+    // Rival in show mode
+    if (d.rival) {
+        const sr = document.getElementById('show-rpm');
+        if (sr && d.record_best_et) sr.textContent = 'BEST: ' + d.record_best_et + 's';
+    }
+}
+
 // ── PWA ───────────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 </script>
@@ -4603,6 +5256,7 @@ def main():
     threading.Thread(target=client_timeout_monitor, daemon=True).start()
     threading.Thread(target=live_data_loop,          daemon=True).start()
     threading.Thread(target=valet_monitor,           daemon=True).start()
+    threading.Thread(target=curfew_monitor,           daemon=True).start()
 
     print("[DISPLAY] In Codespaces — click the Ports tab and open port 5001")
     print("[DISPLAY] On local network — open http://[your-ip]:5001")
@@ -4614,8 +5268,9 @@ def main():
 
     load_state()
     time.sleep(0.5)
-    print("[ARCHER] Online. Everything looks good.")
-    speak("Online. Everything looks good.")
+    greeting = get_daily_greeting()
+    print(f"[ARCHER] {greeting}")
+    speak(greeting)
     print()
 
     while True:
