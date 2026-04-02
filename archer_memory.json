@@ -1,0 +1,397 @@
+{
+  "personal_bests": {
+    "best_0_60": null,
+    "best_quarter": null,
+    "launch_count": 0,
+    "launch_log": []
+  },
+  "music_memories": {},
+  "song_lighting": {},
+  "last_road": null,
+  "tier": 1,
+  "archer_memory": {
+    "moments": [],
+    "conversations": [],
+    "driver_notes": [],
+    "first_drive": "April 01 2026",
+    "total_sessions": 1,
+    "favorite_road": null,
+    "favorite_time": null
+  },
+  "legacy": {
+    "active": true,
+    "locked": false,
+    "voice_notes": [
+      {
+        "date": "April 01 2026 10:28 PM",
+        "note": "first full build session",
+        "weather": "70F partly cloudy"
+      }
+    ],
+    "build_log": [],
+    "signature": null
+  },
+  "driver_profiles": {
+    "ayden": {
+      "name": "Ayden",
+      "tier": 1,
+      "exhaust_pref": 30,
+      "suspension": "street",
+      "tc_default": true,
+      "octane": 93,
+      "octane_mode": "AKI",
+      "music_vol": 70,
+      "seat_heat": 2,
+      "ghost_mode": false,
+      "drive_mode": "sport",
+      "trusted": true,
+      "notes": "Owner and builder"
+    },
+    "girlfriend": {
+      "name": "Girlfriend",
+      "tier": 2,
+      "exhaust_pref": 15,
+      "suspension": "comfort",
+      "tc_default": true,
+      "octane": 93,
+      "octane_mode": "AKI",
+      "music_vol": 60,
+      "seat_heat": 3,
+      "ghost_mode": false,
+      "drive_mode": "comfort",
+      "trusted": true,
+      "notes": "Trusted passenger"
+    },
+    "family": {
+      "name": "Family",
+      "tier": 3,
+      "exhaust_pref": 0,
+      "suspension": "comfort",
+      "tc_default": true,
+      "octane": 93,
+      "octane_mode": "AKI",
+      "music_vol": 50,
+      "seat_heat": 1,
+      "ghost_mode": false,
+      "drive_mode": "comfort",
+      "trusted": true,
+      "notes": "Family member"
+    },
+    "valet": {
+      "name": "Valet",
+      "tier": 4,
+      "exhaust_pref": 0,
+      "suspension": "street",
+      "tc_default": true,
+      "octane": 93,
+      "octane_mode": "AKI",
+      "music_vol": 30,
+      "seat_heat": 0,
+      "ghost_mode": false,
+      "drive_mode": "comfort",
+      "trusted": false,
+      "notes": "Unknown driver \u2014 restricted"
+    }
+  },
+  "current_profile": "ayden",
+  "bluetooth_devices": {},
+  "trip_log": [
+    {
+      "date": "April 02 2026",
+      "time": "04:15 AM",
+      "duration": 2,
+      "peak_rpm": 750,
+      "peak_boost": 0,
+      "best_060": null,
+      "hard_events": 0,
+      "quality": 100,
+      "road": "unknown",
+      "ethanol": 82,
+      "weather": "64F partly cloudy"
+    }
+  ],
+  "trusted_devices": {},
+  "build_tracker": {
+    "parts": [],
+    "mods": [],
+    "total_spent": 0,
+    "build_start": "2026",
+    "target_year": "2031"
+  },
+  "maintenance_log": {
+    "oil_change": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 5000
+    },
+    "tire_rotation": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 7500
+    },
+    "air_filter": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 15000
+    },
+    "spark_plugs": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 30000
+    },
+    "supercharger": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 50000
+    },
+    "brake_fluid": {
+      "last_date": null,
+      "last_miles": 0,
+      "interval_miles": 25000
+    }
+  },
+  "odometer": {
+    "miles": 0
+  },
+  "fault_codes": [],
+  "race_session_runs": [],
+  "display_settings": {
+    "night_mode": false,
+    "brightness": 100,
+    "color_theme": "red"
+  },
+  "surveillance": {
+    "armed": false,
+    "motion_detected": false,
+    "last_alert": null,
+    "alert_count": 0,
+    "cameras": {
+      "front": {
+        "status": "offline",
+        "url": ""
+      },
+      "rear": {
+        "status": "offline",
+        "url": ""
+      },
+      "cab": {
+        "status": "offline",
+        "url": ""
+      },
+      "left": {
+        "status": "offline",
+        "url": ""
+      },
+      "right": {
+        "status": "offline",
+        "url": ""
+      }
+    },
+    "valet_log": [],
+    "parking_alerts": []
+  },
+  "drag_runs": [],
+  "drag_best_et": null,
+  "drag_best_mph": null,
+  "tpms": {
+    "fl": {
+      "psi": 35.0,
+      "temp": 75,
+      "status": "ok"
+    },
+    "fr": {
+      "psi": 35.0,
+      "temp": 75,
+      "status": "ok"
+    },
+    "rl": {
+      "psi": 35.0,
+      "temp": 75,
+      "status": "ok"
+    },
+    "rr": {
+      "psi": 35.0,
+      "temp": 75,
+      "status": "ok"
+    }
+  },
+  "air_suspension": {
+    "front_psi": 85,
+    "rear_psi": 90,
+    "height_mode": "drive",
+    "presets": {
+      "slam": {
+        "front": 20,
+        "rear": 20,
+        "desc": "Slammed \u2014 on the ground"
+      },
+      "low": {
+        "front": 50,
+        "rear": 55,
+        "desc": "Street low"
+      },
+      "drive": {
+        "front": 85,
+        "rear": 90,
+        "desc": "Normal drive height"
+      },
+      "high": {
+        "front": 110,
+        "rear": 115,
+        "desc": "Max clearance"
+      },
+      "show": {
+        "front": 15,
+        "rear": 15,
+        "desc": "Show stance \u2014 fully dropped"
+      },
+      "tow": {
+        "front": 100,
+        "rear": 120,
+        "desc": "Tow mode \u2014 rear stiff"
+      }
+    },
+    "leveling": true,
+    "save_on_exit": true
+  },
+  "fuel_tank": {
+    "capacity_gal": 26.0,
+    "current_gal": 20.0,
+    "e85_gal": 16.4,
+    "regular_gal": 3.6,
+    "mpg_current": 12.5,
+    "mpg_session": 0.0,
+    "range_est": 0,
+    "fuel_cost": 0.0,
+    "low_fuel_warn": 4.0
+  },
+  "compustar": {
+    "armed": true,
+    "disarmed": false,
+    "shock_sens": 5,
+    "tilt_sens": 5,
+    "door_triggers": true,
+    "hood_trigger": true,
+    "aux_1": false,
+    "aux_2": false,
+    "panic_active": false,
+    "last_trigger": null,
+    "trigger_log": []
+  },
+  "helix_dsp": {
+    "input_gain": 0,
+    "time_align": true,
+    "phase_correct": true,
+    "sub_level": 80,
+    "sub_freq": 80,
+    "sub_slope": 24,
+    "mid_level": 75,
+    "high_level": 70,
+    "fader_front": 60,
+    "fader_rear": 40,
+    "eq_bands": {
+      "60hz": 2,
+      "120hz": 1,
+      "250hz": 0,
+      "500hz": -1,
+      "1khz": 0,
+      "2khz": 1,
+      "4khz": 0,
+      "8khz": 2,
+      "16khz": 1
+    },
+    "preset": "daily"
+  },
+  "ambient_lighting": {
+    "zones": {
+      "footwell_front": {
+        "on": false,
+        "color": "#cc0000",
+        "brightness": 80
+      },
+      "footwell_rear": {
+        "on": false,
+        "color": "#cc0000",
+        "brightness": 80
+      },
+      "dash": {
+        "on": false,
+        "color": "#cc0000",
+        "brightness": 60
+      },
+      "door_panels": {
+        "on": false,
+        "color": "#cc0000",
+        "brightness": 70
+      },
+      "bed": {
+        "on": false,
+        "color": "#ffffff",
+        "brightness": 100
+      },
+      "underglow": {
+        "on": false,
+        "color": "#cc0000",
+        "brightness": 100
+      }
+    },
+    "mode": "off",
+    "master": false
+  },
+  "launch_control": {
+    "enabled": false,
+    "launch_rpm": 3500,
+    "flat_foot": false,
+    "two_step_rpm": 3500,
+    "boost_build": false,
+    "last_60ft": null,
+    "best_60ft": null,
+    "attempts": 0
+  },
+  "boost_controller": {
+    "mode": "auto",
+    "max_boost": 15,
+    "target_boost": 12,
+    "gear_limits": {
+      "1": 8,
+      "2": 11,
+      "3": 13,
+      "4": 15
+    },
+    "boost_creep": 0.0,
+    "wastegate": "closed",
+    "history": []
+  },
+  "voice_notes_count": 0,
+  "shift_light": "off",
+  "heat_soak_risk": "low",
+  "egt_avg": 805,
+  "fuel_range": 0,
+  "fuel_gal": 20.0,
+  "remote_start": "off",
+  "parking_mode": {
+    "active": false,
+    "location": "",
+    "parked_at": null,
+    "alerts": [],
+    "phone_number": ""
+  },
+  "audio_system": {
+    "source": "radio",
+    "volume": 50,
+    "bass": 5,
+    "treble": 5,
+    "eq_preset": "flat",
+    "song": "",
+    "artist": "",
+    "playing": false
+  },
+  "location_data": {
+    "current_road": "",
+    "destination": "",
+    "trip_distance": 0.0,
+    "session_miles": 0.0,
+    "last_location": "",
+    "location_log": []
+  }
+}
