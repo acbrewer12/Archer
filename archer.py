@@ -6656,7 +6656,12 @@ def main():
 
     while True:
         try:
-            user_input = input("[YOU] ").strip()
+            try:
+                user_input = input("[YOU] ").strip()
+            except EOFError:
+                import time; time.sleep(60); continue
+                time.sleep(60)
+                continue
             if not user_input:
                 continue
             response = handle_command(user_input)
