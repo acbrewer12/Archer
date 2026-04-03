@@ -290,6 +290,9 @@ def save_state():
         'drive_score':       calculate_drive_score()[0],
         'drive_grade':       calculate_drive_score()[1],
         'show_running':      show_sequence['running'],
+        'openclaw_connected': openclaw['connected'],
+        'openclaw_enabled':  openclaw['enabled'],
+        'discord_enabled':   discord_config['enabled'],
         'crash_events':      len(crash_detection['events']),
         'auto_lights':       auto_features['auto_lights'],
         'record_top_speed':  record_wall['highest_speed'],
@@ -3433,6 +3436,281 @@ def smart_fallback(text):
         f'I heard you but not sure what you need. Status: {truck_state["rpm"]} RPM, {truck_state["oil_temp"]}F oil.',
     ])
 
+
+# ══════════════════════════════════════════
+# OPENCLAW INTEGRATION
+# ══════════════════════════════════════════
+openclaw = {
+    'enabled':    False,
+    'url':        'http://localhost:18789',   # default OpenClaw gateway port
+    'api_key':    '',
+    'connected':  False,
+    'last_task':  None,
+    'task_log':   [],
+    'tier_access': [1, 2],   # Tiers that can use OpenClaw
+    'model':      'ollama/llama3.2',  # runs local — no API key needed
+}
+
+# Tasks Tier 2 is allowed to use
+OPENCLAW_TIER2_ALLOWED = [
+    'weather', 'news', 'search', 'remind', 'message',
+    'text', 'whatsapp', 'find', 'what is', 'look up',
+]
+
+def openclaw_check_connection():
+    try:
+        with urllib.request.urlopen(f'{openclaw["url"]}/health', timeout=3) as r:
+            if r.status == 200:
+                openclaw['connected'] = True
+                return True
+    except:
+        pass
+    openclaw['connected'] = False
+    return False
+
+def openclaw_task(task, tier=1):
+    """Send a task to OpenClaw and return the result."""
+    if not openclaw['enabled']:
+        return None
+    if tier not in openclaw['tier_access']:
+        return 'OpenClaw access not available for your tier.'
+
+    # Tier 2 filter — only allowed task types
+    if tier == 2:
+        allowed = any(kw in task.lower() for kw in OPENCLAW_TIER2_ALLOWED)
+        if not allowed:
+            return 'That task is not available in passenger mode.'
+
+    if not openclaw_check_connection():
+        return 'OpenClaw is not running. Start it with: npx clawdbot@latest'
+
+    try:
+        import json as _json
+        payload = _json.dumps({
+            'message': task,
+            'model':   openclaw['model'],
+        }).encode()
+
+        req = urllib.request.Request(
+            f'{openclaw["url"]}/api/message',
+            data    = payload,
+            headers = {
+                'Content-Type':  'application/json',
+                'Authorization': f'Bearer {openclaw["api_key"]}' if openclaw['api_key'] else '',
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            result = _json.loads(r.read())
+            text   = result.get('text') or result.get('content') or result.get('message') or str(result)
+
+            # Log the task
+            entry = {
+                'task':   task,
+                'result': text[:200],
+                'time':   datetime.now().strftime('%I:%M %p'),
+                'tier':   tier,
+            }
+            openclaw['task_log'].append(entry)
+            if len(openclaw['task_log']) > 50:
+                openclaw['task_log'].pop(0)
+            openclaw['last_task'] = entry
+
+            print(f'[OPENCLAW] Task: {task[:60]}')
+            print(f'[OPENCLAW] Result: {text[:120]}')
+            return text
+
+    except urllib.error.URLError as e:
+        return f'OpenClaw connection failed: {str(e)[:60]}'
+    except Exception as e:
+        return f'OpenClaw error: {str(e)[:60]}'
+
+def openclaw_monitor():
+    """Background thread — checks OpenClaw connection every 60s."""
+    while True:
+        if openclaw['enabled']:
+            was_connected = openclaw['connected']
+            now_connected = openclaw_check_connection()
+            if now_connected and not was_connected:
+                print('[OPENCLAW] Connected.')
+            elif not now_connected and was_connected:
+                print('[OPENCLAW] Disconnected.')
+        time.sleep(60)
+
+def is_openclaw_task(text):
+    """Detect if a command should be routed to OpenClaw instead of Archer."""
+    keywords = [
+        'check my email', 'read my email', 'send email', 'email',
+        'check my messages', 'send a message', 'text', 'whatsapp',
+        'search the web', 'look up', 'google', 'find online',
+        'browse', 'open website', 'go to website',
+        'remind me', 'set reminder', 'schedule',
+        'download', 'post to', 'tweet', 'instagram',
+        'order', 'buy', 'price check',
+        'news', 'latest news', 'what is happening',
+        'play music', 'pause music', 'next song',
+        'control', 'automate', 'run script',
+        'track my package', 'shipping',
+        'check price', 'how much is',
+        'calendar', 'what do i have today',
+        'notification', 'alert me when',
+    ]
+    t = text.lower()
+    return any(kw in t for kw in keywords)
+
+
+# ══════════════════════════════════════════
+# DISCORD NOTIFICATIONS
+# ══════════════════════════════════════════
+discord_config = {
+    'enabled':          False,
+    'webhook_alerts':   '',     # #alerts channel webhook
+    'webhook_vitals':   '',     # #vitals channel webhook
+    'webhook_radar':    '',     # #radar channel webhook
+    'webhook_build':    '',     # #build channel webhook
+    'notify_radar':     True,
+    'notify_oil':       True,
+    'notify_battery':   True,
+    'notify_boost':     True,
+    'notify_records':   True,
+    'notify_valet':     True,
+    'notify_crash':     True,
+    'notify_weather':   True,
+    'cooldown_secs':    60,     # min seconds between same alert type
+    'last_sent':        {},     # alert_type -> timestamp
+}
+
+def discord_send(webhook_url, message, title='', color=0xCC0000):
+    """Send a message to a Discord webhook."""
+    if not webhook_url or not discord_config['enabled']:
+        return False
+    try:
+        import json as _json
+        payload = {
+            'embeds': [{
+                'title':       title or 'ARCHER',
+                'description': message,
+                'color':       color,
+                'footer':      {'text': f'2006 GMC Sierra 2500HD — {datetime.now().strftime("%I:%M %p")}'},
+            }]
+        }
+        data = _json.dumps(payload).encode()
+        req  = urllib.request.Request(
+            webhook_url,
+            data    = data,
+            headers = {'Content-Type': 'application/json'},
+            method  = 'POST'
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status in [200, 204]
+    except Exception as e:
+        print(f'[DISCORD] Failed: {str(e)[:60]}')
+        return False
+
+def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000):
+    """Send alert with cooldown to prevent spam."""
+    if not discord_config['enabled']:
+        return
+    now = time.time()
+    last = discord_config['last_sent'].get(alert_type, 0)
+    if now - last < discord_config['cooldown_secs']:
+        return
+    discord_config['last_sent'][alert_type] = now
+
+    webhook = discord_config.get(f'webhook_{channel}') or discord_config['webhook_alerts']
+    if not webhook:
+        return
+
+    discord_send(webhook, message, title, color)
+    print(f'[DISCORD] Sent {alert_type} to #{channel}')
+
+def discord_vitals():
+    """Send current vitals snapshot to #vitals channel."""
+    msg = (
+        f'**RPM** {truck_state["rpm"]} | '
+        f'**Boost** {truck_state["boost"]} PSI | '
+        f'**Oil** {truck_state["oil_temp"]}F\n'
+        f'**Battery** {truck_state["battery_main"]}V | '
+        f'**E85** {truck_state["ethanol"]}% | '
+        f'**Exhaust** {truck_state["exhaust"]}%\n'
+        f'**Weather** {weather["temp"]}F {weather["condition"]} | '
+        f'**Score** {calculate_drive_score()[0]}/100'
+    )
+    discord_send(
+        discord_config['webhook_vitals'] or discord_config['webhook_alerts'],
+        msg, 'Live Vitals', 0x00CC44
+    )
+
+def discord_monitor():
+    """Background thread — watches for alert conditions."""
+    while True:
+        if discord_config['enabled']:
+            # Oil temp warning
+            if discord_config['notify_oil'] and truck_state['oil_temp'] > 225:
+                discord_alert('oil_high',
+                    f'Oil temp critical at **{truck_state["oil_temp"]}F**. Pull over.',
+                    '⚠️ OIL TEMP WARNING', 'alerts', 0xCC0000)
+
+            # Battery warning
+            if discord_config['notify_battery'] and truck_state['battery_main'] < 12.0:
+                discord_alert('bat_low',
+                    f'Battery low at **{truck_state["battery_main"]}V**. Check alternator.',
+                    '🔋 BATTERY WARNING', 'alerts', 0xFF6600)
+
+            # Boost spike
+            if discord_config['notify_boost'] and truck_state['boost'] > 13:
+                discord_alert('boost_high',
+                    f'Boost spiking at **{truck_state["boost"]} PSI**.',
+                    '💨 BOOST SPIKE', 'alerts', 0xFF6600)
+
+            # Radar alert
+            if discord_config['notify_radar'] and radar_detector['alert_level'] in ['strong','laser']:
+                band = radar_detector['band'] or 'Unknown'
+                discord_alert('radar',
+                    f'**{band} band** — {radar_detector["direction"]} — {radar_detector["strength"]} bars\n'
+                    f'Road: {road_memory[current_road]["name"] if current_road else "unknown"}',
+                    '🚨 RADAR ALERT', 'radar', 0xFF0000)
+
+            # Valet doing something bad
+            if discord_config['notify_valet'] and tier_state['current'] >= 4:
+                if truck_state['rpm'] > 3000:
+                    discord_alert('valet_rpm',
+                        f'Valet hit **{truck_state["rpm"]} RPM**.',
+                        '👀 VALET ALERT', 'alerts', 0xFFAA00)
+
+            # Weather alert
+            if discord_config['notify_weather']:
+                if weather_alerts.get('tornado_warn'):
+                    discord_alert('tornado',
+                        'Tornado WARNING active for Salem area.',
+                        '🌪️ TORNADO WARNING', 'alerts', 0xFF0000)
+                elif weather_alerts.get('severe_storm'):
+                    discord_alert('storm',
+                        'Severe thunderstorm warning active.',
+                        '⛈️ SEVERE STORM', 'alerts', 0xFF6600)
+
+            # New personal record
+            if discord_config['notify_records']:
+                if drag_timer['best_et'] and drag_timer['stage'] == 'done':
+                    et  = drag_timer['best_et']
+                    mph = drag_timer['best_mph']
+                    discord_alert('new_record',
+                        f'New best ET: **{et}s @ {mph} MPH** 🔥\n'
+                        f'E{truck_state["ethanol"]} — {truck_state["boost"]} PSI boost',
+                        '🏆 NEW PERSONAL BEST', 'alerts', 0x00CC44)
+
+        time.sleep(15)
+
+def set_discord_webhook(channel, url):
+    key = f'webhook_{channel}'
+    if key in discord_config:
+        discord_config[key] = url
+        if not discord_config['webhook_alerts'] and channel != 'alerts':
+            discord_config['webhook_alerts'] = url
+        save_state()
+        return f'Discord {channel} webhook set.'
+    return f'Channels: alerts vitals radar build'
+
 # ── ARCHER MEMORY FUNCTIONS ──────────────
 def log_moment(category, description):
     moment = {
@@ -4499,6 +4777,7 @@ canvas.graph { width:100%; border-radius:2px; }
   <div class="tab" onclick="setMode('build')">BUILD</div>
   <div class="tab" onclick="setMode('live')">LIVE</div>
   <div class="tab" onclick="setMode('cams')">CAMS</div>
+  <div class="tab" id="claw-tab" onclick="setMode('claw')" style="display:none">CLAW</div>
 </div>
 
 <div id="content">
@@ -4899,6 +5178,36 @@ canvas.graph { width:100%; border-radius:2px; }
     </div>
   </div>
 
+  <!-- OPENCLAW MODE — Tier 1 and 2 only -->
+  <div id="mode-claw" class="mode-screen">
+    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #00cc44;margin-bottom:6px">
+      <div style="font-size:9px;color:#00cc44;letter-spacing:3px">OPENCLAW AGENT</div>
+      <div id="claw-status-dot" style="width:6px;height:6px;border-radius:50%;background:#333"></div>
+      <div id="claw-status-text" style="font-size:8px;color:#333;letter-spacing:1px">OFFLINE</div>
+    </div>
+
+    <!-- Chat history -->
+    <div id="claw-history" style="flex:1;overflow-y:auto;font-size:10px;line-height:1.7;min-height:120px;max-height:220px;padding:2px 0;margin-bottom:6px">
+      <div style="color:#333;font-size:9px">OpenClaw can browse the web, check email, send messages, search for parts prices and more. Only you and your passenger can use this.</div>
+    </div>
+
+    <!-- Quick actions -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
+      <button class="vc-btn" onclick="clawQuick('check my email')"><span style="font-size:14px">📧</span><span>EMAIL</span></button>
+      <button class="vc-btn" onclick="clawQuick('latest news')"><span style="font-size:14px">📰</span><span>NEWS</span></button>
+      <button class="vc-btn" onclick="clawQuick('search RockAuto for LSA parts prices')"><span style="font-size:14px">🔍</span><span>PARTS</span></button>
+      <button class="vc-btn" onclick="clawQuick('what is the weather forecast for Salem MO this week')"><span style="font-size:14px">🌦</span><span>FORECAST</span></button>
+      <button class="vc-btn" onclick="clawQuick('check if I have any reminders today')"><span style="font-size:14px">🔔</span><span>REMINDERS</span></button>
+      <button class="vc-btn" onclick="clawQuick('track my latest package')"><span style="font-size:14px">📦</span><span>TRACKING</span></button>
+    </div>
+
+    <!-- Input -->
+    <div style="display:flex;gap:5px">
+      <input id="claw-input" placeholder="Tell OpenClaw to do something..." style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:8px;color:#fff;font-family:monospace;font-size:10px;outline:none;min-width:0"/>
+      <button onclick="clawSend()" style="background:#001a00;border:1px solid #00cc44;color:#00cc44;font-family:monospace;font-size:9px;padding:8px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;letter-spacing:1px">GO</button>
+    </div>
+  </div>
+
 </div><!-- end content -->
 
 <div id="archer-bar">
@@ -5194,6 +5503,8 @@ function updateDisplay(d) {
     updateCamsTab(d);
     updateRadar(d);
     updateStatusExtras(d);
+    showClawTab(d.device_tier !== undefined ? d.device_tier : (d.tier || 4));
+    updateClawStatus(d.openclaw_connected || false);
 
     // Health
     const items = [
@@ -5624,6 +5935,61 @@ function updateStatusExtras(d) {
     }
 }
 
+// ── OPENCLAW DISPLAY ─────────────────────
+function showClawTab(tier) {
+    const tab = document.getElementById('claw-tab');
+    if (tab) tab.style.display = (tier <= 2) ? 'block' : 'none';
+}
+
+function updateClawStatus(connected) {
+    const dot  = document.getElementById('claw-status-dot');
+    const text = document.getElementById('claw-status-text');
+    if (dot)  dot.style.background = connected ? '#00cc44' : '#333';
+    if (text) { text.textContent = connected ? 'ONLINE' : 'OFFLINE'; text.style.color = connected ? '#00cc44' : '#333'; }
+}
+
+function clawAppend(msg, who) {
+    const hist = document.getElementById('claw-history');
+    if (!hist) return;
+    const div = document.createElement('div');
+    div.style.cssText = 'margin-bottom:5px;padding:4px 0;border-bottom:1px solid #0d0d0d';
+    const label = who === 'you' ? '<span style="color:#cc0000;font-size:8px">YOU</span>' : '<span style="color:#00cc44;font-size:8px">CLAW</span>';
+    div.innerHTML = label + '<br><span style="color:#aaa">' + msg + '</span>';
+    hist.appendChild(div);
+    hist.scrollTop = hist.scrollHeight;
+}
+
+function clawSend() {
+    const inp  = document.getElementById('claw-input');
+    const task = inp ? inp.value.trim() : '';
+    if (!task) return;
+    clawAppend(task, 'you');
+    if (inp) inp.value = '';
+    clawAppend('Working...', 'claw');
+    fetch('/voice_command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:task})})
+    .then(r=>r.json())
+    .then(d=>{
+        const hist = document.getElementById('claw-history');
+        if (hist && hist.lastChild) hist.removeChild(hist.lastChild);
+        clawAppend(d.response || 'Done.', 'claw');
+        if (audioReady && d.response) {
+            const u = new SpeechSynthesisUtterance(d.response);
+            u.rate = 0.95; u.pitch = 0.8;
+            window.speechSynthesis.speak(u);
+        }
+    })
+    .catch(()=>clawAppend('Error.','claw'));
+}
+
+function clawQuick(task) {
+    const inp = document.getElementById('claw-input');
+    if (inp) { inp.value = task; clawSend(); }
+}
+
+document.addEventListener('keydown', e=>{
+    if (document.activeElement && document.activeElement.id === 'claw-input' && e.key === 'Enter') clawSend();
+});
+
 // ── PWA ───────────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 </script>
@@ -5705,56 +6071,226 @@ def tier4_page():
     from flask import Response as FR
     return FR(get_tier_html(4), mimetype='text/html')
 
+# ── TERMINAL ACCESS CONTROL ─────────────────────────────
+TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
+
+def terminal_access_check(request):
+    fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
+    tier = get_device_tier(fp)
+    return tier in TERMINAL_ALLOWED_TIERS, tier
+
+# ── REAL SHELL EXECUTION ─────────────────────────────────
+import subprocess, select, pty, os as _os
+
 @display_app.route('/terminal')
 def terminal_page():
-    from flask import Response as FR
-    html = open(__file__).read()  # placeholder — replaced below
+    from flask import request as req, Response as FR
+    allowed, tier = terminal_access_check(req)
+    if not allowed:
+        return FR(f"""<!DOCTYPE html><html><body style="background:#000;color:#cc0000;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+        <div style="text-align:center"><div style="font-size:32px;margin-bottom:16px">🔒</div>
+        <div style="font-size:14px;letter-spacing:3px">ACCESS DENIED</div>
+        <div style="font-size:10px;color:#333;margin-top:8px;letter-spacing:2px">TIER {tier} — TERMINAL REQUIRES TIER 1</div></div>
+        </body></html>""", mimetype='text/html')
+
     terminal_html = """<!DOCTYPE html>
 <html>
 <head>
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1\">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Terminal</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#00ff00;font-family:monospace;height:100vh;display:flex;flex-direction:column}
-#output{flex:1;padding:10px;overflow-y:auto;font-size:12px;line-height:1.5;white-space:pre-wrap}
-#input-row{display:flex;padding:6px;border-top:1px solid #00ff0033;background:#050505}
-#cmd{flex:1;background:#000;color:#00ff00;border:1px solid #00ff0033;border-radius:4px;padding:6px 8px;font-family:monospace;font-size:12px;outline:none}
-#send{background:#001a00;border:1px solid #00ff00;color:#00ff00;font-family:monospace;font-size:11px;padding:6px 12px;border-radius:4px;cursor:pointer;margin-left:6px}
-.prompt{color:#cc0000}.out{color:#00ff00}.err{color:#ff4444}.info{color:#555}
+body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+#header{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:8px 12px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+#header-title{font-size:11px;letter-spacing:3px;color:#cc0000;flex:1}
+.tab-btn{background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:10px;letter-spacing:2px;padding:4px 10px;border-radius:3px;cursor:pointer;transition:all 0.2s}
+.tab-btn.active{border-color:#cc0000;color:#cc0000;background:#1a0000}
+#pi-status{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
+.pi-online{background:#001a00;color:#00ff00;border:1px solid #00ff00}
+.pi-offline{background:#1a0000;color:#cc0000;border:1px solid #330000}
+#terminal-container{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#output{flex:1;padding:10px 12px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+#input-row{display:flex;padding:8px;border-top:1px solid #1a1a1a;background:#050505;flex-shrink:0}
+.prompt-label{color:#cc0000;padding:6px 8px;font-size:13px;flex-shrink:0}
+#cmd{flex:1;background:#000;color:#ff3333;border:1px solid #1a1a1a;border-radius:4px;padding:6px 8px;font-family:'Courier New',monospace;font-size:12px;outline:none;caret-color:#ff3333}
+#cmd:focus{border-color:#cc0000}
+#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:10px;letter-spacing:1px;padding:6px 14px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0}
+#send-btn:active{background:#330000}
+.line-prompt{color:#cc0000}
+.line-out{color:#ff6666}
+.line-err{color:#ff4444}
+.line-info{color:#333}
+.line-success{color:#00ff00}
+.line-system{color:#888}
+#pi-iframe{width:100%;height:100%;border:none;display:none}
 </style>
 </head>
 <body>
-<div id=\"output\"><span class=\"info\">ARCHER TERMINAL\nType commands and press Send.\n\n</span></div>
-<div id=\"input-row\">
-  <span class=\"prompt\" style=\"padding:6px 8px;font-size:12px\">&#9654;</span>
-  <input id=\"cmd\" type=\"text\" placeholder=\"enter command...\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\" spellcheck=\"false\"/>
-  <button id=\"send\" onclick=\"send()\">SEND</button>
+<div id="header">
+  <div id="header-title">⚡ ARCHER TERMINAL</div>
+  <button class="tab-btn active" id="tab-server" onclick="switchTab('server')">SERVER</button>
+  <button class="tab-btn" id="tab-pi" onclick="switchTab('pi')">PI</button>
+  <span id="pi-status" class="pi-offline">PI OFFLINE</span>
 </div>
+<div id="terminal-container">
+  <div id="server-terminal" style="display:flex;flex-direction:column;height:100%">
+    <div id="output"></div>
+    <div id="input-row">
+      <span class="prompt-label">&#9654;</span>
+      <input id="cmd" type="text" placeholder="enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <button id="send-btn" onclick="sendCmd()">RUN</button>
+    </div>
+  </div>
+  <iframe id="pi-iframe" src="about:blank"></iframe>
+</div>
+
 <script>
 const out = document.getElementById('output');
 const inp = document.getElementById('cmd');
+let currentTab = 'server';
+let cmdHistory = [];
+let histIdx = -1;
+
 function append(text, cls) {
-    const s = document.createElement('span');
-    s.className = cls || 'out';
-    s.textContent = text + '\\n';
+    const s = document.createElement('div');
+    s.className = 'line-' + (cls || 'out');
+    s.textContent = text;
     out.appendChild(s);
     out.scrollTop = out.scrollHeight;
 }
-function send() {
+
+function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('tab-server').classList.toggle('active', tab === 'server');
+    document.getElementById('tab-pi').classList.toggle('active', tab === 'pi');
+    document.getElementById('server-terminal').style.display = tab === 'server' ? 'flex' : 'none';
+    document.getElementById('pi-iframe').style.display = tab === 'pi' ? 'block' : 'none';
+    if (tab === 'pi') checkPiStatus();
+}
+
+function checkPiStatus() {
+    fetch('/terminal/pi_status')
+    .then(r=>r.json()).then(d=>{
+        const el = document.getElementById('pi-status');
+        if (d.online) {
+            el.className = 'pi-status pi-online';
+            el.textContent = 'PI ONLINE';
+            document.getElementById('pi-iframe').src = d.url || 'about:blank';
+        } else {
+            el.className = 'pi-status pi-offline';
+            el.textContent = 'PI OFFLINE';
+            document.getElementById('pi-iframe').src = 'about:blank';
+        }
+    }).catch(()=>{});
+}
+
+function sendCmd() {
     const cmd = inp.value.trim();
     if (!cmd) return;
-    append('> ' + cmd, 'prompt');
+    cmdHistory.unshift(cmd);
+    histIdx = -1;
+    append('$ ' + cmd, 'prompt');
     inp.value = '';
-    fetch('/voice_command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})})
-    .then(r=>r.json()).then(d=>{if(d.response)append(d.response,'out');}).catch(e=>append('Error','err'));
+    fetch('/terminal/exec', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cmd: cmd})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if (d.stdout) d.stdout.split('\\n').forEach(l => { if(l) append(l, 'out'); });
+        if (d.stderr) d.stderr.split('\\n').forEach(l => { if(l) append(l, 'err'); });
+        if (d.error)  append(d.error, 'err');
+        append('', 'info');
+    })
+    .catch(e => append('Connection error', 'err'));
 }
-inp.addEventListener('keydown', e=>{if(e.key==='Enter')send();});
-append('Connected to Archer. ' + location.host, 'info');
+
+inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { sendCmd(); return; }
+    if (e.key === 'ArrowUp') {
+        histIdx = Math.min(histIdx + 1, cmdHistory.length - 1);
+        inp.value = cmdHistory[histIdx] || '';
+        e.preventDefault();
+    }
+    if (e.key === 'ArrowDown') {
+        histIdx = Math.max(histIdx - 1, -1);
+        inp.value = histIdx >= 0 ? cmdHistory[histIdx] : '';
+        e.preventDefault();
+    }
+});
+
+// startup
+append('ARCHER SERVER TERMINAL', 'system');
+append('Connected to: ' + location.host, 'info');
+append('Tier 1 access granted.', 'success');
+append('─────────────────────────────────', 'info');
+append('', 'info');
+
+// poll Pi status every 15s
+checkPiStatus();
+setInterval(checkPiStatus, 15000);
 </script>
 </body>
 </html>"""
+    from flask import Response as FR
     return FR(terminal_html, mimetype='text/html')
+
+# ── TERMINAL EXEC ENDPOINT ───────────────────────────────
+BLOCKED_CMDS = ['rm -rf /', 'mkfs', 'dd if=/dev/zero', ':(){ :|:& };:', 'shutdown', 'reboot']
+
+@display_app.route('/terminal/exec', methods=['POST'])
+def terminal_exec():
+    from flask import request as req
+    allowed, tier = terminal_access_check(req)
+    if not allowed:
+        return jsonify({'error': 'Access denied — Tier 1 only'})
+    data = req.get_json() or {}
+    cmd  = data.get('cmd', '').strip()
+    if not cmd:
+        return jsonify({'stdout': '', 'stderr': ''})
+    # Block dangerous commands
+    for blocked in BLOCKED_CMDS:
+        if blocked in cmd:
+            return jsonify({'error': f'Blocked: {blocked}'})
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=15,
+            cwd='/app'
+        )
+        return jsonify({'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode})
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timed out (15s limit)'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+# ── PI TERMINAL STATUS ───────────────────────────────────
+pi_tunnel_url = {'url': None, 'online': False, 'last_seen': None}
+
+@display_app.route('/terminal/pi_status')
+def pi_status():
+    return jsonify(pi_tunnel_url)
+
+@display_app.route('/terminal/pi_register', methods=['POST'])
+def pi_register():
+    """Pi calls this when it connects to register its tunnel URL"""
+    from flask import request as req
+    data = req.get_json() or {}
+    token = data.get('token', '')
+    if token != 'archer2026':
+        return jsonify({'error': 'Invalid token'}), 403
+    pi_tunnel_url['url']       = data.get('url')
+    pi_tunnel_url['online']    = True
+    pi_tunnel_url['last_seen'] = datetime.now().strftime('%I:%M %p')
+    print(f"[PI] Connected — tunnel: {pi_tunnel_url['url']}")
+    return jsonify({'status': 'registered'})
+
+@display_app.route('/terminal/pi_disconnect', methods=['POST'])
+def pi_disconnect():
+    pi_tunnel_url['online'] = False
+    pi_tunnel_url['url']    = None
+    print('[PI] Disconnected')
+    return jsonify({'status': 'ok'})
 
 @display_app.route('/specs')
 def spec_sheet():
@@ -6046,7 +6582,7 @@ def run_tier_server(tier, port):
 def run_display_server():
     log = _logging.getLogger('werkzeug')
     log.setLevel(_logging.ERROR)
-    port = int(os.environ.get('PORT', 7860))
+    port = int(os.environ.get('PORT', 5001))
     display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
 
 # ── MAIN ─────────────────────────────────
@@ -6096,6 +6632,8 @@ def main():
     threading.Thread(target=valet_monitor,           daemon=True).start()
     threading.Thread(target=curfew_monitor,           daemon=True).start()
     threading.Thread(target=weather_alert_monitor,    daemon=True).start()
+    threading.Thread(target=discord_monitor,            daemon=True).start()
+    threading.Thread(target=openclaw_monitor,            daemon=True).start()
     # Tier servers — separate port per access level
     for _tier, _port in [(1,5002),(2,5003),(3,5004),(4,5005)]:
         threading.Thread(target=run_tier_server, args=(_tier,_port), daemon=True).start()
@@ -6119,9 +6657,6 @@ def main():
     while True:
         try:
             user_input = input("[YOU] ").strip()
-        except EOFError:
-            time.sleep(60)
-            continue
             if not user_input:
                 continue
             response = handle_command(user_input)
@@ -6139,11 +6674,4 @@ def main():
             break
 
 if __name__ == "__main__":
-    import threading
-    import time
-    # Start main in a thread so it doesn't block
-    t = threading.Thread(target=main, daemon=True)
-    t.start()
-    # Keep alive for HuggingFace
-    while True:
-        time.sleep(60)
+    main()
