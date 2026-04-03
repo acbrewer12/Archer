@@ -6118,13 +6118,10 @@ def main():
 
     while True:
         try:
-            import sys
-            if sys.stdin.isatty():
-                user_input = input("[YOU] ").strip()
-            else:
-                import time
-                while True:
-                    time.sleep(60)
+            user_input = input("[YOU] ").strip()
+        except EOFError:
+            time.sleep(60)
+            continue
             if not user_input:
                 continue
             response = handle_command(user_input)
@@ -6142,11 +6139,11 @@ def main():
             break
 
 if __name__ == "__main__":
-    import sys
-    if sys.stdin.isatty():
-        main()
-    else:
-        import time
-        print("[ARCHER] Running in headless mode — web interface only")
-        while True:
-            time.sleep(60)
+    import threading
+    import time
+    # Start main in a thread so it doesn't block
+    t = threading.Thread(target=main, daemon=True)
+    t.start()
+    # Keep alive for HuggingFace
+    while True:
+        time.sleep(60)
