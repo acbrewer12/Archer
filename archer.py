@@ -6046,7 +6046,7 @@ def run_tier_server(tier, port):
 def run_display_server():
     log = _logging.getLogger('werkzeug')
     log.setLevel(_logging.ERROR)
-    port = int(os.environ.get('PORT', 5001))
+    port = int(os.environ.get('PORT', 7860))
     display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
 
 # ── MAIN ─────────────────────────────────

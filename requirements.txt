@@ -1,0 +1,4 @@
+flask
+edge-tts
+SpeechRecognition
+requests
