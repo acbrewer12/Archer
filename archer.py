@@ -6625,6 +6625,7 @@ def main():
     threading.Thread(target=weather_monitor,   daemon=True).start()
     threading.Thread(target=voice_monitor,     daemon=True).start()
     threading.Thread(target=run_display_server,daemon=True).start()
+    time.sleep(3)
     threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=record_spikes,        daemon=True).start()
     threading.Thread(target=client_timeout_monitor, daemon=True).start()
