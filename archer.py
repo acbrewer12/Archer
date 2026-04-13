@@ -4778,32 +4778,101 @@ canvas.graph { width:100%; border-radius:2px; }
   <div class="tab" onclick="setMode('live')">LIVE</div>
   <div class="tab" onclick="setMode('cams')">CAMS</div>
   <div class="tab" id="claw-tab" onclick="setMode('claw')" style="display:none">CLAW</div>
+  <div class="tab" onclick="setMode('music')">MUSIC</div>
 </div>
 
 <div id="content">
 
-  <!-- DEFAULT DASH -->
-  <div id="mode-default" class="mode-screen active">
-    <div class="data-grid">
-      <div class="data-box"><div class="data-label">OIL TEMP</div><div class="data-value" id="d-oil">195F</div></div>
-      <div class="data-box"><div class="data-label">RPM</div><div class="data-value" id="d-rpm">750</div></div>
-      <div class="data-box"><div class="data-label">BOOST</div><div class="data-value" id="d-boost">0 PSI</div></div>
-      <div class="data-box"><div class="data-label">E85</div><div class="data-value good" id="d-eth">82%</div></div>
-      <div class="data-box"><div class="data-label">BATTERY</div><div class="data-value" id="d-bat">13.8V</div></div>
-      <div class="data-box"><div class="data-label">EXHAUST</div><div class="data-value" id="d-exh">30%</div></div>
-    </div>
-    <div class="data-grid">
-      <div class="gauge-wrap">
-        <div class="gauge-label">RPM GAUGE</div>
-        <canvas class="gauge" id="gauge-rpm" width="140" height="80"></canvas>
-        <div class="gauge-val" id="gval-rpm" style="color:#fff">750</div>
+  <!-- DEFAULT DASH — FULL SCREEN TRUCK DASHBOARD -->
+  <div id="mode-default" class="mode-screen active" style="padding:0;gap:0;background:#000">
+
+    <!-- TOP ROW: Speed + RPM big numbers -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:6px 6px 4px">
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 8px;text-align:center">
+        <div style="font-size:8px;color:#555;letter-spacing:3px;margin-bottom:2px">SPEED</div>
+        <div id="dd-speed" style="font-size:52px;font-weight:900;color:#fff;line-height:1;letter-spacing:-3px;font-family:monospace">0</div>
+        <div style="font-size:9px;color:#444;letter-spacing:2px">MPH</div>
       </div>
-      <div class="gauge-wrap">
-        <div class="gauge-label">BOOST GAUGE</div>
-        <canvas class="gauge" id="gauge-boost" width="140" height="80"></canvas>
-        <div class="gauge-val" id="gval-boost" style="color:#fff">0 PSI</div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:10px 8px;text-align:center">
+        <div style="font-size:8px;color:#555;letter-spacing:3px;margin-bottom:2px">RPM</div>
+        <div id="dd-rpm" style="font-size:52px;font-weight:900;color:#fff;line-height:1;letter-spacing:-3px;font-family:monospace">750</div>
+        <div style="font-size:9px;color:#444;letter-spacing:2px">×1000</div>
       </div>
     </div>
+
+    <!-- RPM BAR -->
+    <div style="padding:0 6px 4px">
+      <div style="background:#111;border-radius:3px;height:10px;overflow:hidden;position:relative">
+        <div id="dd-rpm-bar" style="height:100%;border-radius:3px;background:linear-gradient(90deg,#00cc44 0%,#ffaa00 60%,#cc0000 85%,#ff0000 100%);width:12%;transition:width 0.15s"></div>
+        <div style="position:absolute;right:15%;top:0;width:2px;height:100%;background:#cc0000;opacity:0.6"></div>
+      </div>
+    </div>
+
+    <!-- BOOST BIG -->
+    <div style="padding:0 6px 4px">
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:8px;color:#555;letter-spacing:3px">BOOST</div>
+          <div style="display:flex;align-items:baseline;gap:4px">
+            <span id="dd-boost" style="font-size:36px;font-weight:900;color:#ff6600;font-family:monospace;line-height:1">0</span>
+            <span style="font-size:11px;color:#555">PSI</span>
+          </div>
+        </div>
+        <div style="flex:1;margin:0 12px">
+          <div style="background:#111;border-radius:3px;height:8px;overflow:hidden">
+            <div id="dd-boost-bar" style="height:100%;border-radius:3px;background:#ff6600;width:0%;transition:width 0.15s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:7px;color:#333;margin-top:2px">
+            <span>-10</span><span>0</span><span>+10</span><span>+20</span><span>+30</span>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:8px;color:#555;letter-spacing:2px">GEAR</div>
+          <div id="dd-gear" style="font-size:28px;font-weight:900;color:#fff;font-family:monospace;line-height:1">1</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATS ROW: Oil / Battery / E85 / Mode -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:2px;padding:0 6px 4px">
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
+        <div style="font-size:7px;color:#555;letter-spacing:2px">OIL</div>
+        <div id="dd-oil" style="font-size:18px;font-weight:bold;color:#ffaa00;font-family:monospace">195°</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
+        <div style="font-size:7px;color:#555;letter-spacing:2px">BATT</div>
+        <div id="dd-bat" style="font-size:18px;font-weight:bold;color:#00cc44;font-family:monospace">14.2V</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
+        <div style="font-size:7px;color:#555;letter-spacing:2px">E85</div>
+        <div id="dd-eth" style="font-size:18px;font-weight:bold;color:#00aaff;font-family:monospace">82%</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
+        <div style="font-size:7px;color:#555;letter-spacing:2px">MODE</div>
+        <div id="dd-mode" style="font-size:11px;font-weight:bold;color:#cc0000;font-family:monospace;letter-spacing:1px">SPORT</div>
+      </div>
+    </div>
+
+    <!-- ARCHER MESSAGE -->
+    <div style="padding:0 6px 4px">
+      <div style="background:#080808;border:1px solid #1a1a1a;border-radius:5px;padding:8px 10px;min-height:36px;display:flex;align-items:center">
+        <span style="font-size:8px;color:#cc0000;letter-spacing:2px;margin-right:8px;flex-shrink:0">ARCHER</span>
+        <span id="dd-msg" style="font-size:11px;color:#888;font-style:italic;line-height:1.4">Ready.</span>
+      </div>
+    </div>
+
+    <!-- DRIVE SCORE + CONDITIONS -->
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px;padding:0 6px 6px;align-items:center">
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 10px;text-align:center">
+        <div style="font-size:7px;color:#555;letter-spacing:2px">SCORE</div>
+        <div id="dd-score" style="font-size:24px;font-weight:900;color:#00cc44;font-family:monospace;line-height:1">A</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 10px">
+        <div style="font-size:7px;color:#555;letter-spacing:2px;margin-bottom:3px">CONDITIONS</div>
+        <div id="dd-conditions" style="font-size:10px;color:#666">Salem MO — Loading...</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- PERF MODE -->
@@ -5208,6 +5277,43 @@ canvas.graph { width:100%; border-radius:2px; }
     </div>
   </div>
 
+  <!-- MUSIC (Spotify) -->
+  <div id="mode-music" class="mode-screen">
+    <div id="t1-spotify-disconnected" style="text-align:center;padding:24px 8px">
+      <div style="font-size:32px;margin-bottom:8px">🎵</div>
+      <div style="font-size:12px;color:#fff;letter-spacing:2px;margin-bottom:4px">SPOTIFY</div>
+      <div style="font-size:10px;color:#555;margin-bottom:12px;letter-spacing:1px">Connect to control playback</div>
+      <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:20px;padding:8px 20px;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace">CONNECT</button>
+    </div>
+    <div id="t1-spotify-connected" style="display:none;flex-direction:column;gap:4px">
+      <div style="display:flex;align-items:center;gap:8px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px">
+        <img id="t1-np-art" src="" style="width:44px;height:44px;border-radius:4px;object-fit:cover;display:none;border:1px solid #1a1a1a">
+        <div id="t1-np-disc" style="width:44px;height:44px;border-radius:50%;background:radial-gradient(circle,#330000,#0a0000);border:2px solid #cc0000;flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div id="t1-np-title" style="font-size:12px;color:#fff;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Loading...</div>
+          <div id="t1-np-artist" style="font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">—</div>
+          <div style="background:#111;border-radius:2px;height:3px;overflow:hidden;margin-top:4px"><div id="t1-np-fill" style="height:100%;background:#cc0000;width:0%;transition:width 0.5s"></div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+          <div style="display:flex;gap:6px">
+            <button onclick="t1SpotifyPrev()" style="background:#111;border:1px solid #222;color:#888;border-radius:3px;padding:4px 7px;cursor:pointer;font-size:12px">⏮</button>
+            <button id="t1-play-btn" onclick="t1SpotifyToggle()" style="background:#cc0000;border:none;color:#fff;border-radius:3px;padding:4px 10px;cursor:pointer;font-size:13px">▶</button>
+            <button onclick="t1SpotifyNext()" style="background:#111;border:1px solid #222;color:#888;border-radius:3px;padding:4px 7px;cursor:pointer;font-size:12px">⏭</button>
+          </div>
+          <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:100%;accent-color:#cc0000">
+        </div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px">
+        <div style="font-size:8px;color:#333;letter-spacing:3px;margin-bottom:6px;border-bottom:1px solid #1a1a1a;padding-bottom:3px">PLAYLISTS</div>
+        <div id="t1-playlist-list" style="font-size:10px;color:#555">Loading...</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px">
+        <div style="font-size:8px;color:#333;letter-spacing:3px;margin-bottom:6px;border-bottom:1px solid #1a1a1a;padding-bottom:3px">UP NEXT</div>
+        <div id="t1-queue-list" style="font-size:10px;color:#555">Loading...</div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- end content -->
 
 <div id="archer-bar">
@@ -5451,6 +5557,34 @@ function updateDisplay(d) {
     if (batEl) { batEl.textContent = d.battery + 'V'; batEl.className = 'data-value ' + (d.battery > 13.0 ? 'good' : d.battery > 12.0 ? 'warn' : 'danger'); }
     const exEl = document.getElementById('d-exh');
     if (exEl) exEl.textContent = d.exhaust + '%';
+
+    // NEW FULL DASHBOARD
+    const ddRpm = document.getElementById('dd-rpm');
+    if (ddRpm) { ddRpm.textContent = d.rpm; ddRpm.style.color = d.rpm > 5500 ? '#ff0000' : d.rpm > 4000 ? '#ffaa00' : '#ffffff'; }
+    const ddSpeed = document.getElementById('dd-speed');
+    if (ddSpeed) ddSpeed.textContent = d.speed || 0;
+    const ddRpmBar = document.getElementById('dd-rpm-bar');
+    if (ddRpmBar) ddRpmBar.style.width = Math.min(100, Math.round(d.rpm / 62)) + '%';
+    const ddBoost = document.getElementById('dd-boost');
+    if (ddBoost) { ddBoost.textContent = d.boost; ddBoost.style.color = d.boost > 15 ? '#ff0000' : d.boost > 8 ? '#ffaa00' : '#ff6600'; }
+    const ddBoostBar = document.getElementById('dd-boost-bar');
+    if (ddBoostBar) { const bp = Math.min(100, Math.max(0, Math.round(((d.boost + 10) / 40) * 100))); ddBoostBar.style.width = bp + '%'; ddBoostBar.style.background = d.boost > 15 ? '#ff0000' : '#ff6600'; }
+    const ddGear = document.getElementById('dd-gear');
+    if (ddGear) ddGear.textContent = d.gear || 1;
+    const ddOil = document.getElementById('dd-oil');
+    if (ddOil) { ddOil.textContent = d.oil_temp + '°'; ddOil.style.color = d.oil_temp > 225 ? '#ff0000' : d.oil_temp > 210 ? '#ffaa00' : '#ffaa00'; }
+    const ddBat = document.getElementById('dd-bat');
+    if (ddBat) { ddBat.textContent = d.battery + 'V'; ddBat.style.color = d.battery > 13.0 ? '#00cc44' : d.battery > 12.0 ? '#ffaa00' : '#cc0000'; }
+    const ddEth = document.getElementById('dd-eth');
+    if (ddEth) { ddEth.textContent = d.ethanol + '%'; ddEth.style.color = d.ethanol > 75 ? '#00cc44' : d.ethanol > 50 ? '#00aaff' : '#ffaa00'; }
+    const ddMode = document.getElementById('dd-mode');
+    if (ddMode) ddMode.textContent = (d.drive_mode || 'SPORT').toUpperCase();
+    const ddMsg = document.getElementById('dd-msg');
+    if (ddMsg && d.last_archer_msg) ddMsg.textContent = d.last_archer_msg;
+    const ddScore = document.getElementById('dd-score');
+    if (ddScore) { const s = d.drive_score || 100; ddScore.textContent = s >= 90 ? 'A' : s >= 80 ? 'B' : s >= 70 ? 'C' : s >= 60 ? 'D' : 'F'; ddScore.style.color = s >= 80 ? '#00cc44' : s >= 60 ? '#ffaa00' : '#cc0000'; }
+    const ddCond = document.getElementById('dd-conditions');
+    if (ddCond && d.weather) ddCond.textContent = 'Salem MO — ' + d.weather;
 
     // Gauges
     drawGauge('gauge-rpm',   d.rpm,   6200, d.rpm > 5500 ? '#cc0000' : d.rpm > 4000 ? '#ffaa00' : '#00cc44');
@@ -5997,7 +6131,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 </html>'''
 
 # ── FLASK ROUTES ─────────────────────────
-@display_app.route('/')
+@display_app.route('/display')
 def display_index():
     return render_template_string(DISPLAY_HTML)
 @display_app.route('/voice_command', methods=['POST'])
@@ -6292,6 +6426,820 @@ def pi_disconnect():
     print('[PI] Disconnected')
     return jsonify({'status': 'ok'})
 
+
+# ── SYSTEM HEALTH TRACKING ──────────────────────────────
+system_health = {
+    'obd_connected':   True,
+    'voice_active':    True,
+    'last_obd_update': time.time(),
+    'failures':        [],
+    'start_time':      time.time(),
+}
+
+def log_system_failure(component, reason):
+    system_health['failures'].append({
+        'time':      time.strftime('%H:%M:%S'),
+        'component': component,
+        'reason':    reason,
+    })
+    if len(system_health['failures']) > 50:
+        system_health['failures'] = system_health['failures'][-50:]
+
+def get_system_status():
+    issues = []
+    now = time.time()
+    if now - system_health['last_obd_update'] > 10:
+        issues.append('OBD_TIMEOUT')
+    if not system_health['obd_connected']:
+        issues.append('OBD_DISCONNECTED')
+    if not system_health['voice_active']:
+        issues.append('VOICE_OFFLINE')
+    return issues
+
+@display_app.route('/limited')
+def limited_mode():
+    issues = get_system_status()
+    d = truck_state
+    rpm      = d.get('rpm', 0)
+    speed    = d.get('speed', 0)
+    oil      = d.get('oil_temp', 0)
+    bat      = d.get('battery', 0)
+    msg      = last_archer_msg.get('text', 'Limited mode active.')
+    issue_str = ' - '.join(issues) if issues else 'MANUAL OVERRIDE'
+    rpm_pct  = min(100, int((rpm / 6200) * 100))
+    rpm_color = '#ff0000' if rpm > 5000 else '#ffaa00' if rpm > 3500 else '#00cc44'
+    oil_color = '#ff0000' if oil > 225 else '#ffaa00'
+    bat_color = '#ff0000' if bat < 12 else '#ffaa00' if bat < 13 else '#00cc44'
+    issues_html = ''.join(f'<div class="issues-item">x {i.replace("_"," ")}</div>' for i in (issues if issues else [issue_str]))
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=480">
+<meta http-equiv="refresh" content="5">
+<title>Archer Limited</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{{margin:0;padding:0;box-sizing:border-box}}
+html,body{{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace}}
+.wrap{{width:480px;height:272px;display:grid;grid-template-rows:34px 1fr 32px}}
+.top{{background:#0a0000;border-bottom:2px solid #cc0000;display:flex;align-items:center;justify-content:space-between;padding:0 12px}}
+.top-title{{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:5px;color:#cc0000}}
+.top-status{{font-size:12px;color:#ff6600;letter-spacing:2px;animation:blink 1s step-end infinite}}
+@keyframes blink{{0%,100%{{opacity:1}}50%{{opacity:0.3}}}}
+.main{{display:grid;grid-template-columns:1fr 1fr;padding:8px;gap:8px}}
+.left{{display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:2px solid #1a1a1a;padding-right:8px}}
+.speed-num{{font-family:'Bebas Neue',sans-serif;font-size:96px;color:#fff;line-height:1;letter-spacing:-4px}}
+.speed-unit{{font-size:13px;color:#444;letter-spacing:4px;margin-top:-4px}}
+.rpm-wrap{{width:100%;margin-top:6px}}
+.rpm-row{{display:flex;justify-content:space-between;font-size:12px;color:#555;margin-bottom:3px}}
+.bar-bg{{background:#111;height:12px;border-radius:2px;overflow:hidden;border:1px solid #222;position:relative}}
+.bar-fill{{height:100%;border-radius:2px}}
+.bar-redline{{position:absolute;right:15%;top:0;bottom:0;width:2px;background:#ff0000;opacity:0.6}}
+.right{{display:flex;flex-direction:column;gap:8px;padding-left:4px}}
+.stat-row{{display:grid;grid-template-columns:1fr 1fr;gap:6px}}
+.stat{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:3px;padding:6px;text-align:center}}
+.stat-val{{font-family:'Bebas Neue',sans-serif;font-size:20px;line-height:1}}
+.stat-lbl{{font-size:10px;color:#444;letter-spacing:2px;margin-top:1px}}
+.issues-box{{background:#0d0000;border:1px solid #330000;border-radius:3px;padding:6px 8px}}
+.issues-title{{font-size:10px;color:#cc0000;letter-spacing:2px;margin-bottom:3px}}
+.issues-item{{font-size:11px;color:#664444;letter-spacing:1px}}
+.bottom{{background:#050000;border-top:2px solid #1a1a1a;display:flex;align-items:center;padding:0 12px;gap:8px}}
+.archer-tag{{font-size:11px;color:#cc0000;letter-spacing:2px;flex-shrink:0}}
+.archer-msg{{font-size:12px;color:#555;font-style:italic;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.limited-badge{{font-size:11px;color:#ff6600;letter-spacing:1px;flex-shrink:0;animation:blink 1.5s step-end infinite}}
+</style></head><body>
+<div class="wrap">
+  <div class="top">
+    <div class="top-title">ARCHER</div>
+    <div class="top-status">WARNING LIMITED MODE</div>
+  </div>
+  <div class="main">
+    <div class="left">
+      <div class="speed-num">{speed}</div>
+      <div class="speed-unit">MPH</div>
+      <div class="rpm-wrap">
+        <div class="rpm-row"><span>RPM</span><span style="color:{rpm_color}">{rpm}</span></div>
+        <div class="bar-bg">
+          <div class="bar-fill" style="width:{rpm_pct}%;background:{rpm_color}"></div>
+          <div class="bar-redline"></div>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="stat-row">
+        <div class="stat"><div class="stat-val" style="color:{oil_color}">{oil}F</div><div class="stat-lbl">OIL TEMP</div></div>
+        <div class="stat"><div class="stat-val" style="color:{bat_color}">{bat}V</div><div class="stat-lbl">BATTERY</div></div>
+      </div>
+      <div class="issues-box">
+        <div class="issues-title">SYSTEMS OFFLINE</div>
+        {issues_html}
+      </div>
+    </div>
+  </div>
+  <div class="bottom">
+    <span class="archer-tag">ARCHER</span>
+    <span class="archer-msg">{msg}</span>
+    <span class="limited-badge">LIMITED</span>
+  </div>
+</div>
+</body></html>"""
+    return html
+
+@display_app.route('/system_health')
+def system_health_api():
+    issues = get_system_status()
+    return jsonify({
+        'status':   'degraded' if issues else 'ok',
+        'issues':   issues,
+        'failures': system_health['failures'][-10:],
+    })
+
+# ── MAC ADDRESS AUTH SYSTEM ─────────────────────────────
+import json as _json_mac
+
+MAC_DB_FILE = 'mac_whitelist.json'
+
+# Default whitelist — add your own MAC as Tier 1
+# Format: 'AA:BB:CC:DD:EE:FF': {'tier': 1, 'name': 'Ayden'}
+DEFAULT_WHITELIST = {
+    'OWNER_MAC_HERE': {'tier': 1, 'name': 'Ayden'},
+}
+
+# One-time code system — generated per person
+# Format: 'CODE123': {'tier': 2, 'name': 'Jake', 'used': False, 'expires': timestamp}
+one_time_codes = {}
+
+def generate_one_time_code(name, tier):
+    """Generate a 6-digit one-time registration code."""
+    import random as _random
+    code = str(_random.randint(100000, 999999))
+    one_time_codes[code] = {
+        'name':    name,
+        'tier':    int(tier),
+        'used':    False,
+        'created': time.time(),
+        'expires': time.time() + 86400,  # 24 hour expiry
+    }
+    print(f'[AUTH] Generated code {code} for {name} (Tier {tier})')
+    return code
+
+def validate_one_time_code(code):
+    """Validate and consume a one-time code."""
+    entry = one_time_codes.get(code)
+    if not entry:
+        return None
+    if entry['used']:
+        return None
+    if time.time() > entry['expires']:
+        del one_time_codes[code]
+        return None
+    entry['used'] = True
+    return entry
+
+def cleanup_expired_codes():
+    """Remove expired codes."""
+    now = time.time()
+    expired = [c for c, e in one_time_codes.items() if now > e['expires']]
+    for c in expired:
+        del one_time_codes[c]
+
+
+def load_mac_whitelist():
+    try:
+        if os.path.exists(MAC_DB_FILE):
+            with open(MAC_DB_FILE, 'r') as f:
+                return _json_mac.load(f)
+    except Exception:
+        pass
+    return dict(DEFAULT_WHITELIST)
+
+def save_mac_whitelist(whitelist):
+    try:
+        with open(MAC_DB_FILE, 'w') as f:
+            _json_mac.dump(whitelist, f, indent=2)
+    except Exception as e:
+        print(f'[MAC] Save failed: {e}')
+
+def get_client_mac(request_obj):
+    """Get MAC address of connecting client from Pi ARP table."""
+    client_ip = request_obj.remote_addr
+    try:
+        result = subprocess.run(['arp', '-n', client_ip], capture_output=True, text=True, timeout=2)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            for part in parts:
+                if ':' in part and len(part) == 17:
+                    return part.upper()
+    except Exception:
+        pass
+    return None
+
+def get_tier_for_mac(mac):
+    """Returns tier info for a MAC address or None if unknown."""
+    if not mac:
+        return None
+    whitelist = load_mac_whitelist()
+    return whitelist.get(mac.upper())
+
+@display_app.route('/')
+def index():
+    """Main entry — MAC first, cookie fallback, registration last."""
+    from flask import request as freq, make_response
+    import hashlib as _hashlib
+
+    # 1. Try MAC detection
+    mac = get_client_mac(freq)
+    tier_info = get_tier_for_mac(mac)
+
+    # 2. Cookie fallback if MAC not found
+    if not tier_info:
+        cookie_val = freq.cookies.get('archer_auth', '')
+        if cookie_val:
+            try:
+                parts = cookie_val.split(':')
+                if len(parts) == 3:
+                    c_tier, c_name, c_token = parts
+                    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                    if c_token == expected:
+                        tier_info = {'tier': int(c_tier), 'name': c_name}
+                        print(f'[AUTH] Cookie auth: {c_name} Tier {c_tier}')
+            except Exception:
+                pass
+
+    # 3. Route to correct tier
+    if tier_info:
+        tier = tier_info['tier']
+        name = tier_info.get('name', '')
+        if tier == 1:
+            return render_template_string(DISPLAY_HTML)
+        elif tier == 2:
+            return get_tier_html(2, name=name)
+        elif tier == 3:
+            return get_tier_html(3, name=name)
+        elif tier == 4:
+            return get_tier_html(4, name=name)
+
+    # 4. Unknown — registration page
+    return registration_page(mac)
+
+def registration_page(mac=None):
+    """Show registration page for unknown devices."""
+    mac_display = mac or 'Unknown'
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Archer — Register Device</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}}
+.wrap{{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:16px}}
+.title{{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:6px;color:#cc0000}}
+.sub{{font-size:11px;color:#444;letter-spacing:2px;text-align:center}}
+.mac{{font-size:10px;color:#333;letter-spacing:1px;background:#0a0a0a;border:1px solid #1a1a1a;padding:6px 12px;border-radius:4px}}
+.card{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:10px;padding:20px;width:100%;display:flex;flex-direction:column;gap:12px}}
+.card-title{{font-size:10px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
+.tier-btn{{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all 0.2s;text-align:left;width:100%}}
+.tier-btn:hover{{border-color:#cc0000}}
+.tier-name{{font-size:14px;color:#fff;letter-spacing:1px}}
+.tier-sub{{font-size:10px;color:#444;margin-top:2px}}
+.tier-arrow{{color:#333;font-size:18px}}
+.code-section{{display:none;flex-direction:column;gap:10px}}
+.code-section.on{{display:flex}}
+.code-label{{font-size:10px;color:#555;letter-spacing:2px}}
+.code-input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:12px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:14px;letter-spacing:3px;outline:none;width:100%;text-align:center}}
+.code-input:focus{{border-color:#cc0000}}
+.submit-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%;transition:all 0.15s}}
+.submit-btn:active{{background:#aa0000}}
+.error{{color:#cc0000;font-size:11px;letter-spacing:1px;text-align:center;display:none}}
+.error.on{{display:block}}
+.fan-note{{font-size:10px;color:#333;letter-spacing:1px;text-align:center;margin-top:4px}}
+.fan-link{{color:#555;text-decoration:none;border-bottom:1px solid #333;padding-bottom:1px}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="title">ARCHER</div>
+  <div class="sub">2006 GMC SIERRA 2500HD</div>
+  <div class="mac">DEVICE: {mac_display}</div>
+
+  <div class="card">
+    <div class="card-title">SELECT YOUR ACCESS LEVEL</div>
+
+    <button class="tier-btn" onclick="selectTier(2)">
+      <div><div class="tier-name">PASSENGER</div><div class="tier-sub">Music, climate, comfort controls</div></div>
+      <div class="tier-arrow">›</div>
+    </button>
+
+    <button class="tier-btn" onclick="selectTier(3)">
+      <div><div class="tier-name">FAMILY</div><div class="tier-sub">Read-only status view</div></div>
+      <div class="tier-arrow">›</div>
+    </button>
+
+    <button class="tier-btn" onclick="selectTier(4)">
+      <div><div class="tier-name">VALET</div><div class="tier-sub">Limited access, monitored</div></div>
+      <div class="tier-arrow">›</div>
+    </button>
+
+    <div class="code-section" id="code-section">
+      <div class="code-label">ENTER ACCESS CODE</div>
+      <input class="code-input" id="code-input" type="password" placeholder="••••••••" maxlength="20">
+      <div class="error" id="error-msg">Incorrect code. Try again.</div>
+      <button class="submit-btn" onclick="submitCode()">REGISTER DEVICE</button>
+    </div>
+  </div>
+
+  <div class="fan-note">Just here for the show? <a href="/fans" class="fan-link">Fan page →</a></div>
+</div>
+
+<script>
+async function submitCode() {{
+  const code = document.getElementById('code-input').value.trim();
+  if (code.length !== 6) return;
+  const r = await fetch('/register_mac', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{code: code, mac: '{mac_display}'}})
+  }});
+  const d = await r.json();
+  if (d.success) {{
+    window.location.href = d.redirect;
+  }} else {{
+    document.getElementById('error-msg').classList.add('on');
+    document.getElementById('code-input').value = '';
+    document.getElementById('code-input').focus();
+  }}
+}}
+document.getElementById('code-input')?.addEventListener('keydown', e => {{ if (e.key === 'Enter') submitCode(); }});
+document.getElementById('code-input')?.addEventListener('input', e => {{
+  if (e.target.value.length === 6) submitCode();
+}});
+</script>
+</body></html>"""
+
+@display_app.route('/register_mac', methods=['POST'])
+def register_mac():
+    """Register a new device using a one-time code."""
+    from flask import request as freq, make_response
+    import hashlib as _hashlib
+    data = freq.json or {}
+    code = data.get('code', '').strip()
+    mac  = data.get('mac', '').upper()
+
+    if not code:
+        return jsonify({'success': False, 'error': 'Missing code'})
+
+    # Validate one-time code
+    entry = validate_one_time_code(code)
+    if not entry:
+        return jsonify({'success': False, 'error': 'Invalid or expired code'})
+
+    tier = entry['tier']
+    name = entry['name']
+
+    # Save MAC if we have one
+    if mac and mac != 'UNKNOWN':
+        whitelist = load_mac_whitelist()
+        whitelist[mac] = {'tier': tier, 'name': name}
+        save_mac_whitelist(whitelist)
+        print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
+
+    # Set auth cookie regardless
+    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+    token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:16]
+    cookie_val = f'{tier}:{name}:{token}'
+
+    redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
+    resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
+    resp.set_cookie('archer_auth', cookie_val, max_age=60*60*24*365, httponly=False, samesite='Lax')
+    return resp
+
+@display_app.route('/deregister_mac', methods=['POST'])
+def deregister_mac():
+    """Remove a MAC from the whitelist (Tier 1 only)."""
+    from flask import request as freq
+    data = freq.json or {}
+    mac  = data.get('mac', '').upper()
+    whitelist = load_mac_whitelist()
+    if mac in whitelist and whitelist[mac]['tier'] != 1:
+        del whitelist[mac]
+        save_mac_whitelist(whitelist)
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Not found or protected'})
+
+@display_app.route('/registered_devices')
+def registered_devices():
+    """List all registered devices (Tier 1 only)."""
+    whitelist = load_mac_whitelist()
+    devices = [{'mac': mac, 'tier': info['tier'], 'name': info['name']}
+               for mac, info in whitelist.items()]
+    return jsonify({'devices': devices})
+
+
+@display_app.route('/devices')
+def devices_page():
+    """Tier 1 only — manage registered devices and generate codes."""
+    whitelist = load_mac_whitelist()
+    cleanup_expired_codes()
+    active_codes = [(c, e) for c, e in one_time_codes.items() if not e['used']]
+    
+    devices_html = ''.join(f"""
+        <div class="device-row">
+          <div>
+            <div class="d-name">{info['name']}</div>
+            <div class="d-meta">Tier {info['tier']} — {mac}</div>
+          </div>
+          <button onclick="removeDevice('{mac}')" class="d-remove">REMOVE</button>
+        </div>""" for mac, info in whitelist.items() if info['tier'] != 1)
+
+    codes_html = ''.join(f"""
+        <div class="code-row">
+          <div>
+            <div class="c-name">{entry['name']} — Tier {entry['tier']}</div>
+            <div class="c-code">{code}</div>
+            <div class="c-meta">Expires in {max(0,int((entry['expires']-__import__('time').time())/3600))}h</div>
+          </div>
+          <button onclick="revokeCode('{code}')" class="d-remove">REVOKE</button>
+        </div>""" for code, entry in active_codes)
+
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Archer — Devices</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;padding:16px;max-width:420px;margin:0 auto}}
+h1{{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:5px;color:#cc0000;margin-bottom:4px}}
+.sub{{font-size:10px;color:#444;letter-spacing:2px;margin-bottom:20px}}
+.section{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:14px;margin-bottom:12px}}
+.section-title{{font-size:9px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px;margin-bottom:10px}}
+.device-row,.code-row{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #111}}
+.device-row:last-child,.code-row:last-child{{border-bottom:none}}
+.d-name,.c-name{{font-size:13px;color:#fff}}
+.d-meta,.c-meta{{font-size:10px;color:#444;margin-top:2px}}
+.c-code{{font-size:20px;color:#cc0000;letter-spacing:4px;margin:3px 0}}
+.d-remove{{background:#1a0000;border:1px solid #330000;color:#cc0000;border-radius:4px;padding:5px 10px;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px}}
+.new-form{{display:flex;flex-direction:column;gap:10px}}
+.input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:13px;outline:none;width:100%}}
+.input:focus{{border-color:#cc0000}}
+select.input{{cursor:pointer}}
+.gen-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%}}
+.result{{background:#001a00;border:1px solid #003300;border-radius:6px;padding:14px;text-align:center;display:none}}
+.result.on{{display:block}}
+.result-code{{font-size:36px;color:#00cc44;letter-spacing:8px;font-weight:bold;margin:6px 0}}
+.result-name{{font-size:11px;color:#00cc44;letter-spacing:2px}}
+.result-exp{{font-size:10px;color:#444;margin-top:4px}}
+.back{{color:#555;text-decoration:none;font-size:10px;letter-spacing:2px;display:inline-block;margin-bottom:16px}}
+.empty{{font-size:11px;color:#333;text-align:center;padding:8px}}
+</style>
+</head><body>
+<a href="/" class="back">← BACK TO ARCHER</a>
+<h1>DEVICES</h1>
+<div class="sub">MANAGE ACCESS — TIER 1 ONLY</div>
+
+<div class="section">
+  <div class="section-title">REGISTERED DEVICES</div>
+  {devices_html if devices_html else '<div class="empty">No devices registered yet</div>'}
+</div>
+
+<div class="section">
+  <div class="section-title">ACTIVE INVITE CODES</div>
+  {codes_html if codes_html else '<div class="empty">No active codes</div>'}
+</div>
+
+<div class="section">
+  <div class="section-title">GENERATE NEW INVITE CODE</div>
+  <div class="new-form">
+    <input class="input" id="new-name" placeholder="Person's name (e.g. Jake)" maxlength="30">
+    <select class="input" id="new-tier">
+      <option value="2">Tier 2 — Passenger</option>
+      <option value="3">Tier 3 — Family</option>
+      <option value="4">Tier 4 — Valet</option>
+    </select>
+    <button class="gen-btn" onclick="generateCode()">GENERATE CODE</button>
+    <div class="result" id="result">
+      <div class="result-name" id="result-name"></div>
+      <div class="result-code" id="result-code"></div>
+      <div class="result-exp">Valid for 24 hours — single use</div>
+      <div style="font-size:10px;color:#444;margin-top:6px">Share this code with them</div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function generateCode() {{
+  const name = document.getElementById('new-name').value.trim();
+  const tier = document.getElementById('new-tier').value;
+  if (!name) {{ alert('Enter a name first'); return; }}
+  const r = await fetch('/generate_code', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{name, tier: parseInt(tier)}})
+  }});
+  const d = await r.json();
+  if (d.code) {{
+    document.getElementById('result-name').textContent = name + ' — Tier ' + tier;
+    document.getElementById('result-code').textContent = d.code;
+    document.getElementById('result').classList.add('on');
+    document.getElementById('new-name').value = '';
+  }}
+}}
+async function removeDevice(mac) {{
+  if (!confirm('Remove ' + mac + '?')) return;
+  await fetch('/deregister_mac', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{mac}})}});
+  location.reload();
+}}
+async function revokeCode(code) {{
+  await fetch('/revoke_code', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code}})}});
+  location.reload();
+}}
+</script>
+</body></html>"""
+
+@display_app.route('/generate_code', methods=['POST'])
+def generate_code_route():
+    """Generate a one-time invite code (Tier 1 only)."""
+    from flask import request as freq
+    data = freq.json or {}
+    name = data.get('name', '').strip()
+    tier = data.get('tier', 2)
+    if not name:
+        return jsonify({'success': False, 'error': 'Name required'})
+    code = generate_one_time_code(name, tier)
+    return jsonify({'success': True, 'code': code, 'name': name, 'tier': tier})
+
+@display_app.route('/revoke_code', methods=['POST'])
+def revoke_code():
+    """Revoke an unused invite code."""
+    from flask import request as freq
+    data = freq.json or {}
+    code = data.get('code', '')
+    if code in one_time_codes:
+        del one_time_codes[code]
+    return jsonify({'success': True})
+
+
+# ── TIER NOTIFICATION SYSTEM ────────────────────────────
+import collections
+
+tier_notifications = collections.deque(maxlen=20)  # pending requests from Tier 2+
+tier_responses     = {}  # notification_id -> response status
+
+def add_tier_notification(from_name, message, speed=0, ntype='request'):
+    nid = str(uuid.uuid4())[:8]
+    tier_notifications.appendleft({
+        'id':      nid,
+        'from':    from_name,
+        'message': message,
+        'speed':   speed,
+        'type':    ntype,
+        'time':    time.strftime('%H:%M:%S'),
+        'status':  'pending',
+    })
+    tier_responses[nid] = 'pending'
+    print(f'[TIER NOTIFY] {from_name}: {message}')
+    return nid
+
+@display_app.route('/notify_tier1', methods=['POST'])
+def notify_tier1():
+    from flask import request as freq
+    data     = freq.json or {}
+    from_name = data.get('from', 'Passenger')
+    message  = data.get('message', '')
+    speed    = data.get('speed', 0)
+    nid      = add_tier_notification(from_name, message, speed)
+    return jsonify({'ok': True, 'id': nid})
+
+@display_app.route('/tier_notifications')
+def get_tier_notifications():
+    return jsonify({'notifications': list(tier_notifications)})
+
+@display_app.route('/tier_respond', methods=['POST'])
+def tier_respond():
+    from flask import request as freq
+    data     = freq.json or {}
+    nid      = data.get('id')
+    response = data.get('response')  # 'approved' or 'denied'
+    action   = data.get('action', '')
+    if nid and response:
+        tier_responses[nid] = response
+        for n in tier_notifications:
+            if n['id'] == nid:
+                n['status'] = response
+                break
+        # If approved, execute the action
+        if response == 'approved' and action:
+            if 'sport' in action.lower():
+                truck_state['drive_mode'] = 'sport'
+            elif 'comfort' in action.lower():
+                truck_state['drive_mode'] = 'comfort'
+            elif 'eco' in action.lower():
+                truck_state['drive_mode'] = 'eco'
+            elif 'tow' in action.lower():
+                truck_state['drive_mode'] = 'tow'
+            print(f'[TIER RESPOND] {nid} -> {response} ({action})')
+    return jsonify({'ok': True})
+
+@display_app.route('/tier_response_status')
+def tier_response_status():
+    from flask import request as freq
+    nid = freq.args.get('id')
+    if not nid:
+        return jsonify({'status': 'unknown'})
+    status = tier_responses.get(nid, 'unknown')
+    # Find the notification for context
+    for n in tier_notifications:
+        if n['id'] == nid:
+            return jsonify({'status': status, 'message': n['message'], 'from': n['from']})
+    return jsonify({'status': status})
+
+
+# ── SPOTIFY INTEGRATION ─────────────────────────────────
+import urllib.parse
+import base64
+
+SPOTIFY_CLIENT_ID     = os.environ.get('SPOTIFY_CLIENT_ID', '')
+SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '')
+SPOTIFY_REDIRECT_URI  = os.environ.get('SPOTIFY_REDIRECT_URI', 'https://aydencatman-archer.hf.space/spotify/callback')
+SPOTIFY_SCOPES        = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative'
+
+spotify_tokens = {
+    'access_token':  None,
+    'refresh_token': None,
+    'expires_at':    0,
+}
+
+def spotify_refresh():
+    """Refresh the Spotify access token using the refresh token."""
+    if not spotify_tokens['refresh_token']:
+        return False
+    try:
+        creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+        data  = urllib.parse.urlencode({'grant_type': 'refresh_token', 'refresh_token': spotify_tokens['refresh_token']}).encode()
+        req   = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
+                    headers={'Authorization': f'Bearer {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
+        # Use basic auth properly
+        req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
+                headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            resp = json.loads(r.read())
+            spotify_tokens['access_token'] = resp['access_token']
+            spotify_tokens['expires_at']   = time.time() + resp.get('expires_in', 3600) - 60
+            return True
+    except Exception as e:
+        print(f'[SPOTIFY] Refresh failed: {e}')
+        return False
+
+def spotify_api(method, endpoint, data=None):
+    """Make an authenticated Spotify API call."""
+    if time.time() > spotify_tokens['expires_at']:
+        if not spotify_refresh():
+            return None
+    token = spotify_tokens['access_token']
+    if not token:
+        return None
+    try:
+        url = f'https://api.spotify.com/v1/{endpoint}'
+        if method == 'GET':
+            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        else:
+            body = json.dumps(data).encode() if data else b''
+            req  = urllib.request.Request(url, data=body, method=method,
+                       headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else {}
+    except Exception as e:
+        print(f'[SPOTIFY] API error {endpoint}: {e}')
+        return None
+
+@display_app.route('/spotify/login')
+def spotify_login():
+    """Redirect to Spotify OAuth."""
+    params = urllib.parse.urlencode({
+        'client_id':     SPOTIFY_CLIENT_ID,
+        'response_type': 'code',
+        'redirect_uri':  SPOTIFY_REDIRECT_URI,
+        'scope':         SPOTIFY_SCOPES,
+        'show_dialog':   'false',
+    })
+    return json.dumps({'redirect': f'https://accounts.spotify.com/authorize?{params}'}), 200, {'Content-Type': 'application/json'}
+
+@display_app.route('/spotify/callback')
+def spotify_callback():
+    """Handle Spotify OAuth callback."""
+    from flask import request as freq
+    code  = freq.args.get('code')
+    error = freq.args.get('error')
+    if error or not code:
+        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
+    try:
+        creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+        data  = urllib.parse.urlencode({
+            'grant_type':   'authorization_code',
+            'code':          code,
+            'redirect_uri':  SPOTIFY_REDIRECT_URI,
+        }).encode()
+        req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
+                  headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            resp = json.loads(r.read())
+            spotify_tokens['access_token']  = resp['access_token']
+            spotify_tokens['refresh_token'] = resp.get('refresh_token')
+            spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
+            print('[SPOTIFY] Authenticated successfully')
+            return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
+<div style="font-size:12px;color:#444">You can close this tab</div>
+<script>setTimeout(()=>window.close(),2000)</script></body></html>"""
+    except Exception as e:
+        print(f'[SPOTIFY] Token exchange failed: {e}')
+        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
+
+@display_app.route('/spotify/status')
+def spotify_status():
+    """Check if Spotify is connected and return current playback."""
+    if not spotify_tokens['access_token']:
+        return jsonify({'connected': False})
+    data = spotify_api('GET', 'me/player')
+    if not data:
+        return jsonify({'connected': True, 'playing': False, 'track': None})
+    item = data.get('item', {})
+    artists = ', '.join(a['name'] for a in item.get('artists', []))
+    album   = item.get('album', {})
+    art_url = album.get('images', [{}])[0].get('url', '') if album.get('images') else ''
+    return jsonify({
+        'connected':  True,
+        'playing':    data.get('is_playing', False),
+        'track':      item.get('name', ''),
+        'artist':     artists,
+        'album':      album.get('name', ''),
+        'art':        art_url,
+        'progress':   data.get('progress_ms', 0),
+        'duration':   item.get('duration_ms', 1),
+        'volume':     data.get('device', {}).get('volume_percent', 50),
+        'device':     data.get('device', {}).get('name', ''),
+    })
+
+@display_app.route('/spotify/play', methods=['POST'])
+def spotify_play():
+    spotify_api('PUT', 'me/player/play')
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/pause', methods=['POST'])
+def spotify_pause():
+    spotify_api('PUT', 'me/player/pause')
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/next', methods=['POST'])
+def spotify_next():
+    spotify_api('POST', 'me/player/next')
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/prev', methods=['POST'])
+def spotify_prev():
+    spotify_api('POST', 'me/player/previous')
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/volume', methods=['POST'])
+def spotify_volume():
+    from flask import request as freq
+    vol = freq.json.get('volume', 50)
+    spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/playlists')
+def spotify_playlists():
+    data = spotify_api('GET', 'me/playlists?limit=20')
+    if not data:
+        return jsonify({'playlists': []})
+    playlists = [{'id': p['id'], 'name': p['name'], 'tracks': p['tracks']['total'],
+                  'art': p['images'][0]['url'] if p.get('images') else ''}
+                 for p in data.get('items', [])]
+    return jsonify({'playlists': playlists})
+
+@display_app.route('/spotify/play_playlist', methods=['POST'])
+def spotify_play_playlist():
+    from flask import request as freq
+    playlist_id = freq.json.get('playlist_id')
+    if playlist_id:
+        spotify_api('PUT', 'me/player/play', {'context_uri': f'spotify:playlist:{playlist_id}'})
+    return jsonify({'ok': True})
+
+@display_app.route('/spotify/queue')
+def spotify_queue():
+    data = spotify_api('GET', 'me/player/queue')
+    if not data:
+        return jsonify({'queue': []})
+    queue_items = []
+    for item in data.get('queue', [])[:8]:
+        artists = ', '.join(a['name'] for a in item.get('artists', []))
+        queue_items.append({'name': item.get('name',''), 'artist': artists,
+                            'duration': item.get('duration_ms', 0)})
+    return jsonify({'queue': queue_items})
+
+
 @display_app.route('/specs')
 def spec_sheet():
     specs = get_spec_data()
@@ -6388,7 +7336,7 @@ def audio_stream():
     )
 
 # ── TIER-SPECIFIC HTML GENERATORS ───────────────────────
-def get_tier_html(tier):
+def get_tier_html(tier, name=None):
     """Returns a tailored display HTML for each access tier."""
     from flask import request as freq
 
@@ -6625,7 +7573,6 @@ def main():
     threading.Thread(target=weather_monitor,   daemon=True).start()
     threading.Thread(target=voice_monitor,     daemon=True).start()
     threading.Thread(target=run_display_server,daemon=True).start()
-    time.sleep(3)
     threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=record_spikes,        daemon=True).start()
     threading.Thread(target=client_timeout_monitor, daemon=True).start()
@@ -6657,11 +7604,7 @@ def main():
 
     while True:
         try:
-            try:
-                user_input = input("[YOU] ").strip()
-            except EOFError:
-                time.sleep(60)
-                continue
+            user_input = input("[YOU] ").strip()
             if not user_input:
                 continue
             response = handle_command(user_input)
