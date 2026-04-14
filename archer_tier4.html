@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0a0a0a">
+<title>Archer — Valet</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto}
+
+:root{
+  --amber:#ffaa00;
+  --red:#cc0000;
+  --green:#00cc44;
+  --border:#1a1a1a;
+  --bg2:#080808;
+  --bg3:#0d0d0d;
+  --label:#444;
+  --text2:#888;
+}
+
+/* HEADER */
+.header{background:#000;border-bottom:2px solid var(--amber);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.header-left{display:flex;flex-direction:column;gap:1px}
+.header-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:5px;color:var(--amber)}
+.header-sub{font-size:8px;color:#333;letter-spacing:3px}
+.header-right{text-align:right}
+.header-time{font-size:16px;color:var(--amber);letter-spacing:2px}
+.recording-badge{background:#1a0000;border:1px solid var(--red);border-radius:4px;padding:2px 8px;font-size:8px;color:var(--red);letter-spacing:2px;display:flex;align-items:center;gap:4px;margin-top:2px;justify-content:flex-end}
+.rec-dot{width:5px;height:5px;border-radius:50%;background:var(--red);animation:blink 1s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+
+/* SURVEILLANCE BANNER */
+.surv-banner{background:#0a0500;border-bottom:1px solid #331a00;padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.surv-icon{font-size:16px}
+.surv-text{font-size:9px;color:var(--amber);letter-spacing:2px;line-height:1.6}
+
+/* CONTENT */
+.content{flex:1;padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+
+/* SPEED — BIG */
+.speed-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;position:relative}
+.speed-label{font-size:8px;color:var(--label);letter-spacing:3px;margin-bottom:4px}
+.speed-val{font-family:'Bebas Neue',sans-serif;font-size:80px;line-height:1;letter-spacing:2px;color:#fff;transition:color 0.3s,text-shadow 0.3s}
+.speed-unit{font-size:10px;color:var(--label);letter-spacing:3px;margin-top:2px}
+.speed-limit-badge{position:absolute;top:10px;right:12px;background:#1a0000;border:1px solid var(--red);border-radius:6px;padding:4px 8px;text-align:center}
+.speed-limit-label{font-size:7px;color:#555;letter-spacing:1px}
+.speed-limit-val{font-size:14px;color:var(--red);font-weight:bold}
+
+/* RPM BAR */
+.rpm-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.rpm-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.rpm-label{font-size:8px;color:var(--label);letter-spacing:2px}
+.rpm-val{font-size:14px;color:#fff;letter-spacing:1px}
+.rpm-bar-bg{background:#111;border-radius:3px;height:10px;overflow:hidden;border:1px solid var(--border)}
+.rpm-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,var(--amber) 60%,var(--red) 85%,#ff0000 100%);transition:width 0.3s,box-shadow 0.3s}
+.rpm-markers{display:flex;justify-content:space-between;font-size:7px;color:#333;margin-top:3px;padding:0 1px}
+
+/* STATS GRID */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.stat-box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 6px;text-align:center}
+.stat-label{font-size:7px;color:var(--label);letter-spacing:2px;margin-bottom:4px}
+.stat-val{font-size:18px;font-weight:bold;letter-spacing:1px}
+
+/* EVENT LOG */
+.log-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;flex:1}
+.log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.log-title{font-size:9px;color:var(--amber);letter-spacing:3px}
+.log-count{font-size:9px;color:var(--label);letter-spacing:1px}
+.log-list{display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto}
+.log-item{display:flex;justify-content:space-between;align-items:center;padding:5px 4px;border-bottom:1px solid #0d0d0d;font-size:9px}
+.log-item:last-child{border-bottom:none}
+.log-event{color:var(--text2);letter-spacing:0.5px;flex:1}
+.log-event.warn{color:var(--amber)}
+.log-event.alert{color:var(--red)}
+.log-time{color:#333;letter-spacing:1px;flex-shrink:0;margin-left:8px;font-size:8px}
+.log-empty{font-size:10px;color:#222;text-align:center;padding:12px 0;letter-spacing:2px}
+
+/* ARCHER MESSAGE */
+.archer-section{background:#050505;border:1px solid #2a1a00;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.archer-surveillance-hdr{font-size:8px;color:var(--amber);letter-spacing:3px;display:flex;align-items:center;gap:6px}
+.archer-eye{font-size:12px;flex-shrink:0}
+.archer-cold{font-size:13px;color:#777;letter-spacing:0.5px;line-height:1.5;font-style:italic}
+
+/* LIMITS NOTICE */
+.limits-card{background:#080800;border:1px solid #332200;border-radius:8px;padding:10px 12px}
+.limits-title{font-size:8px;color:var(--amber);letter-spacing:3px;margin-bottom:8px}
+.limit-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:9px}
+.limit-row:last-child{border-bottom:none}
+.limit-name{color:#444;letter-spacing:1px}
+.limit-val{color:var(--amber);letter-spacing:1px}
+
+/* FOOTER */
+.footer{background:#000;border-top:1px solid #111;padding:5px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.footer-item{font-size:8px;color:#222;letter-spacing:1px}
+.footer-item.hot{color:var(--red)}
+
+/* OVER LIMIT FLASH */
+.over-limit{animation:overlimit-flash 0.4s ease-in-out infinite}
+@keyframes overlimit-flash{0%,100%{color:var(--red)}50%{color:#ff8888}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-title">ARCHER</div>
+    <div class="header-sub">VALET MODE — MONITORED</div>
+  </div>
+  <div class="header-right">
+    <div class="header-time" id="h-time">--:--</div>
+    <div class="recording-badge"><div class="rec-dot"></div><span>RECORDING</span></div>
+  </div>
+</div>
+
+<div class="surv-banner">
+  <div class="surv-icon">👁</div>
+  <div class="surv-text">
+    This vehicle is monitored. All activity is logged and sent to the owner.<br>
+    Speed limit: 35 MPH. Exceeding limits will trigger an alert.
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- SPEED -->
+  <div class="speed-section">
+    <div class="speed-label">CURRENT SPEED</div>
+    <div class="speed-val" id="v-speed">0</div>
+    <div class="speed-unit">MPH</div>
+    <div class="speed-limit-badge">
+      <div class="speed-limit-label">LIMIT</div>
+      <div class="speed-limit-val">35</div>
+    </div>
+  </div>
+
+  <!-- RPM BAR -->
+  <div class="rpm-section">
+    <div class="rpm-top">
+      <div class="rpm-label">ENGINE RPM</div>
+      <div class="rpm-val" id="v-rpm">750</div>
+    </div>
+    <div class="rpm-bar-bg">
+      <div class="rpm-bar-fill" id="v-rpm-bar" style="width:12%"></div>
+    </div>
+    <div class="rpm-markers">
+      <span>0</span><span>1000</span><span>2000</span><span>3000</span><span>4000</span><span>5000</span><span>6200</span>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-label">OIL TEMP</div>
+      <div class="stat-val" id="v-oil" style="color:#fff">195F</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">BATTERY</div>
+      <div class="stat-val" id="v-bat" style="color:var(--green)">13.8V</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">TRACTION</div>
+      <div class="stat-val" id="v-tc" style="color:var(--green)">ON</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">GEAR</div>
+      <div class="stat-val" id="v-gear" style="color:#fff">1</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">FUEL</div>
+      <div class="stat-val" id="v-fuel" style="color:var(--green)">20G</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">SESSION MI</div>
+      <div class="stat-val" id="v-session-mi" style="color:var(--amber)">0.0</div>
+    </div>
+  </div>
+
+  <!-- ARCHER COLD MESSAGE -->
+  <div class="archer-section">
+    <div class="archer-surveillance-hdr"><div class="archer-eye">👁</div><span>ARCHER SURVEILLANCE</span></div>
+    <div class="archer-cold" id="v-archer-msg">Watching everything. Drive responsibly.</div>
+  </div>
+
+  <!-- LIMITS NOTICE -->
+  <div class="limits-card">
+    <div class="limits-title">ACTIVE RESTRICTIONS</div>
+    <div class="limit-row"><span class="limit-name">MAX SPEED</span><span class="limit-val">35 MPH</span></div>
+    <div class="limit-row"><span class="limit-name">MAX RPM</span><span class="limit-val">3000 RPM</span></div>
+    <div class="limit-row"><span class="limit-name">TRACTION CONTROL</span><span class="limit-val">LOCKED ON</span></div>
+    <div class="limit-row"><span class="limit-name">ALL ACTIVITY</span><span class="limit-val">LOGGED</span></div>
+    <div class="limit-row"><span class="limit-name">OWNER NOTIFIED</span><span class="limit-val">IF EXCEEDED</span></div>
+  </div>
+
+  <!-- EVENT LOG -->
+  <div class="log-section">
+    <div class="log-header">
+      <div class="log-title">ACTIVITY LOG</div>
+      <div class="log-count" id="v-log-count">0 EVENTS</div>
+    </div>
+    <div class="log-list" id="v-log-list">
+      <div class="log-empty">NO EVENTS YET</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div class="footer-item">TIER 4 — VALET</div>
+  <div class="footer-item" id="f-session">SESSION: 0:00</div>
+  <div class="footer-item hot" id="f-alert-count">0 ALERTS</div>
+</div>
+
+<script>
+const startTime   = Date.now();
+const eventLog    = [];
+let lastSpeed     = 0;
+let lastRpm       = 0;
+let alertCount    = 0;
+let speedAlerted  = false;
+let rpmAlerted    = false;
+
+// ── CLOCK ─────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const h = now.getHours().toString().padStart(2,'0');
+  const m = now.getMinutes().toString().padStart(2,'0');
+  document.getElementById('h-time').textContent = h + ':' + m;
+
+  // Session timer
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const sm = Math.floor(elapsed / 60).toString().padStart(1,'0');
+  const ss = (elapsed % 60).toString().padStart(2,'0');
+  document.getElementById('f-session').textContent = 'SESSION: ' + sm + ':' + ss;
+}
+
+// ── EVENT LOG ─────────────────────────────────
+function logEvent(text, level = 'normal') {
+  const now  = new Date();
+  const time = now.getHours().toString().padStart(2,'0') + ':' +
+               now.getMinutes().toString().padStart(2,'0') + ':' +
+               now.getSeconds().toString().padStart(2,'0');
+  eventLog.unshift({text, level, time});
+  if (eventLog.length > 50) eventLog.pop();
+  if (level !== 'normal') alertCount++;
+  renderLog();
+}
+
+function renderLog() {
+  const list = document.getElementById('v-log-list');
+  const count = document.getElementById('v-log-count');
+  const alerts = document.getElementById('f-alert-count');
+  if (!list) return;
+  if (!eventLog.length) {
+    list.innerHTML = '<div class="log-empty">NO EVENTS YET</div>';
+    return;
+  }
+  list.innerHTML = eventLog.map(e => `
+    <div class="log-item">
+      <div class="log-event ${e.level}">${e.text}</div>
+      <div class="log-time">${e.time}</div>
+    </div>`).join('');
+  count.textContent  = eventLog.length + ' EVENT' + (eventLog.length !== 1 ? 'S' : '');
+  alerts.textContent = alertCount + ' ALERT' + (alertCount !== 1 ? 'S' : '');
+  alerts.style.color = alertCount > 0 ? 'var(--red)' : '#222';
+}
+
+// ── ARCHER COLD RESPONSES ─────────────────────
+const COLD_IDLE = [
+  'Watching everything. Drive responsibly.',
+  'All activity is being logged.',
+  'Stay within the speed limit.',
+  'This vehicle is monitored.',
+  'Every action is recorded.',
+];
+const COLD_MOVING = [
+  'Speed is within limits. Keep it there.',
+  'Smooth inputs. Everything is logged.',
+  'Steady speed. Good.',
+  'Monitoring active.',
+];
+const COLD_WARN = [
+  'Speed limit exceeded. Owner notified.',
+  'Slow down. This has been logged.',
+  'You are over the limit.',
+  'Reducing speed now would be wise.',
+];
+const COLD_RPM = [
+  'RPM limit exceeded. Logged.',
+  'Easy on the throttle. This is recorded.',
+  'High RPM event logged.',
+];
+
+function getArcherMsg(speed, rpm, warning) {
+  if (warning || speed > 35) return COLD_WARN[Math.floor(Date.now()/3000) % COLD_WARN.length];
+  if (rpm > 3000)            return COLD_RPM[Math.floor(Date.now()/3000) % COLD_RPM.length];
+  if (speed > 0)             return COLD_MOVING[Math.floor(Date.now()/5000) % COLD_MOVING.length];
+  return COLD_IDLE[Math.floor(Date.now()/8000) % COLD_IDLE.length];
+}
+
+// ── MAIN POLL ─────────────────────────────────
+async function poll() {
+  try {
+    const r = await fetch(window.location.origin + '/display_data');
+    const d = await r.json();
+
+    const speed = d.speed || 0;
+    const rpm   = d.rpm   || 750;
+    const oil   = d.oil_temp || 195;
+    const bat   = d.battery  || 13.8;
+    const tcOn  = d.tc_on;
+
+    // ── SPEED ──────────────────────────────
+    const speedEl = document.getElementById('v-speed');
+    if (speedEl) {
+      speedEl.textContent = speed;
+      if (speed > 35) {
+        speedEl.style.color      = 'var(--red)';
+        speedEl.style.textShadow = '0 0 20px rgba(204,0,0,0.8), 0 0 40px rgba(204,0,0,0.4)';
+        speedEl.classList.add('over-limit');
+        if (!speedAlerted || speed > lastSpeed + 5) {
+          logEvent('🚨 Speed exceeded limit — ' + speed + ' MPH', 'alert');
+          speedAlerted = true;
+        }
+      } else {
+        speedEl.style.color      = speed > 25 ? 'var(--amber)' : '#fff';
+        speedEl.style.textShadow = speed > 25 ? '0 0 10px rgba(255,170,0,0.4)' : 'none';
+        speedEl.classList.remove('over-limit');
+        if (speedAlerted && speed < 30) speedAlerted = false;
+      }
+    }
+
+    // ── RPM ────────────────────────────────
+    const rpmEl  = document.getElementById('v-rpm');
+    const rpmBar = document.getElementById('v-rpm-bar');
+    if (rpmEl) {
+      rpmEl.textContent = rpm;
+      rpmEl.style.color = rpm > 3000 ? 'var(--red)' : rpm > 2000 ? 'var(--amber)' : '#fff';
+    }
+    if (rpmBar) rpmBar.style.width = Math.min(100, Math.round(rpm / 62)) + '%';
+    if (rpmBar) rpmBar.style.boxShadow = rpm > 3000 ? '0 0 8px var(--red)' : rpm > 2000 ? '0 0 6px var(--amber)' : 'none';
+    if (rpm > 3000 && !rpmAlerted) {
+      logEvent('⚠ RPM exceeded 3000 — hit ' + rpm, 'warn');
+      rpmAlerted = true;
+    } else if (rpm < 2500) { rpmAlerted = false; }
+
+    // ── OIL ────────────────────────────────
+    const oilEl = document.getElementById('v-oil');
+    if (oilEl) {
+      oilEl.textContent = oil + 'F';
+      oilEl.style.color = oil > 225 ? 'var(--red)' : oil > 210 ? 'var(--amber)' : '#fff';
+    }
+
+    // ── BATTERY ────────────────────────────
+    const batEl = document.getElementById('v-bat');
+    if (batEl) {
+      batEl.textContent = bat + 'V';
+      batEl.style.color = bat < 12 ? 'var(--red)' : bat < 12.8 ? 'var(--amber)' : 'var(--green)';
+    }
+
+    // ── TC ─────────────────────────────────
+    const tcEl = document.getElementById('v-tc');
+    if (tcEl) {
+      tcEl.textContent  = tcOn ? 'ON' : 'OFF';
+      tcEl.style.color  = tcOn ? 'var(--green)' : 'var(--red)';
+      if (!tcOn && lastTcOn) logEvent('🚨 Traction control turned off', 'alert');
+    }
+
+    // ── ARCHER MSG ─────────────────────────
+    document.getElementById('v-archer-msg').textContent = getArcherMsg(speed, rpm, d.warning);
+
+    // ── LOG EVENTS ─────────────────────────
+    if (speed === 0 && lastSpeed > 5) logEvent('● Vehicle stopped — ' + new Date().toLocaleTimeString(), 'normal');
+    if (speed > 5  && lastSpeed === 0) logEvent('● Vehicle started moving', 'normal');
+    if (d.warning && !lastWarning) logEvent('🚨 System warning: ' + (d.warning_msg || 'unknown').replace(/_/g,' '), 'alert');
+
+    lastSpeed   = speed;
+    lastRpm     = rpm;
+    lastWarning = d.warning;
+
+  } catch(e) {}
+}
+
+let lastWarning = false;
+let lastTcOn    = true;
+let sessionMiles = 0.0;
+
+// Log session start
+logEvent('● Valet session started', 'normal');
+
+setInterval(updateClock, 1000);
+setInterval(poll, 1000);
+updateClock();
+poll();
+</script>
+</body></html>

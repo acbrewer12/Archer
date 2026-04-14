@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#1a1a2e">
+<title>Archer — Family</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Quicksand:wght@400;600;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column}
+
+/* THEME */
+:root{
+  --blue:#4488ff;
+  --blue-dim:#1a2a4a;
+  --green:#00cc88;
+  --yellow:#ffcc44;
+  --red:#ff4455;
+  --bg2:#0f0f1a;
+  --bg3:#13131f;
+  --border:#1e1e2e;
+  --label:#446;
+  --text2:#aab;
+  --text3:#778;
+}
+
+/* HEADER */
+.header{background:var(--bg2);border-bottom:2px solid var(--blue);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.header-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--blue)}
+.header-sub{font-size:9px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace}
+.header-right{text-align:right}
+.header-time{font-size:18px;color:#fff;font-family:'Share Tech Mono',monospace;letter-spacing:2px}
+.header-date{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+
+/* STATUS BAR */
+.status-bar{background:var(--bg3);border-bottom:1px solid var(--border);padding:6px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0}
+.status-txt{font-size:10px;color:var(--green);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.status-location{font-size:10px;color:var(--label);letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-left:auto}
+
+/* CONTENT */
+.content{flex:1;padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+
+/* ARCHER MESSAGE */
+.archer-card{background:var(--bg2);border:1px solid var(--blue);border-radius:10px;padding:14px 16px;display:flex;align-items:flex-start;gap:10px}
+.archer-icon{font-size:20px;flex-shrink:0;margin-top:1px}
+.archer-label{font-size:8px;color:var(--blue);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px}
+.archer-text{font-size:13px;color:#ccd;line-height:1.5;font-style:italic}
+
+/* BIG STAT */
+.big-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.big-stat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 10px;text-align:center}
+.big-val{font-family:'Bebas Neue',sans-serif;font-size:42px;line-height:1;letter-spacing:1px}
+.big-unit{font-size:10px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.big-label{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
+
+/* HEALTH GRID */
+.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.health-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;transition:border-color 0.3s}
+.health-name{font-size:9px;color:var(--text3);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.health-val{font-size:16px;font-weight:700;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.health-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-left:6px}
+.good{color:var(--green)}.good-dot{background:var(--green);box-shadow:0 0 8px var(--green),0 0 2px var(--green)}
+.warn{color:var(--yellow)}.warn-dot{background:var(--yellow);box-shadow:0 0 8px var(--yellow),0 0 2px var(--yellow)}
+.bad{color:var(--red)}.bad-dot{background:var(--red);box-shadow:0 0 8px var(--red),0 0 2px var(--red)}
+
+/* SECTION HEADER */
+.section-hdr{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding:2px 0 6px;border-bottom:1px solid var(--border);margin-bottom:2px}
+
+/* TRIP CARD */
+.trip-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.trip-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #0d0d18}
+.trip-row:last-child{border-bottom:none}
+.trip-label{font-size:9px;color:var(--text3);letter-spacing:1px;font-family:'Share Tech Mono',monospace}
+.trip-val{font-size:12px;font-weight:700;color:var(--text2);font-family:'Share Tech Mono',monospace}
+
+/* WEATHER */
+.weather-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+.weather-icon{font-size:32px}
+.weather-temp{font-family:'Bebas Neue',sans-serif;font-size:36px;color:#fff}
+.weather-cond{font-size:10px;color:var(--text3);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.weather-location{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+
+/* SAFE INDICATOR */
+.safe-card{background:linear-gradient(135deg,#001a0e,#0a0a12);border:2px solid var(--green);border-radius:12px;padding:16px;text-align:center}
+.safe-icon{font-size:48px;margin-bottom:8px}
+.safe-title{font-size:14px;color:var(--green);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px}
+.safe-sub{font-size:10px;color:var(--text3);letter-spacing:1px;line-height:1.6}
+
+/* FOOTER */
+.footer{background:var(--bg2);border-top:1px solid var(--border);padding:6px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.footer-item{font-size:9px;color:var(--label);letter-spacing:1px;font-family:'Share Tech Mono',monospace}
+
+/* PULSE ANIMATION */
+@keyframes pulse-border {
+  0%,100%{box-shadow:0 0 0 0 rgba(255,68,85,0.4);border-color:var(--red)}
+  50%{box-shadow:0 0 0 8px rgba(255,68,85,0);border-color:#ff8888}
+}
+@keyframes pulse-green {
+  0%,100%{box-shadow:0 0 8px rgba(0,204,136,0.2)}
+  50%{box-shadow:0 0 20px rgba(0,204,136,0.5)}
+}
+.safe-card.warning-active { animation: pulse-border 1.5s ease-in-out infinite; }
+.safe-card.all-good       { animation: pulse-green  3s   ease-in-out infinite; }
+
+/* WARNING BANNER */
+.warn-banner{display:none;background:#1a0000;border-bottom:2px solid var(--red);padding:10px 16px;flex-direction:column;gap:2px;flex-shrink:0;box-shadow:0 4px 20px rgba(255,68,85,0.3)}
+.warn-banner.on{display:flex}
+.warn-title{font-size:9px;color:var(--red);letter-spacing:3px;font-family:'Share Tech Mono',monospace}
+.warn-msg{font-size:12px;color:#ffaaaa;font-family:'Share Tech Mono',monospace}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-title">ARCHER</div>
+    <div class="header-sub">2006 GMC SIERRA 2500HD</div>
+  </div>
+  <div class="header-right">
+    <div class="header-time" id="h-time">--:--</div>
+    <div class="header-date" id="h-date">--</div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="status-dot" id="status-dot"></div>
+  <div class="status-txt" id="status-txt">SYSTEM ONLINE</div>
+  <div class="status-location" id="status-location">SALEM MO</div>
+</div>
+
+<div class="warn-banner" id="warn-banner">
+  <div class="warn-title">⚠ ALERT</div>
+  <div class="warn-msg" id="warn-msg">--</div>
+</div>
+
+<div class="content">
+
+  <!-- SAFE STATUS -->
+  <div class="safe-card" id="safe-card">
+    <div class="safe-icon">✅</div>
+    <div class="safe-title" id="safe-title">ALL SYSTEMS GOOD</div>
+    <div class="safe-sub" id="safe-sub">Truck is running normally.<br>No warnings or alerts active.</div>
+  </div>
+
+  <!-- ARCHER MESSAGE -->
+  <div class="archer-card">
+    <div class="archer-icon">🔴</div>
+    <div>
+      <div class="archer-label">ARCHER SAYS</div>
+      <div class="archer-text" id="archer-msg">Everything looks good.</div>
+    </div>
+  </div>
+
+  <!-- SPEED + RPM -->
+  <div class="section-hdr">DRIVING</div>
+  <div class="big-row">
+    <div class="big-stat">
+      <div class="big-label">SPEED</div>
+      <div class="big-val" id="t3-speed" style="color:#fff">0</div>
+      <div class="big-unit">MPH</div>
+    </div>
+    <div class="big-stat">
+      <div class="big-label">ENGINE</div>
+      <div class="big-val" id="t3-rpm" style="color:var(--blue)">750</div>
+      <div class="big-unit">RPM</div>
+    </div>
+  </div>
+
+  <!-- HEALTH -->
+  <div class="section-hdr">VEHICLE HEALTH</div>
+  <div class="health-grid">
+    <div class="health-card">
+      <div>
+        <div class="health-name">OIL TEMP</div>
+        <div class="health-val good" id="t3-oil">195F</div>
+      </div>
+      <div class="health-dot good-dot" id="t3-oil-dot"></div>
+    </div>
+    <div class="health-card">
+      <div>
+        <div class="health-name">BATTERY</div>
+        <div class="health-val good" id="t3-bat">13.8V</div>
+      </div>
+      <div class="health-dot good-dot" id="t3-bat-dot"></div>
+    </div>
+    <div class="health-card">
+      <div>
+        <div class="health-name">COOLANT</div>
+        <div class="health-val good" id="t3-cool">190F</div>
+      </div>
+      <div class="health-dot good-dot" id="t3-cool-dot"></div>
+    </div>
+    <div class="health-card">
+      <div>
+        <div class="health-name">FUEL</div>
+        <div class="health-val" id="t3-fuel">20 GAL</div>
+      </div>
+      <div class="health-dot good-dot" id="t3-fuel-dot"></div>
+    </div>
+    <div class="health-card">
+      <div>
+        <div class="health-name">TRACTION</div>
+        <div class="health-val good" id="t3-tc">ON</div>
+      </div>
+      <div class="health-dot good-dot" id="t3-tc-dot"></div>
+    </div>
+    <div class="health-card">
+      <div>
+        <div class="health-name">DRIVE MODE</div>
+        <div class="health-val" id="t3-mode" style="color:var(--blue)">COMFORT</div>
+      </div>
+      <div class="health-dot" id="t3-mode-dot" style="background:var(--blue)"></div>
+    </div>
+  </div>
+
+  <!-- WEATHER -->
+  <div class="section-hdr">CONDITIONS</div>
+  <div class="weather-card">
+    <div class="weather-icon" id="t3-weather-icon">🌤</div>
+    <div>
+      <div class="weather-temp" id="t3-temp">70F</div>
+      <div class="weather-cond" id="t3-cond">PARTLY CLOUDY</div>
+      <div class="weather-location">SALEM, MISSOURI</div>
+    </div>
+  </div>
+
+  <!-- TRIP INFO -->
+  <div class="section-hdr">TRIP</div>
+  <div class="trip-card">
+    <div class="trip-row">
+      <span class="trip-label">DRIVE SCORE</span>
+      <span class="trip-val" id="t3-score" style="color:var(--green)">A — 100/100</span>
+    </div>
+    <div class="trip-row">
+      <span class="trip-label">ESTIMATED RANGE</span>
+      <span class="trip-val" id="t3-range">-- mi</span>
+    </div>
+    <div class="trip-row">
+      <span class="trip-label">ROAD</span>
+      <span class="trip-val" id="t3-road">--</span>
+    </div>
+    <div class="trip-row">
+      <span class="trip-label">FAULT CODES</span>
+      <span class="trip-val good" id="t3-faults">NONE</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div class="footer-item">FAMILY ACCESS</div>
+  <div class="footer-item" id="f-time2">--:--</div>
+  <div class="footer-item">READ ONLY</div>
+</div>
+
+<script>
+function setEl(id, text) { const e = document.getElementById(id); if (e) e.textContent = text; }
+function setColor(id, cls) {
+  const e = document.getElementById(id);
+  if (!e) return;
+  e.className = e.className.replace(/\bgood\b|\bwarn\b|\bbad\b/g, '').trim() + ' ' + cls;
+}
+function setDot(id, cls) {
+  const e = document.getElementById(id);
+  if (!e) return;
+  e.className = 'health-dot ' + cls + '-dot';
+}
+
+function updateClock() {
+  const now = new Date();
+  const h = now.getHours().toString().padStart(2,'0');
+  const m = now.getMinutes().toString().padStart(2,'0');
+  setEl('h-time', h + ':' + m);
+  setEl('f-time2', h + ':' + m);
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  setEl('h-date', days[now.getDay()] + ' ' + months[now.getMonth()] + ' ' + now.getDate());
+}
+
+function getWeatherIcon(condition) {
+  const c = (condition || '').toLowerCase();
+  if (c.includes('snow'))   return '❄️';
+  if (c.includes('rain') || c.includes('storm')) return '🌧';
+  if (c.includes('cloud'))  return '⛅';
+  if (c.includes('clear'))  return '☀️';
+  return '🌤';
+}
+
+function updateSafeCard(d) {
+  const card  = document.getElementById('safe-card');
+  const icon  = document.getElementById('safe-card')?.querySelector('.safe-icon');
+  const title = document.getElementById('safe-title');
+  const sub   = document.getElementById('safe-sub');
+  const warn  = document.getElementById('warn-banner');
+  const wMsg  = document.getElementById('warn-msg');
+
+  if (d.warning) {
+    card.style.background    = 'linear-gradient(135deg,#1a0000,#0a0a12)';
+    card.style.borderColor   = 'var(--red)';
+    card.classList.add('warning-active');
+    card.classList.remove('all-good');
+    if (icon)  icon.textContent  = '🚨';
+    if (title) { title.textContent = 'ATTENTION NEEDED'; title.style.color = 'var(--red)'; title.style.fontSize = '16px'; }
+    if (sub)   sub.textContent   = 'Archer has detected an issue.\nAyden is aware and monitoring.';
+    warn.classList.add('on');
+    if (wMsg) wMsg.textContent = (d.warning_msg || '').toUpperCase().replace(/_/g,' ');
+  } else {
+    card.style.background    = 'linear-gradient(135deg,#001a0e,#0a0a12)';
+    card.style.borderColor   = 'var(--green)';
+    card.classList.remove('warning-active');
+    card.classList.add('all-good');
+    if (icon)  icon.textContent  = '✅';
+    if (title) { title.textContent = 'ALL SYSTEMS GOOD'; title.style.color = 'var(--green)'; title.style.fontSize = '14px'; }
+    if (sub)   sub.textContent   = 'Truck is running normally.\nNo warnings or alerts active.';
+    warn.classList.remove('on');
+  }
+}
+
+async function poll() {
+  try {
+    const r = await fetch(window.location.origin + '/display_data');
+    const d = await r.json();
+
+    // Smarter contextual Archer message
+    const oil2 = d.oil_temp || 195;
+    const bat2  = d.battery  || 13.8;
+    const fuel2 = d.fuel_gal || 20;
+    const spd2  = d.speed    || 0;
+    let contextMsg = d.archer_msg || 'Everything looks good.';
+    if (d.warning) {
+      const w = (d.warning_msg || '').toLowerCase();
+      if (w.includes('oil'))     contextMsg = 'Oil temp is elevated. Ayden is monitoring it.';
+      else if (w.includes('bat')) contextMsg = 'Battery voltage is low. Ayden knows.';
+      else if (w.includes('eth')) contextMsg = 'Low ethanol under boost. Ayden has been alerted.';
+      else                        contextMsg = 'An issue was detected. Ayden is aware.';
+    } else if (fuel2 < 4) {
+      contextMsg = 'Fuel is getting low. Ayden will stop soon.';
+    } else if (oil2 > 210) {
+      contextMsg = 'Oil temp is a little warm. Nothing critical.';
+    } else if (bat2 < 12.8) {
+      contextMsg = 'Battery is a bit low but running fine.';
+    } else if (spd2 === 0) {
+      contextMsg = 'Parked and all systems normal.';
+    } else if (spd2 > 0 && !d.warning) {
+      contextMsg = 'Driving normally. All systems good.';
+    }
+    setEl('archer-msg', contextMsg);
+
+    // Speed + RPM
+    const spd = d.speed || 0;
+    setEl('t3-speed', spd);
+    document.getElementById('t3-speed').style.color = spd > 80 ? 'var(--red)' : spd > 55 ? 'var(--yellow)' : '#fff';
+    setEl('t3-rpm', d.rpm || 750);
+
+    // Oil
+    const oil = d.oil_temp || 195;
+    const oilCls = oil > 225 ? 'bad' : oil > 210 ? 'warn' : 'good';
+    setEl('t3-oil', oil + 'F');
+    setColor('t3-oil', oilCls); setDot('t3-oil-dot', oilCls);
+
+    // Battery
+    const bat = d.battery || 13.8;
+    const batCls = bat < 12 ? 'bad' : bat < 12.8 ? 'warn' : 'good';
+    setEl('t3-bat', bat + 'V');
+    setColor('t3-bat', batCls); setDot('t3-bat-dot', batCls);
+
+    // Coolant
+    const cool = d.coolant || 190;
+    const coolCls = cool > 230 ? 'bad' : cool > 215 ? 'warn' : 'good';
+    setEl('t3-cool', cool + 'F');
+    setColor('t3-cool', coolCls); setDot('t3-cool-dot', coolCls);
+
+    // Fuel
+    const fuel = d.fuel_gal || 20;
+    const fuelCls = fuel < 3 ? 'bad' : fuel < 6 ? 'warn' : 'good';
+    setEl('t3-fuel', fuel + ' GAL');
+    setColor('t3-fuel', fuelCls); setDot('t3-fuel-dot', fuelCls);
+
+    // TC
+    const tcOn = d.tc_on;
+    setEl('t3-tc', tcOn ? 'ON' : 'OFF');
+    setColor('t3-tc', tcOn ? 'good' : 'warn');
+    setDot('t3-tc-dot', tcOn ? 'good' : 'warn');
+
+    // Drive mode
+    const mode = (d.drive_mode || 'comfort').toUpperCase();
+    setEl('t3-mode', mode);
+
+    // Weather
+    const weather = d.weather || '70F clear';
+    const parts   = weather.split(' ');
+    const temp    = parts[0] || '70F';
+    const cond    = parts.slice(1).join(' ') || 'clear';
+    setEl('t3-temp', temp);
+    setEl('t3-cond', cond.toUpperCase());
+    setEl('t3-weather-icon', getWeatherIcon(cond));
+
+    // Trip
+    const score = d.drive_score || 100;
+    const grade = d.drive_grade || 'A';
+    setEl('t3-score', grade + ' — ' + score + '/100');
+    document.getElementById('t3-score').style.color = score >= 90 ? 'var(--green)' : score >= 70 ? 'var(--yellow)' : 'var(--red)';
+    setEl('t3-range', (d.fuel_range || '--') + ' mi');
+    setEl('t3-road', (d.road || '--').substring(0, 22));
+    const faults = d.fault_count || 0;
+    setEl('t3-faults', faults > 0 ? faults + ' ACTIVE' : 'NONE');
+    setColor('t3-faults', faults > 0 ? 'bad' : 'good');
+
+    // Safe card
+    updateSafeCard(d);
+
+    // Status bar
+    setEl('status-location', (d.road || 'SALEM MO').toUpperCase().substring(0,20));
+
+  } catch(e) {}
+}
+
+setInterval(updateClock, 1000);
+setInterval(poll, 2000);
+updateClock();
+poll();
+</script>
+</body></html>
