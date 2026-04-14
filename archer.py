@@ -7583,9 +7583,10 @@ def main():
     threading.Thread(target=discord_monitor,            daemon=True).start()
     threading.Thread(target=openclaw_monitor,            daemon=True).start()
     # Tier servers — separate port per access level
-    for _tier, _port in [(1,5002),(2,5003),(3,5004),(4,5005)]:
-        threading.Thread(target=run_tier_server, args=(_tier,_port), daemon=True).start()
-        time.sleep(0.3)   # stagger startup to avoid port conflicts
+    if not os.environ.get('SPACE_ID'):
+        for _tier, _port in [(1,5002),(2,5003),(3,5004),(4,5005)]:
+            threading.Thread(target=run_tier_server, args=(_tier,_port), daemon=True).start()
+            time.sleep(0.3)   # stagger startup to avoid port conflicts
 
     print("[DISPLAY] In Codespaces — click the Ports tab and open port 5001")
     print("[DISPLAY] On local network — open http://[your-ip]:5001")
