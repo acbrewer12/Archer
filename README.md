@@ -1,11 +1,12 @@
 ---
 title: Archer
-emoji: 🚗
+emoji: 🔴
 colorFrom: red
 colorTo: gray
 sdk: docker
+app_port: 7860
 pinned: false
 ---
 
 # Archer AI
-2006 GMC Sierra 2500HD — 2026 Vision Build
+2006 GMC Sierra 2500HD — Built by Ayden — Salem Missouri
