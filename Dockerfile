@@ -27,4 +27,5 @@ COPY --chown=user . .
 EXPOSE 7860
 
 # Start Ollama, pull model, run Archer
+HEALTHCHECK NONE
 CMD ollama serve & sleep 8 && python3 archer.py
