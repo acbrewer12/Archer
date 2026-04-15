@@ -7389,3 +7389,56 @@ def fan_page():
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
 
 
+
+# ── MAIN ─────────────────────────────────────────────────
+def main():
+    threading.Thread(target=tts_worker,          daemon=True).start()
+    threading.Thread(target=update_awareness,    daemon=True).start()
+    threading.Thread(target=safety_monitor,      daemon=True).start()
+    threading.Thread(target=casual_monitor,      daemon=True).start()
+    threading.Thread(target=weather_monitor,     daemon=True).start()
+    threading.Thread(target=voice_monitor,       daemon=True).start()
+    threading.Thread(target=run_display_server,  daemon=True).start()
+    threading.Thread(target=record_spikes,       daemon=True).start()
+    threading.Thread(target=client_timeout_monitor, daemon=True).start()
+    threading.Thread(target=live_data_loop,      daemon=True).start()
+    threading.Thread(target=valet_monitor,       daemon=True).start()
+    threading.Thread(target=curfew_monitor,      daemon=True).start()
+    threading.Thread(target=weather_alert_monitor, daemon=True).start()
+    threading.Thread(target=discord_monitor,     daemon=True).start()
+    threading.Thread(target=openclaw_monitor,    daemon=True).start()
+    threading.Thread(target=fetch_ngrok_url,     daemon=True).start()
+
+    archer_memory['total_sessions'] += 1
+    if not archer_memory['first_drive']:
+        archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
+
+    load_state()
+    time.sleep(0.5)
+    greeting = get_daily_greeting()
+    print(f"[ARCHER] {greeting}")
+    speak(greeting)
+
+    while True:
+        try:
+            try:
+                user_input = input("[YOU] ").strip()
+            except EOFError:
+                time.sleep(1)
+                continue
+            if not user_input:
+                continue
+            response = handle_command(user_input)
+            if response is None:
+                response = ask_archer(user_input)
+            if response:
+                print(f"[ARCHER] {response}")
+                speak(response)
+                last_archer_msg['text'] = response
+        except KeyboardInterrupt:
+            print("\n[ARCHER] See you tomorrow.")
+            save_state()
+            break
+
+if __name__ == "__main__":
+    main()
