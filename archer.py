@@ -6133,6 +6133,10 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 # ── FLASK ROUTES ─────────────────────────
 @display_app.route('/display')
 def display_index():
+    import os
+    if os.path.exists('archer_tier1.html'):
+        with open('archer_tier1.html', 'r') as f:
+            return f.read()
     return render_template_string(DISPLAY_HTML)
 @display_app.route('/voice_command', methods=['POST'])
 def voice_command_endpoint():
