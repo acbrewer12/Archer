@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Archer Dashboard v2</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Rajdhani:wght@400;600;700&display=swap');
+
+/* ─── CSS VARIABLES — DAY / NIGHT ─── */
+:root {
+  --bg:        #000000;
+  --bg2:       #0a0a0a;
+  --bg3:       #111111;
+  --border:    #1a1a1a;
+  --border2:   #222222;
+  --text:      #ffffff;
+  --text2:     #aaaaaa;
+  --text3:     #666666;
+  --label:     #444444;
+  --red:       #cc0000;
+  --orange:    #ff6600;
+  --yellow:    #ffaa00;
+  --green:     #00cc44;
+  --blue:      #00aaff;
+  --shadow:    rgba(204,0,0,0.15);
+}
+body.day {
+  --bg:        #1a1a1a;
+  --bg2:       #242424;
+  --bg3:       #2e2e2e;
+  --border:    #383838;
+  --border2:   #444444;
+  --text:      #ffffff;
+  --text2:     #dddddd;
+  --text3:     #aaaaaa;
+  --label:     #888888;
+  --red:       #ff2222;
+  --orange:    #ff7700;
+  --yellow:    #ffcc00;
+  --green:     #00ee55;
+  --blue:      #22bbff;
+  --shadow:    rgba(255,34,34,0.2);
+}
+
+body.night {
+  --bg:        #0a0000;
+  --bg2:       #110000;
+  --bg3:       #1a0000;
+  --border:    #2a0000;
+  --border2:   #380000;
+  --text:      #ff6644;
+  --text2:     #cc4422;
+  --text3:     #883322;
+  --label:     #662211;
+  --red:       #ff2200;
+  --orange:    #ff4400;
+  --yellow:    #ff6600;
+  --green:     #aa3300;
+  --blue:      #993300;
+  --shadow:    rgba(255,34,0,0.2);
+}
+body{background:#050505;color:var(--text);font-family:'Rajdhani',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px;gap:20px;transition:background 0.3s}
+body.day{background:#111}
+
+.phone{
+  width:360px;
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:0 0 40px var(--shadow);
+  transition:all 0.3s;
+}
+
+/* ─── HEADER ─── */
+.hdr{
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  padding:8px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--red)}
+.hdr-right{display:flex;gap:8px;align-items:center}
+.hdr-badge{background:var(--bg3);border:1px solid var(--border2);padding:2px 8px;border-radius:3px;font-size:9px;color:var(--red);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.day-toggle{background:none;border:1px solid var(--border2);border-radius:3px;padding:3px 8px;font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace;cursor:pointer;letter-spacing:1px;transition:all 0.2s}
+.day-toggle:hover{border-color:var(--yellow);color:var(--yellow)}
+
+/* ─── RADAR BANNER ─── */
+.radar{
+  background:var(--red);
+  padding:5px 12px;
+  font-family:'Share Tech Mono',monospace;
+  font-size:10px;
+  letter-spacing:3px;
+  text-align:center;
+  color:#fff;
+  display:none;
+  animation:blink 0.7s infinite;
+}
+.radar.on{display:block}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* ─── TABS ─── */
+.tabs{
+  display:flex;
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  overflow-x:auto;
+  scrollbar-width:none;
+}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  flex-shrink:0;
+  padding:8px 13px;
+  font-size:9px;
+  letter-spacing:2px;
+  color:var(--label);
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+  font-family:'Rajdhani',sans-serif;
+  font-weight:700;
+  transition:all 0.15s;
+}
+.tab.active{color:var(--red);border-bottom-color:var(--red)}
+.tab.drive-tab{color:var(--green);font-size:10px}
+.tab.drive-tab.active{color:var(--green);border-bottom-color:var(--green)}
+
+/* ─── SCREEN CONTAINER ─── */
+.screens{position:relative}
+.screen{display:none;flex-direction:column;gap:4px;padding:6px;background:var(--bg)}
+.screen.active{display:flex}
+
+/* ─── SHARED ─── */
+.box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;transition:background 0.3s,border 0.3s}
+.lbl{font-size:7px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
+.row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px}
+.bar-bg{background:var(--bg3);border-radius:3px;height:8px;overflow:hidden;border:1px solid var(--border)}
+.bar-fill{height:100%;border-radius:3px;transition:width 0.15s}
+.section-title{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding:2px 0 3px;border-bottom:1px solid var(--border);margin-bottom:3px}
+
+/* ═══════════════════════════════════════
+   SCREEN: DRIVE (safety-focused, glanceable)
+═══════════════════════════════════════ */
+.drive-speed{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:96px;
+  text-align:center;
+  line-height:1;
+  color:var(--text);
+  padding:10px 0 0;
+  letter-spacing:-3px;
+}
+.drive-speed-unit{font-size:10px;color:var(--label);letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
+.drive-rpm-row{display:flex;align-items:center;gap:8px;padding:0 6px;margin-bottom:4px}
+.drive-rpm-num{font-family:'Bebas Neue',sans-serif;font-size:36px;line-height:1;min-width:70px;transition:color 0.2s}
+.drive-rpm-wrap{flex:1}
+.drive-rpm-bar{background:var(--bg3);border-radius:4px;height:14px;overflow:hidden;position:relative}
+.drive-rpm-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 50%,var(--yellow) 65%,var(--orange) 80%,var(--red) 92%,#ff0000 100%);transition:width 0.1s}
+.drive-rpm-redline{position:absolute;right:15%;top:0;bottom:0;width:2px;background:#ff000066}
+.drive-gear-box{text-align:center;min-width:44px}
+.drive-gear-lbl{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.drive-gear-num{font-family:'Bebas Neue',sans-serif;font-size:42px;color:var(--text);line-height:1}
+.drive-boost-row{display:flex;align-items:center;gap:6px;padding:0 6px;margin-bottom:4px}
+.drive-boost-num{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--orange);min-width:60px;line-height:1}
+.drive-boost-label{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;line-height:1.4}
+.drive-boost-bar{background:var(--bg3);border-radius:3px;height:10px;overflow:hidden;flex:1}
+.drive-boost-fill{height:100%;border-radius:3px;background:var(--orange);transition:width 0.1s}
+.drive-stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px;padding:0 6px;margin-bottom:4px}
+.drive-stat{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:7px 4px;text-align:center}
+.drive-stat-val{font-family:'Share Tech Mono',monospace;font-size:14px;font-weight:bold;line-height:1}
+.drive-stat-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.drive-msg{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 10px;margin:0 6px 4px;display:flex;align-items:center;gap:6px}
+.drive-msg-tag{font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;flex-shrink:0}
+.drive-msg-text{font-size:11px;color:var(--text3);font-style:italic;line-height:1.3}
+.drive-score-row{display:grid;grid-template-columns:50px 1fr;gap:4px;padding:0 6px 6px}
+.drive-score{background:var(--bg2);border:1px solid var(--border);border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px}
+.drive-score-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1;color:var(--green)}
+.drive-score-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.drive-cond{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:6px 10px;display:flex;flex-direction:column;justify-content:center}
+.drive-cond-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.drive-cond-val{font-size:11px;color:var(--text3)}
+
+/* ═══════════════════════════════════════
+   SCREEN: DASH (original upgraded)
+═══════════════════════════════════════ */
+.dash-big{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.dash-big-box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 8px;text-align:center;position:relative;overflow:hidden}
+.dash-big-box::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--red),transparent);opacity:0.3}
+.dash-big-lbl{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.dash-big-num{font-family:'Bebas Neue',sans-serif;font-size:54px;line-height:1;letter-spacing:-2px}
+.dash-big-unit{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+
+/* ═══════════════════════════════════════
+   SCREEN: PERF
+═══════════════════════════════════════ */
+.perf-rpm{font-family:'Bebas Neue',sans-serif;font-size:84px;text-align:center;line-height:1;padding:8px 0 2px;transition:color 0.2s}
+.perf-sub{font-size:8px;color:var(--label);letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:8px}
+.metric-row{display:flex;justify-content:space-between;font-size:8px;color:var(--label);margin-bottom:2px;font-family:'Share Tech Mono',monospace}
+.thick-bar{background:var(--bg3);border-radius:4px;height:12px;overflow:hidden;margin-bottom:7px;border:1px solid var(--border)}
+.thick-fill{height:100%;border-radius:4px;transition:width 0.15s}
+.perf-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
+.perf-stat{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 6px;text-align:center}
+.perf-stat-val{font-family:'Bebas Neue',sans-serif;font-size:24px;line-height:1}
+.perf-stat-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+
+/* ═══════════════════════════════════════
+   SCREEN: LIVE
+═══════════════════════════════════════ */
+.sensor-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:4px}
+.sensor{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:7px 5px;text-align:center}
+.sensor-val{font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:bold;line-height:1}
+.sensor-lbl{font-size:6px;color:var(--label);letter-spacing:2px;margin-top:2px;font-family:'Share Tech Mono',monospace}
+
+/* ═══════════════════════════════════════
+   SCREEN: LAUNCH
+═══════════════════════════════════════ */
+.launch-big{font-family:'Bebas Neue',sans-serif;font-size:76px;text-align:center;line-height:1;padding:8px 0 2px;color:var(--yellow)}
+.launch-sub{font-size:8px;letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;color:var(--label);margin-bottom:8px}
+.launch-lights{display:flex;justify-content:center;gap:10px;margin:8px 0 12px}
+.ll{width:30px;height:30px;border-radius:50%;border:2px solid var(--border);background:var(--bg3);transition:all 0.3s}
+.ll.red{background:var(--red);border-color:#ff4444;box-shadow:0 0 14px rgba(204,0,0,0.7)}
+.ll.yellow{background:var(--yellow);border-color:#ffcc00;box-shadow:0 0 14px rgba(255,170,0,0.7)}
+.ll.green{background:var(--green);border-color:#00ff55;box-shadow:0 0 14px rgba(0,204,68,0.7)}
+.launch-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:6px}
+.launch-box{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 6px;text-align:center}
+.launch-val{font-family:'Bebas Neue',sans-serif;font-size:26px;line-height:1}
+.launch-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.launch-btn{background:#1a0000;border:2px solid var(--red);border-radius:6px;padding:14px;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:4px;color:var(--red);cursor:pointer;transition:all 0.15s}
+.launch-btn:active{background:#330000;box-shadow:0 0 20px rgba(204,0,0,0.5)}
+
+/* ═══════════════════════════════════════
+   SCREEN: TRACK
+═══════════════════════════════════════ */
+.track-et{font-family:'Bebas Neue',sans-serif;font-size:72px;text-align:center;color:var(--text);line-height:1;padding:6px 0 2px;letter-spacing:-1px}
+.track-status{font-size:9px;letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
+.split{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:7px 10px;display:flex;justify-content:space-between;align-items:center}
+.split-name{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;min-width:60px}
+.split-time{font-family:'Bebas Neue',sans-serif;font-size:22px;line-height:1}
+.split-pb{font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace}
+.split-delta{font-size:9px;font-family:'Share Tech Mono',monospace}
+.better{color:var(--green)}.worse{color:var(--red)}
+.track-sum{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-top:4px}
+.track-sum-box{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:6px 4px;text-align:center}
+.track-sum-val{font-family:'Bebas Neue',sans-serif;font-size:24px;line-height:1}
+.track-sum-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+
+/* ═══════════════════════════════════════
+   SCREEN: HEALTH
+═══════════════════════════════════════ */
+.health-item{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:5px}
+.health-name{font-size:10px;color:var(--text2);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.health-val{font-size:10px;font-family:'Share Tech Mono',monospace}
+.hok{color:var(--green)}.hwarn{color:var(--yellow)}.hbad{color:var(--red)}
+.hdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-left:6px}
+.dok{background:var(--green)}.dwarn{background:var(--yellow)}.dbad{background:var(--red)}
+
+/* ═══════════════════════════════════════
+   SCREEN: RACE
+═══════════════════════════════════════ */
+.race-dial{font-family:'Bebas Neue',sans-serif;font-size:68px;text-align:center;color:var(--yellow);line-height:1;padding:8px 0 2px}
+.race-dial-lbl{font-size:8px;letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;color:var(--label);margin-bottom:8px}
+.race-timers{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px}
+.race-timer-box{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px;text-align:center}
+.race-timer-val{font-family:'Bebas Neue',sans-serif;font-size:34px;line-height:1}
+.race-timer-lbl{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+.race-records{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:4px}
+.race-rec{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:6px;text-align:center}
+.race-rec-val{font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--red)}
+.race-rec-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+.rival-box{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 10px}
+.rival-name{font-size:10px;color:var(--yellow);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:4px}
+.rival-record{font-family:'Bebas Neue',sans-serif;font-size:22px;display:flex;gap:8px;align-items:center}
+.rival-sub{font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:2px}
+
+/* ═══════════════════════════════════════
+   SCREEN: GRAPHS
+═══════════════════════════════════════ */
+.graph-card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.graph-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.graph-title-txt{font-size:8px;letter-spacing:2px;color:var(--label);font-family:'Share Tech Mono',monospace}
+.graph-peak{font-size:9px;font-family:'Share Tech Mono',monospace}
+
+/* ═══════════════════════════════════════
+   SCREEN: BUILD
+═══════════════════════════════════════ */
+.build-stat{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 6px;text-align:center}
+.build-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1}
+.build-lbl{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.milestone{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:10px;font-family:'Rajdhani',sans-serif;font-weight:600}
+.milestone:last-child{border-bottom:none}
+.ms-done{color:var(--green)}.ms-active{color:var(--yellow)}.ms-pending{color:var(--label)}
+.ms-year{font-size:8px;font-family:'Share Tech Mono',monospace;color:var(--label)}
+
+/* ═══════════════════════════════════════
+   SCREEN: SHOW
+═══════════════════════════════════════ */
+.show-pulse{width:80px;height:80px;border-radius:50%;background:radial-gradient(circle,var(--red),#330000);border:2px solid var(--red);margin:0 auto 10px;animation:showpulse 1.2s ease-in-out infinite}
+@keyframes showpulse{0%,100%{transform:scale(1);box-shadow:0 0 20px rgba(204,0,0,0.4)}50%{transform:scale(1.1);box-shadow:0 0 50px rgba(204,0,0,0.9)}}
+.show-modes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
+.show-btn{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px 4px;text-align:center;font-size:8px;letter-spacing:1px;color:var(--label);font-family:'Share Tech Mono',monospace;cursor:pointer;transition:all 0.15s}
+.show-btn:active,.show-btn.on{border-color:var(--red);color:var(--red);background:#1a0000}
+
+/* ═══════════════════════════════════════
+   SCREEN: MAP
+═══════════════════════════════════════ */
+.map-area{background:var(--bg2);border:1px solid var(--border);border-radius:6px;height:130px;position:relative;overflow:hidden}
+.map-grid{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 19px,var(--border) 19px,var(--border) 20px),repeating-linear-gradient(90deg,transparent,transparent 19px,var(--border) 19px,var(--border) 20px);opacity:0.4}
+.map-you{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:12px;height:12px;background:var(--red);border-radius:50%;box-shadow:0 0 16px rgba(204,0,0,0.8);z-index:2}
+.map-ping{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%);z-index:2}
+.hazard-item{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center}
+.haz-type{font-size:10px;color:var(--text2);font-family:'Share Tech Mono',monospace}
+.haz-dist{font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace}
+.haz-badge{font-size:8px;padding:1px 6px;border-radius:3px}
+.haz-hi{background:#1a0000;color:var(--red);border:1px solid #330000}
+.haz-med{background:#1a1000;color:var(--yellow);border:1px solid #332200}
+
+/* ═══════════════════════════════════════
+   SCREEN: CAMS
+═══════════════════════════════════════ */
+.cam-feed{background:var(--bg3);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative}
+.cam-overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:6px 8px;pointer-events:none}
+.cam-label{font-size:8px;color:#fff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px;display:inline-block}
+.cam-status{font-size:7px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px;display:inline-block;align-self:flex-end}
+.cam-placeholder{width:100%;height:100px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px}
+.cam-icon{font-size:28px;opacity:0.3}
+.cam-offline{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.cam-grid-small{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+/* ═══════════════════════════════════════
+   V4 ADDITIONS
+═══════════════════════════════════════ */
+/* TIER 2 NOTIFICATION BANNER */
+.t2-notify{background:#001a0d;border-bottom:2px solid var(--green);padding:8px 12px;display:none;flex-direction:column;gap:6px}
+.t2-notify.on{display:flex}
+.t2-notify-msg{font-size:11px;color:var(--green);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.t2-notify-from{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.t2-notify-btns{display:flex;gap:6px}
+.t2-approve{background:#003300;border:1px solid var(--green);color:var(--green);border-radius:4px;padding:5px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;cursor:pointer}
+.t2-deny{background:#1a0000;border:1px solid var(--red);color:var(--red);border-radius:4px;padding:5px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;cursor:pointer}
+
+/* DRIVE SCREEN DANGER BORDER FLASH */
+#screen-drive.danger{animation:driveborder 0.4s infinite}
+@keyframes driveborder{0%,100%{box-shadow:inset 0 0 0 3px rgba(204,0,0,0)}50%{box-shadow:inset 0 0 0 3px rgba(255,0,0,0.9)}}
+
+/* PARKED ONLY BADGE */
+.parked-only-msg{
+  display:none;
+  flex-direction:column;align-items:center;justify-content:center;
+  height:120px;gap:8px;
+}
+.parked-only-msg.on{display:flex}
+.parked-only-icon{font-size:32px}
+.parked-only-text{font-size:10px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;text-align:center}
+
+/* NIGHT MODE TOGGLE */
+.mode-switcher{
+  display:flex;gap:3px;
+}
+.mode-btn{
+  background:none;border:1px solid var(--border2);
+  border-radius:3px;padding:3px 7px;
+  font-size:8px;color:var(--label);
+  font-family:'Share Tech Mono',monospace;cursor:pointer;
+  letter-spacing:1px;transition:all 0.2s;
+}
+.mode-btn.active{border-color:var(--yellow);color:var(--yellow);background:rgba(255,170,0,0.1)}
+.mode-btn.night-active{border-color:#ff3300;color:#ff4400;background:rgba(255,34,0,0.1)}
+
+/* VOICE ACTIVE RING */
+.voice-ring{
+  position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+  width:80px;height:80px;border-radius:50%;
+  border:3px solid var(--red);
+  display:none;align-items:center;justify-content:center;
+  font-size:28px;
+  animation:voicering 0.8s infinite;
+  background:rgba(0,0,0,0.9);
+  z-index:100;
+}
+.voice-ring.on{display:flex}
+@keyframes voicering{0%,100%{box-shadow:0 0 0 0 rgba(204,0,0,0.6),inset 0 0 20px rgba(204,0,0,0.2)}50%{box-shadow:0 0 0 16px rgba(204,0,0,0),inset 0 0 30px rgba(204,0,0,0.4)}}
+.voice-ring-text{position:fixed;bottom:46px;left:50%;transform:translateX(-50%);font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;display:none;z-index:100}
+.voice-ring-text.on{display:block}
+
+/* AUDIO BEEP indicator */
+.beep-flash{position:fixed;inset:0;background:rgba(255,0,0,0.08);pointer-events:none;z-index:998;display:none}
+.beep-flash.on{display:block;animation:beepflash 0.15s 3}
+@keyframes beepflash{0%,100%{opacity:0}50%{opacity:1}}
+
+/* DRIVE SCREEN parked overlay */
+.parked-badge{
+  background:#001a00;border:1px solid var(--green);
+  border-radius:3px;padding:2px 8px;
+  font-size:8px;color:var(--green);
+  font-family:'Share Tech Mono',monospace;
+  letter-spacing:2px;display:none;
+}
+.parked-badge.on{display:inline-block}
+.warn-overlay{position:fixed;inset:0;z-index:999;background:rgba(180,0,0,0.92);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;animation:warnflash 0.5s infinite}
+.warn-overlay.on{display:flex}
+@keyframes warnflash{0%,100%{background:rgba(180,0,0,0.92)}50%{background:rgba(255,0,0,0.98)}}
+.warn-icon{font-size:52px}
+.warn-title{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:6px;color:#fff;text-align:center}
+.warn-detail{font-size:13px;color:rgba(255,255,255,0.8);font-family:'Share Tech Mono',monospace;letter-spacing:2px;text-align:center}
+.warn-dismiss{background:rgba(255,255,255,0.15);border:2px solid #fff;border-radius:6px;padding:10px 24px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:3px;cursor:pointer;margin-top:4px}
+.voice-bar{background:var(--bg2);border-top:1px solid var(--border);padding:6px 8px;display:flex;align-items:center;gap:8px}
+.voice-input{flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:6px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text);outline:none;transition:border 0.2s}
+.voice-input:focus{border-color:var(--red)}
+.voice-input::placeholder{color:var(--label)}
+.voice-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;flex-shrink:0;transition:all 0.2s}
+.voice-btn.listening{background:var(--red);border-color:var(--red);animation:voicepulse 0.8s infinite}
+@keyframes voicepulse{0%,100%{box-shadow:0 0 0 0 rgba(204,0,0,0.6)}50%{box-shadow:0 0 0 8px rgba(204,0,0,0)}}
+.tab.locked{opacity:0.3;pointer-events:none}
+.speed-lock{background:#1a1000;border-bottom:1px solid var(--yellow);padding:4px 12px;font-size:8px;color:var(--yellow);letter-spacing:2px;font-family:'Share Tech Mono',monospace;display:none;text-align:center}
+.speed-lock.on{display:block}
+.voice-response{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 10px;margin:4px 6px;display:none;align-items:center;gap:6px}
+.voice-response.on{display:flex}
+.vr-tag{font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;flex-shrink:0}
+.vr-text{font-size:11px;color:var(--text2);font-style:italic}
+
+/* ═══════════════════════════════════════
+   FOOTER
+═══════════════════════════════════════ */
+  background:var(--bg2);
+  border-top:1px solid var(--border);
+  padding:5px 12px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.footer-score{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.footer-score span{color:var(--green)}
+.footer-time{font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace}
+</style>
+</head>
+<body>
+
+<!-- VOICE LISTENING RING -->
+<div class="voice-ring" id="voice-ring">🎤</div>
+<div class="voice-ring-text" id="voice-ring-text">LISTENING...</div>
+<div class="beep-flash" id="beep-flash"></div>
+
+<!-- CRITICAL WARNING OVERLAY -->
+<div class="warn-overlay" id="warn-overlay">
+  <div class="warn-icon" id="warn-icon">⚠️</div>
+  <div class="warn-title" id="warn-title">OIL PRESSURE LOW</div>
+  <div class="warn-detail" id="warn-detail">PULL OVER SAFELY — DO NOT IGNORE</div>
+  <button class="warn-dismiss" onclick="dismissWarn()">ACKNOWLEDGE</button>
+</div>
+
+<div class="phone" id="phone">
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-title">ARCHER</div>
+    <div class="hdr-right">
+      <span class="auto-badge" id="auto-badge">AUTO</span>
+      <div class="mode-switcher">
+        <button class="mode-btn" id="btn-day" onclick="setMode('day')">☀</button>
+        <button class="mode-btn active" id="btn-auto" onclick="setMode('auto')">A</button>
+        <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
+        <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
+      </div>
+      <div class="hdr-badge">AYDEN T1</div>
+    </div>
+  </div>
+
+  <!-- SPEED LOCK BANNER -->
+  <div class="speed-lock" id="speed-lock">⚠ MOVING — TAB SWITCHING LOCKED — EYES ON ROAD</div>
+
+  <!-- TIER 2 REQUEST BANNER -->
+  <div class="t2-notify" id="t2-notify">
+    <div style="flex:1">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="t2-notify-from" id="t2-notify-from">KHLOE — PASSENGER</div>
+        <div id="t2-queue-badge" style="font-size:8px;color:var(--green);font-family:'Share Tech Mono',monospace;letter-spacing:1px"></div>
+      </div>
+      <div class="t2-notify-msg" id="t2-notify-msg">Requesting Sport mode</div>
+    </div>
+    <div class="t2-notify-btns">
+      <button class="t2-approve" onclick="respondT2('approved')">✓ APPROVE</button>
+      <button class="t2-deny" onclick="respondT2('denied')">✗ DENY</button>
+      <button onclick="dismissT2Banner()" style="background:none;border:1px solid #333;color:#444;border-radius:4px;padding:5px 10px;font-family:'Share Tech Mono',monospace;font-size:10px;cursor:pointer;letter-spacing:1px">✕</button>
+    </div>
+  </div>
+
+  <!-- RADAR -->
+  <div class="radar" id="radar">⚠ KA BAND — 4 BARS — AHEAD — SLOW DOWN</div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <div class="tab drive-tab active" onclick="setTab('drive')">DRIVE</div>
+    <div class="tab" onclick="setTab('dash')">DASH</div>
+    <div class="tab" onclick="setTab('perf')">PERF</div>
+    <div class="tab" onclick="setTab('live')">LIVE</div>
+    <div class="tab" onclick="setTab('health')">HEALTH</div>
+    <div class="tab" onclick="setTab('launch')">LAUNCH</div>
+    <div class="tab" onclick="setTab('track')">TRACK</div>
+    <div class="tab" onclick="setTab('race')">RACE</div>
+    <div class="tab" onclick="setTab('graphs')">GRAPHS</div>
+    <div class="tab" onclick="setTab('build')">BUILD</div>
+    <div class="tab" onclick="setTab('show')">SHOW</div>
+    <div class="tab" onclick="setTab('map')">MAP</div>
+    <div class="tab" onclick="setTab('cams')">CAMS</div>
+    <div class="tab" onclick="setTab('music')">MUSIC</div>
+  </div>
+
+  <div class="screens">
+
+    <!-- ══════════ DRIVE (safety) ══════════ -->
+    <div class="screen active" id="screen-drive">
+      <div class="drive-speed" id="dr-speed">42</div>
+      <div class="drive-speed-unit">MPH</div>
+
+      <div class="drive-rpm-row">
+        <div>
+          <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">RPM</div>
+          <div class="drive-rpm-num" id="dr-rpm">3842</div>
+        </div>
+        <div class="drive-rpm-wrap">
+          <div class="drive-rpm-bar">
+            <div class="drive-rpm-fill" id="dr-rpm-bar" style="width:62%"></div>
+            <div class="drive-rpm-redline"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace">
+            <span>0</span><span>2000</span><span>4000</span><span>6200</span>
+          </div>
+        </div>
+        <div class="drive-gear-box">
+          <div class="drive-gear-lbl">GEAR</div>
+          <div class="drive-gear-num" id="dr-gear">3</div>
+        </div>
+      </div>
+
+      <div class="drive-boost-row">
+        <div>
+          <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">BOOST</div>
+          <div class="drive-boost-num" id="dr-boost">9 <span style="font-size:14px;color:var(--label)">PSI</span></div>
+        </div>
+        <div style="flex:1;margin:0 10px">
+          <div class="drive-boost-bar">
+            <div class="drive-boost-fill" id="dr-boost-bar" style="width:47%"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace">
+            <span>-10</span><span>0</span><span>+15</span><span>+30</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="drive-stats">
+        <div class="drive-stat">
+          <div class="drive-stat-val" style="color:var(--yellow)" id="dr-oil">205°</div>
+          <div class="drive-stat-lbl">OIL</div>
+        </div>
+        <div class="drive-stat">
+          <div class="drive-stat-val" style="color:var(--green)" id="dr-bat">14.2V</div>
+          <div class="drive-stat-lbl">BATT</div>
+        </div>
+        <div class="drive-stat">
+          <div class="drive-stat-val" style="color:var(--blue)" id="dr-eth">84%</div>
+          <div class="drive-stat-lbl">E85</div>
+        </div>
+        <div class="drive-stat">
+          <div class="drive-stat-val" style="color:var(--red)" id="dr-mode">SPORT</div>
+          <div class="drive-stat-lbl">MODE</div>
+        </div>
+      </div>
+
+      <div class="drive-msg">
+        <span class="drive-msg-tag">ARCHER</span>
+        <span class="drive-msg-text" id="dr-msg">3800 RPM. Boost building. Road clear.</span>
+      </div>
+
+      <div class="drive-score-row">
+        <div class="drive-score">
+          <div class="drive-score-val" id="dr-score">A</div>
+          <div class="drive-score-lbl">SCORE</div>
+        </div>
+        <div class="drive-cond">
+          <div class="drive-cond-lbl">CONDITIONS</div>
+          <div class="drive-cond-val">Salem MO — 68°F — Clear</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ DASH ══════════ -->
+    <div class="screen" id="screen-dash">
+      <div class="dash-big">
+        <div class="dash-big-box">
+          <div class="dash-big-lbl">SPEED</div>
+          <div class="dash-big-num" style="color:var(--text)" id="da-speed">42</div>
+          <div class="dash-big-unit">MPH</div>
+        </div>
+        <div class="dash-big-box">
+          <div class="dash-big-lbl">RPM</div>
+          <div class="dash-big-num" style="color:var(--text)" id="da-rpm">3842</div>
+          <div class="dash-big-unit">×1000</div>
+        </div>
+      </div>
+      <div style="padding:0 2px">
+        <div class="bar-bg" style="height:10px">
+          <div class="bar-fill" id="da-rpm-bar" style="width:62%;background:linear-gradient(90deg,var(--green),var(--yellow),var(--red))"></div>
+        </div>
+      </div>
+      <div class="box" style="display:flex;align-items:center;gap:10px">
+        <div>
+          <div class="lbl">BOOST</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--orange);line-height:1" id="da-boost">9</div>
+          <div style="font-size:9px;color:var(--label)">PSI</div>
+        </div>
+        <div style="flex:1">
+          <div class="bar-bg"><div class="bar-fill" id="da-boost-bar" style="width:47%;background:var(--orange)"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace"><span>-10</span><span>0</span><span>+15</span><span>+30</span></div>
+        </div>
+        <div style="text-align:center">
+          <div class="lbl">GEAR</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--text);line-height:1" id="da-gear">3</div>
+        </div>
+      </div>
+      <div class="row4">
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="da-oil">205°</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">BATT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--green)" id="da-bat">14.2V</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)">84%</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)">SPORT</div></div>
+      </div>
+      <div class="box" style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;flex-shrink:0">ARCHER</span>
+        <span style="font-size:11px;color:var(--text3);font-style:italic" id="da-msg">Boost is building. Oil temp nominal.</span>
+      </div>
+    </div>
+
+    <!-- ══════════ PERF ══════════ -->
+    <div class="screen" id="screen-perf">
+      <div class="perf-rpm" id="pf-rpm">3842</div>
+      <div class="perf-sub">ENGINE RPM</div>
+      <div style="padding:0 2px">
+        <div class="metric-row"><span>RPM</span><span style="color:var(--yellow)" id="pf-rpm-pct">62%</span></div>
+        <div class="thick-bar"><div class="thick-fill" id="pf-rpm-bar" style="width:62%;background:linear-gradient(90deg,var(--green),var(--yellow),var(--red))"></div></div>
+        <div class="metric-row"><span>BOOST</span><span style="color:var(--orange)">9 PSI</span></div>
+        <div class="thick-bar"><div class="thick-fill" style="width:47%;background:var(--orange)"></div></div>
+        <div class="metric-row"><span>THROTTLE</span><span style="color:var(--text)">78%</span></div>
+        <div class="thick-bar"><div class="thick-fill" style="width:78%;background:#888"></div></div>
+        <div class="metric-row"><span>E85</span><span style="color:var(--blue)">84%</span></div>
+        <div class="thick-bar"><div class="thick-fill" style="width:84%;background:var(--blue)"></div></div>
+      </div>
+      <div class="perf-stats">
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--red)">8.4s</div><div class="perf-stat-lbl">BEST 0-60</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--yellow)">205°</div><div class="perf-stat-lbl">OIL TEMP</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--green)">92</div><div class="perf-stat-lbl">SCORE</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)">42</div><div class="perf-stat-lbl">MPH</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--orange)">9</div><div class="perf-stat-lbl">BOOST PSI</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)">3</div><div class="perf-stat-lbl">GEAR</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════ LIVE ══════════ -->
+    <div class="screen" id="screen-live">
+      <div class="parked-only-msg" id="live-parked">
+        <div class="parked-only-icon">🅿</div>
+        <div class="parked-only-text">PARK THE TRUCK<br>TO VIEW SENSORS</div>
+      </div>
+      <div id="live-content">
+      <div class="section-title">ENGINE</div>
+      <div class="sensor-grid">
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)">14.7</div><div class="sensor-lbl">AFR</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)">18°</div><div class="sensor-lbl">TIMING</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)">0</div><div class="sensor-lbl">KNOCK</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)">78%</div><div class="sensor-lbl">TPS</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">45</div><div class="sensor-lbl">OIL PSI</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)">72°F</div><div class="sensor-lbl">INTAKE</div></div>
+      </div>
+      <div class="section-title">DRIVETRAIN</div>
+      <div class="sensor-grid">
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">162°</div><div class="sensor-lbl">TRANS</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)">14.2V</div><div class="sensor-lbl">ALT</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)">3</div><div class="sensor-lbl">GEAR</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--blue)">84%</div><div class="sensor-lbl">E85</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">205°</div><div class="sensor-lbl">OIL °F</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)">190°</div><div class="sensor-lbl">COOLANT</div></div>
+      </div>
+      <div class="section-title">G-FORCE</div>
+      <div class="sensor-grid">
+        <div class="sensor"><div class="sensor-val" style="color:var(--orange)">0.4g</div><div class="sensor-lbl">LONG</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--red)">0.8g</div><div class="sensor-lbl">PEAK</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)">42</div><div class="sensor-lbl">MPH</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════ HEALTH ══════════ -->
+    <div class="screen" id="screen-health">
+      <div class="health-item"><span class="health-name">ENGINE TEMP</span><span class="health-val hok">195°F ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">OIL PRESSURE</span><span class="health-val hok">45 PSI ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">BATTERY</span><span class="health-val hok">14.2V ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok">190°F ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn">162°F !</span><span class="hdot dwarn"></span></div>
+      <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hwarn">LOW !</span><span class="hdot dwarn"></span></div>
+      <div class="health-item"><span class="health-name">TIRE PRESSURE</span><span class="health-val hok">34/34/34/34 ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">FAULT CODES</span><span class="health-val hok">NONE ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok">NONE ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok">14.7 ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item" style="background:#0d0000;border-color:#330000"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hbad">HEAT SOAK ✗</span><span class="hdot dbad"></span></div>
+    </div>
+
+    <!-- ══════════ LAUNCH ══════════ -->
+    <div class="screen" id="screen-launch">
+      <div class="launch-big" id="la-rpm">3500</div>
+      <div class="launch-sub">HOLD RPM — LAUNCH ARMED</div>
+      <div class="launch-lights">
+        <div class="ll red"></div>
+        <div class="ll red"></div>
+        <div class="ll yellow"></div>
+        <div class="ll"></div>
+        <div class="ll"></div>
+      </div>
+      <div class="launch-grid">
+        <div class="launch-box"><div class="launch-val" style="color:var(--yellow)">3500</div><div class="launch-lbl">HOLD RPM</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--green)">ON</div><div class="launch-lbl">TC STATUS</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--blue)">84%</div><div class="launch-lbl">E85</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--text)">8.4s</div><div class="launch-lbl">BEST 0-60</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--orange)">9 PSI</div><div class="launch-lbl">BOOST</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--green)">68°F</div><div class="launch-lbl">AIR TEMP</div></div>
+      </div>
+      <div class="launch-btn" onclick="this.style.background='#330000'" onmouseup="this.style.background='#1a0000'">⚡ LAUNCH ARMED — FLOOR IT</div>
+    </div>
+
+    <!-- ══════════ TRACK ══════════ -->
+    <div class="screen" id="screen-track">
+      <div class="track-et">11.842</div>
+      <div class="track-status" style="color:var(--green)">RUN COMPLETE</div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <div class="split"><span class="split-name">60 FT</span><span class="split-time" style="color:var(--text)">1.524</span><span class="split-pb">PB 1.48</span><span class="split-delta worse">+0.044</span></div>
+        <div class="split"><span class="split-name">330 FT</span><span class="split-time" style="color:var(--text)">4.312</span><span class="split-pb">PB 4.28</span><span class="split-delta worse">+0.032</span></div>
+        <div class="split"><span class="split-name">1/8 MILE</span><span class="split-time" style="color:var(--yellow)">7.618</span><span class="split-pb">PB 7.64</span><span class="split-delta better">-0.022</span></div>
+        <div class="split"><span class="split-name">1000 FT</span><span class="split-time" style="color:var(--text)">9.944</span><span class="split-pb">PB 9.91</span><span class="split-delta worse">+0.034</span></div>
+        <div class="split" style="background:#0d0000;border-color:#330000"><span class="split-name" style="color:var(--red)">1/4 MILE</span><span class="split-time" style="color:var(--red)">11.842</span><span class="split-pb">PB 11.42</span><span class="split-delta worse">+0.422</span></div>
+      </div>
+      <div class="track-sum">
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)">112</div><div class="track-sum-lbl">TRAP MPH</div></div>
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--orange)">9</div><div class="track-sum-lbl">BOOST PSI</div></div>
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)">84%</div><div class="track-sum-lbl">E85</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════ RACE ══════════ -->
+    <div class="screen" id="screen-race">
+      <div class="race-dial">11.80</div>
+      <div class="race-dial-lbl">DIAL-IN (seconds)</div>
+      <div class="race-timers">
+        <div class="race-timer-box"><div class="race-timer-val" style="color:var(--text)">0.00</div><div class="race-timer-lbl">60 FT</div></div>
+        <div class="race-timer-box"><div class="race-timer-val" style="color:var(--text)">0.000</div><div class="race-timer-lbl">ET</div></div>
+      </div>
+      <div class="race-records">
+        <div class="race-rec"><div class="race-rec-val">11.42</div><div class="race-rec-lbl">BEST ET</div></div>
+        <div class="race-rec"><div class="race-rec-val">1.48</div><div class="race-rec-lbl">BEST 60FT</div></div>
+        <div class="race-rec"><div class="race-rec-val">112</div><div class="race-rec-lbl">TRAP MPH</div></div>
+      </div>
+      <div class="rival-box">
+        <div class="rival-name">RIVAL: RED CAMARO</div>
+        <div class="rival-record">
+          <span style="color:var(--green)">YOU</span>
+          <span style="font-size:13px;color:var(--label);font-family:'Share Tech Mono',monospace">7W — 3L</span>
+          <span style="color:var(--red)">THEM</span>
+        </div>
+        <div class="rival-sub">THEIR DIAL: 12.10 — LAST RUN: 11.98</div>
+      </div>
+    </div>
+
+    <!-- ══════════ GRAPHS ══════════ -->
+    <div class="screen" id="screen-graphs">
+      <div class="graph-card">
+        <div class="graph-header">
+          <span class="graph-title-txt">RPM HISTORY</span>
+          <span class="graph-peak" style="color:var(--yellow)">PEAK: 5420</span>
+        </div>
+        <canvas id="g-rpm" width="320" height="52"></canvas>
+      </div>
+      <div class="graph-card">
+        <div class="graph-header">
+          <span class="graph-title-txt">BOOST HISTORY</span>
+          <span class="graph-peak" style="color:var(--orange)">PEAK: 12 PSI</span>
+        </div>
+        <canvas id="g-boost" width="320" height="52"></canvas>
+      </div>
+      <div class="graph-card">
+        <div class="graph-header">
+          <span class="graph-title-txt">OIL TEMP</span>
+          <span class="graph-peak" style="color:var(--red)">PEAK: 221°F</span>
+        </div>
+        <canvas id="g-oil" width="320" height="52"></canvas>
+      </div>
+      <div class="graph-card">
+        <div class="graph-header">
+          <span class="graph-title-txt">BATTERY</span>
+          <span class="graph-peak" style="color:var(--green)">NOW: 14.2V</span>
+        </div>
+        <canvas id="g-bat" width="320" height="52"></canvas>
+      </div>
+    </div>
+
+    <!-- ══════════ BUILD ══════════ -->
+    <div class="screen" id="screen-build">
+      <div class="row4">
+        <div class="build-stat"><div class="build-val" style="color:var(--green)">$0</div><div class="build-lbl">SPENT</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">PARTS</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--red)">556</div><div class="build-lbl">EST HP</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">ODO</div></div>
+      </div>
+      <div class="box">
+        <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-bottom:4px"><span>2026 START</span><span>2031 TARGET</span></div>
+        <div style="background:var(--bg3);border-radius:3px;height:10px;overflow:hidden;border:1px solid var(--border)">
+          <div style="height:100%;width:18%;background:linear-gradient(90deg,var(--red),var(--orange));border-radius:3px"></div>
+        </div>
+        <div style="font-size:8px;color:var(--label);text-align:center;margin-top:4px;font-family:'Share Tech Mono',monospace">YEAR 1 OF 5 — 18% COMPLETE</div>
+      </div>
+      <div class="box">
+        <div class="lbl" style="margin-bottom:6px">MILESTONES</div>
+        <div class="milestone"><span class="ms-done">✓ Engine pulled</span><span class="ms-year">2026</span></div>
+        <div class="milestone"><span class="ms-active">⟶ LSA swap</span><span class="ms-year">2027</span></div>
+        <div class="milestone"><span class="ms-pending">○ Air suspension</span><span class="ms-year">2027</span></div>
+        <div class="milestone"><span class="ms-pending">○ Audio build</span><span class="ms-year">2028</span></div>
+        <div class="milestone"><span class="ms-pending">○ Paint & wrap</span><span class="ms-year">2029</span></div>
+        <div class="milestone"><span class="ms-pending">○ Final reveal</span><span class="ms-year">2031</span></div>
+      </div>
+      <div class="box">
+        <div class="lbl">FAULT CODES</div>
+        <div style="font-size:11px;color:var(--green);font-family:'Share Tech Mono',monospace;margin-top:2px">No active codes</div>
+      </div>
+      <div class="box">
+        <div class="lbl" style="margin-bottom:6px">PASSENGER REQUEST LOG</div>
+        <div id="t1-request-log"><div style="font-size:10px;color:var(--label)">No requests yet</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════ SHOW ══════════ -->
+    <div class="screen" id="screen-show" style="padding:10px 6px;align-items:center;text-align:center">
+      <div class="show-pulse"></div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:6px;color:var(--red);margin-bottom:2px">SHOW MODE</div>
+      <div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:10px;font-family:'Rajdhani',sans-serif" id="show-msg">Alright. Watch this.</div>
+      <div class="row3" style="width:100%;margin-bottom:8px">
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">RPM</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--red)" id="sh-rpm">750</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)">195°</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">FUEL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)">E82</div></div>
+      </div>
+      <div class="show-modes" style="width:100%">
+        <div class="show-btn on" onclick="setShow(this,'FLEX')">FLEX</div>
+        <div class="show-btn" onclick="setShow(this,'SLAM')">SLAM</div>
+        <div class="show-btn" onclick="setShow(this,'DRUNK')">DRUNK</div>
+        <div class="show-btn" onclick="setShow(this,'STALKER')">STALKER</div>
+        <div class="show-btn" onclick="setShow(this,'KAREN')">KAREN</div>
+        <div class="show-btn" onclick="setShow(this,'STADIUM')">STADIUM</div>
+        <div class="show-btn" onclick="setShow(this,'THERAPY')">THERAPY</div>
+        <div class="show-btn" onclick="setShow(this,'GOODBYE')">GOODBYE</div>
+        <div class="show-btn" onclick="setShow(this,'CONCERT')">CONCERT</div>
+      </div>
+    </div>
+
+    <!-- ══════════ MAP ══════════ -->
+    <div class="screen" id="screen-map">
+      <div class="map-area">
+        <div class="map-grid"></div>
+        <div class="map-you"></div>
+        <!-- Speed trap -->
+        <div class="map-ping" style="background:var(--yellow);top:35%;left:68%;box-shadow:0 0 8px rgba(255,170,0,0.7)"></div>
+        <!-- Pothole -->
+        <div class="map-ping" style="background:var(--orange);top:62%;left:28%;box-shadow:0 0 8px rgba(255,102,0,0.7)"></div>
+        <!-- Camera -->
+        <div class="map-ping" style="background:var(--blue);top:22%;left:42%;box-shadow:0 0 8px rgba(0,170,255,0.7)"></div>
+        <!-- Geofence ring -->
+        <div style="position:absolute;top:50%;left:50%;width:60px;height:60px;border-radius:50%;border:1px dashed var(--red);transform:translate(-50%,-50%);opacity:0.3"></div>
+        <div style="position:absolute;bottom:6px;left:8px;font-size:7px;color:var(--text2);font-family:'Share Tech Mono',monospace;letter-spacing:1px;background:rgba(0,0,0,0.7);padding:2px 5px;border-radius:2px">Salem MO — Hwy 72</div>
+      </div>
+      <div style="display:flex;gap:12px;font-size:7px;color:var(--label);font-family:'Share Tech Mono',monospace;padding:2px 2px">
+        <span>🔴 YOU</span><span style="color:var(--yellow)">● TRAP</span><span style="color:var(--orange)">● HAZARD</span><span style="color:var(--blue)">● CAMERA</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <div class="hazard-item"><span class="haz-type">⚠ SPEED TRAP</span><span class="haz-dist">0.4 mi</span><span class="haz-badge haz-hi">HIGH</span></div>
+        <div class="hazard-item"><span class="haz-type">🕳 POTHOLE</span><span class="haz-dist">0.7 mi</span><span class="haz-badge haz-med">MED</span></div>
+        <div class="hazard-item"><span class="haz-type">📷 CAMERA</span><span class="haz-dist">1.2 mi</span><span class="haz-badge haz-hi">HIGH</span></div>
+      </div>
+    </div>
+
+    <!-- ══════════ CAMS ══════════ -->
+    <div class="screen" id="screen-cams">
+      <!-- Main cam - large -->
+      <div class="cam-feed" style="height:140px">
+        <div class="cam-placeholder">
+          <div class="cam-icon">📷</div>
+          <div class="cam-offline">FRONT CAM — OFFLINE</div>
+          <div style="font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:2px">Connect Pi camera to activate</div>
+        </div>
+        <div class="cam-overlay">
+          <span class="cam-label">FRONT — WIDE</span>
+          <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+        </div>
+      </div>
+
+      <!-- Small cam grid -->
+      <div class="cam-grid-small">
+        <div class="cam-feed" style="height:90px">
+          <div class="cam-placeholder">
+            <div class="cam-icon" style="font-size:20px">📷</div>
+            <div class="cam-offline" style="font-size:7px">REAR — OFFLINE</div>
+          </div>
+          <div class="cam-overlay">
+            <span class="cam-label">REAR</span>
+            <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+          </div>
+        </div>
+        <div class="cam-feed" style="height:90px">
+          <div class="cam-placeholder">
+            <div class="cam-icon" style="font-size:20px">📷</div>
+            <div class="cam-offline" style="font-size:7px">CABIN — OFFLINE</div>
+          </div>
+          <div class="cam-overlay">
+            <span class="cam-label">CABIN</span>
+            <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cam info -->
+      <div class="box">
+        <div class="lbl" style="margin-bottom:4px">CAMERA STATUS</div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:'Share Tech Mono',monospace">
+            <span style="color:var(--text2)">FRONT WIDE</span><span style="color:var(--red)">OFFLINE</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:'Share Tech Mono',monospace">
+            <span style="color:var(--text2)">REAR BACKUP</span><span style="color:var(--red)">OFFLINE</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:'Share Tech Mono',monospace">
+            <span style="color:var(--text2)">CABIN MONITOR</span><span style="color:var(--red)">OFFLINE</span>
+          </div>
+        </div>
+        <div style="font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+          Cameras activate when Pi is running and camera modules are connected. Live MJPEG stream via /cam/front
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ MUSIC (Spotify) ══════════ -->
+    <div class="screen" id="screen-music">
+      <div id="t1-spotify-disconnected" style="text-align:center;padding:24px 8px;display:flex;flex-direction:column;align-items:center;gap:8px">
+        <div style="font-size:36px">🎵</div>
+        <div style="font-size:13px;color:#fff;letter-spacing:2px;font-family:'Share Tech Mono',monospace">SPOTIFY</div>
+        <div style="font-size:10px;color:#444;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Connect to control playback</div>
+        <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:20px;padding:10px 24px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace;margin-top:4px">CONNECT SPOTIFY</button>
+      </div>
+      <div id="t1-spotify-connected" style="display:none;flex-direction:column;gap:6px">
+        <div class="box" style="display:flex;align-items:center;gap:10px">
+          <img id="t1-np-art" src="" style="width:48px;height:48px;border-radius:5px;object-fit:cover;display:none;border:1px solid var(--border);flex-shrink:0">
+          <div id="t1-np-disc" style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle,#330000,#0a0000);border:2px solid var(--red);flex-shrink:0"></div>
+          <div style="flex:1;min-width:0">
+            <div id="t1-np-title" style="font-size:12px;color:var(--text);font-family:'Share Tech Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Loading...</div>
+            <div id="t1-np-artist" style="font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
+            <div style="background:var(--bg3);border-radius:2px;height:3px;overflow:hidden;margin-top:5px"><div id="t1-np-fill" style="height:100%;background:var(--red);width:0%;transition:width 0.5s"></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:2px"><span id="t1-np-cur">0:00</span><span id="t1-np-dur">0:00</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+            <div style="display:flex;gap:5px">
+              <button onclick="t1SpotifyPrev()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 8px;cursor:pointer;font-size:12px">⏮</button>
+              <button id="t1-play-btn" onclick="t1SpotifyToggle()" style="background:var(--red);border:none;color:#fff;border-radius:3px;padding:5px 12px;cursor:pointer;font-size:14px">▶</button>
+              <button onclick="t1SpotifyNext()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 8px;cursor:pointer;font-size:12px">⏭</button>
+            </div>
+            <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:100%;accent-color:#cc0000">
+          </div>
+        </div>
+        <div class="box">
+          <div class="section-title">PLAYLISTS</div>
+          <div id="t1-playlist-list" style="font-size:10px;color:var(--label);font-family:'Share Tech Mono',monospace">Loading...</div>
+        </div>
+        <div class="box">
+          <div class="section-title">UP NEXT</div>
+          <div id="t1-queue-list" style="font-size:10px;color:var(--label);font-family:'Share Tech Mono',monospace">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <!-- VOICE RESPONSE -->
+  <div class="voice-response" id="voice-response">
+    <span class="vr-tag">ARCHER</span>
+    <span class="vr-text" id="vr-text">Ready.</span>
+  </div>
+
+  <!-- VOICE INPUT -->
+  <div class="voice-bar">
+    <div class="voice-btn" id="voice-btn" onclick="toggleVoice()">🎤</div>
+    <input class="voice-input" id="voice-input" placeholder='Try: "show health" or "oil temp"' onkeydown="if(event.key==='Enter')sendVoice()"/>
+    <div class="voice-btn" onclick="sendVoice()" style="border-radius:20px;width:auto;padding:0 10px;font-size:10px;font-family:'Share Tech Mono',monospace;letter-spacing:1px">GO</div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-score">SCORE <span id="ft-score">A — 94</span></div>
+    <div class="footer-time" id="ft-time">11:46 PM</div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// ARCHER v4 — FULL FEATURE JS
+// ═══════════════════════════════════════
+
+const TAB_NAMES = ['drive','dash','perf','live','health','launch','track','race','graphs','build','show','map','cams','music'];
+const PARKED_ONLY = ['live','graphs','build','cams'];
+const LOCKED_MOVING = ['perf','health','launch','track','race','show','map'];
+let currentTab = 'drive';
+let vehicleSpeed = 0;
+
+// ─── TAB SWITCHING ───
+function setTab(name) {
+  // If moving fast, force back to drive
+  if (vehicleSpeed > 10) {
+    if (PARKED_ONLY.includes(name)) { showParkedMsg(); return; }
+    if (LOCKED_MOVING.includes(name)) { flashSpeedLock(); return; }
+  }
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const idx = TAB_NAMES.indexOf(name);
+  if (idx >= 0) document.querySelectorAll('.tab')[idx].classList.add('active');
+  document.getElementById('screen-' + name).classList.add('active');
+  currentTab = name;
+  if (name === 'graphs') drawAllGraphs();
+  updateParkedContent();
+}
+
+function showParkedMsg() {
+  const el = document.getElementById('speed-lock');
+  el.textContent = '🅿 PARK THE TRUCK TO ACCESS THIS SCREEN';
+  el.classList.add('on');
+  setTimeout(() => { el.textContent = '⚠ MOVING — TAB SWITCHING LOCKED — EYES ON ROAD'; el.classList.remove('on'); }, 3000);
+}
+
+function flashSpeedLock() {
+  const el = document.getElementById('speed-lock');
+  el.classList.add('on');
+  setTimeout(() => el.classList.remove('on'), 3000);
+}
+
+function updateParkedContent() {
+  // Show/hide parked-only content based on speed
+  const parked = vehicleSpeed === 0;
+  const lp = document.getElementById('live-parked');
+  const lc = document.getElementById('live-content');
+  if (lp) lp.classList.toggle('on', !parked);
+  if (lc) lc.style.display = parked ? 'contents' : 'none';
+}
+
+// Auto-force DRIVE when speed > 10
+function autoForceDrive() {
+  if (vehicleSpeed > 10 && PARKED_ONLY.concat(LOCKED_MOVING).includes(currentTab)) {
+    setTab('drive');
+    showVoiceResponse('Moving. Switching to drive screen.');
+  }
+}
+
+// ─── NIGHT MODE SYSTEM ───
+// Modes: 'auto' | 'day' | 'night' | 'red'
+let currentMode = 'auto';
+let manualMode = null;
+let autoRevertTimer = null;
+
+function setMode(mode) {
+  manualMode = mode === 'auto' ? null : mode;
+  currentMode = mode;
+  applyMode(mode === 'auto' ? getAutoMode() : mode);
+  // Update buttons
+  ['day','auto','night','red'].forEach(m => {
+    const btn = document.getElementById('btn-' + m);
+    if (btn) {
+      btn.classList.remove('active','night-active');
+      if (m === mode) btn.classList.add(mode === 'red' ? 'night-active' : 'active');
+    }
+  });
+  document.getElementById('auto-badge').textContent = mode === 'auto' ? 'AUTO' : 'MANUAL';
+  // Auto-revert to auto after 10 minutes
+  if (mode !== 'auto') {
+    clearTimeout(autoRevertTimer);
+    autoRevertTimer = setTimeout(() => setMode('auto'), 600000);
+  }
+}
+
+function getAutoMode() {
+  const h = new Date().getHours();
+  if (h >= 7 && h < 17) return 'day';
+  if (h >= 17 && h < 20) return 'night';
+  return 'red'; // late night = deep red shift
+}
+
+function applyMode(mode) {
+  document.body.classList.remove('day','night');
+  if (mode === 'day') document.body.classList.add('day');
+  else if (mode === 'red') document.body.classList.add('night');
+  // else default dark theme
+}
+
+// Init auto mode on load
+applyMode(getAutoMode());
+setInterval(() => {
+  if (!manualMode) applyMode(getAutoMode());
+}, 60000);
+
+// ─── CRITICAL WARNING SYSTEM ───
+const WARNINGS = [
+  { id:'knock',  icon:'💥', title:'KNOCK DETECTED',      detail:'REDUCE THROTTLE — CHECK FUEL OCTANE',  cond: d => d.knock > 0 },
+  { id:'oil',    icon:'🛢️', title:'LOW OIL PRESSURE',    detail:'PULL OVER SAFELY — DO NOT IGNORE',     cond: d => d.oilPsi < 20 },
+  { id:'heat',   icon:'🌡️', title:'ENGINE OVERHEATING',  detail:'PULL OVER — LET ENGINE COOL',          cond: d => d.oilTemp > 230 },
+  { id:'bat',    icon:'🔋', title:'LOW BATTERY',          detail:'CHECK ALTERNATOR — CHARGE SYSTEM',    cond: d => d.battery < 11.5 },
+  { id:'boost',  icon:'💨', title:'OVERBOOST WARNING',    detail:'EASE OFF THROTTLE — CHECK TUNE',      cond: d => d.boost > 18 },
+];
+let warnCooldown = {};
+
+function checkWarnings(d) {
+  for (const w of WARNINGS) {
+    if (w.cond(d) && !warnCooldown[w.id]) {
+      triggerWarning(w);
+      warnCooldown[w.id] = true;
+      setTimeout(() => { warnCooldown[w.id] = false; }, 30000);
+      break;
+    }
+  }
+}
+
+function triggerWarning(w) {
+  // Full screen overlay
+  document.getElementById('warn-icon').textContent = w.icon;
+  document.getElementById('warn-title').textContent = w.title;
+  document.getElementById('warn-detail').textContent = w.detail;
+  document.getElementById('warn-overlay').classList.add('on');
+  // Flash drive screen border
+  document.getElementById('screen-drive').classList.add('danger');
+  // Flash screen
+  triggerBeep();
+  // Update Archer message
+  setArcherMsg(w.detail);
+  // Speak warning
+  speakText(w.title + '. ' + w.detail);
+}
+
+function dismissWarn() {
+  document.getElementById('warn-overlay').classList.remove('on');
+  document.getElementById('screen-drive').classList.remove('danger');
+}
+
+function triggerBeep() {
+  const el = document.getElementById('beep-flash');
+  el.classList.add('on');
+  setTimeout(() => el.classList.remove('on'), 500);
+  // Web Audio beep
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.start(); osc.stop(ctx.currentTime + 0.4);
+  } catch(e) {}
+}
+
+// ─── TEXT TO SPEECH ───
+function speakText(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.1; u.pitch = 0.9; u.volume = 1;
+  window.speechSynthesis.speak(u);
+}
+
+// ─── VOICE RECOGNITION ───
+let recognition = null;
+let isListening = false;
+
+function initSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return false;
+  recognition = new SR();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+  recognition.onresult = e => {
+    const cmd = e.results[0][0].transcript.toLowerCase().trim();
+    stopListening();
+    document.getElementById('voice-input').value = cmd;
+    processVoiceCmd(cmd);
+  };
+  recognition.onerror = () => stopListening();
+  recognition.onend = () => stopListening();
+  return true;
+}
+
+function toggleVoice() {
+  if (isListening) { stopListening(); return; }
+  if (!recognition && !initSpeech()) {
+    // Fallback — focus text input
+    document.getElementById('voice-input').focus();
+    return;
+  }
+  startListening();
+}
+
+function startListening() {
+  isListening = true;
+  document.getElementById('voice-btn').classList.add('listening');
+  document.getElementById('voice-ring').classList.add('on');
+  document.getElementById('voice-ring-text').classList.add('on');
+  document.getElementById('voice-input').placeholder = 'Listening...';
+  try { recognition.start(); } catch(e) {}
+}
+
+function stopListening() {
+  isListening = false;
+  document.getElementById('voice-btn').classList.remove('listening');
+  document.getElementById('voice-ring').classList.remove('on');
+  document.getElementById('voice-ring-text').classList.remove('on');
+  document.getElementById('voice-input').placeholder = 'Say or type a command...';
+  try { recognition.stop(); } catch(e) {}
+}
+
+// ─── VOICE COMMANDS ───
+const VOICE_CMDS = {
+  'show drive':   () => { setTab('drive'); return 'Drive screen.'; },
+  'show health':  () => { setTab('health'); return 'System health.'; },
+  'show perf':    () => { setTab('perf'); return 'Performance screen.'; },
+  'show dash':    () => { setTab('dash'); return 'Dashboard.'; },
+  'show launch':  () => { setTab('launch'); return 'Launch control armed.'; },
+  'show map':     () => { setTab('map'); return 'Hazard map loaded.'; },
+  'show race':    () => { setTab('race'); return 'Bracket mode.'; },
+  'show track':   () => { setTab('track'); return 'Drag strip mode.'; },
+  'show build':   () => { setTab('build'); return 'Build tracker. 18% done.'; },
+  'show graphs':  () => { setTab('graphs'); return 'History graphs.'; },
+  'acknowledge':  () => { dismissWarn(); return 'Warning acknowledged.'; },
+  'dismiss':      () => { dismissWarn(); return 'Cleared.'; },
+  'oil temp':     () => `Oil is ${Math.round(fakeData.oilTemp)} degrees. ${fakeData.oilTemp > 220 ? 'Running hot.' : 'Nominal.'}`,
+  'oil pressure': () => `Oil pressure ${fakeData.oilPsi} PSI. ${fakeData.oilPsi < 25 ? 'That is low.' : 'Good.'}`,
+  'boost':        () => `Boost is ${Math.round(fakeData.boost)} PSI.`,
+  'rpm':          () => `RPM is ${Math.round(fakeData.rpm)}.`,
+  'battery':      () => `Battery ${fakeData.battery.toFixed(1)} volts.`,
+  'speed':        () => `${Math.round(fakeData.speed)} miles per hour.`,
+  'e85':          () => `Ethanol at ${fakeData.ethanol} percent.`,
+  'status':       () => `RPM ${Math.round(fakeData.rpm)}, oil ${Math.round(fakeData.oilTemp)} degrees, battery ${fakeData.battery.toFixed(1)} volts. ${fakeData.oilTemp < 220 && fakeData.battery > 13 ? 'All good.' : 'Watch your temps.'}`,
+  'day mode':     () => { setMode('day'); return 'Day mode on.'; },
+  'night mode':   () => { setMode('night'); return 'Night mode on.'; },
+  'red mode':     () => { setMode('red'); return 'Night shift on. Red mode.'; },
+  'sport mode':   () => { set('dr-mode','SPORT'); set('dd-mode','SPORT'); return 'Sport mode.'; },
+  'comfort mode': () => { set('dr-mode','COMFORT'); set('dd-mode','COMFORT'); return 'Comfort mode.'; },
+};
+
+function sendVoice() {
+  const inp = document.getElementById('voice-input');
+  const cmd = inp.value.trim().toLowerCase();
+  if (!cmd) return;
+  inp.value = '';
+  processVoiceCmd(cmd);
+}
+
+function processVoiceCmd(cmd) {
+  let response = null;
+  for (const [key, fn] of Object.entries(VOICE_CMDS)) {
+    if (cmd.includes(key)) { response = fn(); break; }
+  }
+  if (!response) response = `I heard you. Not sure what you need. Try saying status or show health.`;
+  setArcherMsg(response);
+  showVoiceResponse(response);
+  speakText(response);
+}
+
+function showVoiceResponse(text) {
+  const vr = document.getElementById('voice-response');
+  document.getElementById('vr-text').textContent = text;
+  vr.classList.add('on');
+  setTimeout(() => vr.classList.remove('on'), 5000);
+}
+
+function setArcherMsg(text) {
+  ['dr-msg','da-msg'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = text; });
+}
+
+// ─── LIVE DATA ───
+let fakeData = { rpm:3842, boost:9, speed:42, gear:3, oilTemp:205, oilPsi:45, battery:14.2, ethanol:84, knock:0 };
+
+function update() {
+  fakeData.rpm += (Math.random() - 0.46) * 300;
+  fakeData.rpm = Math.max(750, Math.min(5800, fakeData.rpm));
+  fakeData.speed = Math.max(0, Math.round(fakeData.rpm / 88));
+  fakeData.boost = Math.round((fakeData.rpm - 800) / 220);
+  fakeData.boost = Math.max(-2, Math.min(20, fakeData.boost));
+  fakeData.gear = fakeData.rpm < 1500 ? 1 : fakeData.rpm < 2500 ? 2 : fakeData.rpm < 3500 ? 3 : fakeData.rpm < 4500 ? 4 : 5;
+  fakeData.knock = fakeData.rpm > 5400 ? 1 : 0;
+  vehicleSpeed = fakeData.speed;
+
+  const r = Math.round(fakeData.rpm);
+  const rColor = r > 5000 ? 'var(--red)' : r > 3800 ? 'var(--yellow)' : 'var(--text)';
+  const rPct = Math.min(100, (r / 6200) * 100);
+  const bPct = Math.min(100, Math.max(0, ((fakeData.boost + 10) / 40) * 100));
+
+  // DRIVE
+  set('dr-speed', fakeData.speed);
+  setStyle('dr-rpm', r, 'color', rColor);
+  setWidth('dr-rpm-bar', rPct);
+  set('dr-gear', fakeData.gear);
+  setStyle('dr-boost', fakeData.boost + ' PSI', 'color', fakeData.boost > 14 ? 'var(--red)' : 'var(--orange)');
+  setWidth('dr-boost-bar', bPct);
+
+  // DASH
+  setStyle('da-speed', fakeData.speed, 'color', 'var(--text)');
+  setStyle('da-rpm', r, 'color', rColor);
+  setWidth('da-rpm-bar', rPct);
+  set('da-gear', fakeData.gear);
+  set('da-boost', fakeData.boost);
+  setWidth('da-boost-bar', bPct);
+
+  // PERF
+  setStyle('pf-rpm', r, 'color', rColor);
+  setWidth('pf-rpm-bar', rPct);
+  set('pf-rpm-pct', Math.round(rPct) + '%');
+
+  // Speed lock
+  const moving = fakeData.speed > 10;
+  document.getElementById('speed-lock').classList.toggle('on', moving);
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const n = TAB_NAMES[i];
+    if (PARKED_ONLY.includes(n) || LOCKED_MOVING.includes(n)) {
+      t.classList.toggle('locked', moving);
+    }
+  });
+
+  // Auto force drive
+  autoForceDrive();
+
+  // Radar
+  document.getElementById('radar').classList.toggle('on', fakeData.speed > 55);
+
+  // Clock
+  document.getElementById('ft-time').textContent = new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+
+  // Warnings
+  checkWarnings(fakeData);
+
+  // Parked content
+  updateParkedContent();
+}
+
+function set(id, val) { const el = document.getElementById(id); if(el) el.textContent = val; }
+function setStyle(id, val, prop, css) { const el = document.getElementById(id); if(el){el.textContent = val; el.style[prop] = css;} }
+function setWidth(id, pct) { const el = document.getElementById(id); if(el) el.style.width = pct + '%'; }
+
+setInterval(update, 150);
+update();
+
+// ─── GRAPHS ───
+function drawGraph(id, points, color, max) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  points.forEach((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - (v / max) * (h - 4) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+  ctx.fillStyle = color + '22'; ctx.fill();
+}
+const rpmData = [800,1200,2200,3500,4200,5100,4800,3800,2500,3200,4500,5200,4900,3600,2800,3500,4200,4800,5400,4200,3800,3200,2400,1800,1200,800,750,800,900,800];
+const bstData = [0,0,2,6,9,13,12,8,3,5,10,14,12,7,4,7,10,12,15,10,8,5,2,1,0,0,0,0,0,0];
+const oilData = [185,186,188,192,196,201,205,208,210,212,215,218,221,220,218,215,212,210,208,206,205,204,203,202,201,200,199,198,197,196];
+const batData = [2.1,2.2,2.2,2.3,2.2,2.1,2.0,1.9,2.0,2.1,2.2,2.3,2.2,2.1,2.2,2.3,2.2,2.1,2.0,2.1,2.2,2.3,2.2,2.1,2.0,1.9,2.0,2.1,2.2,2.2];
+function drawAllGraphs() {
+  drawGraph('g-rpm', rpmData, '#ffaa00', 6200);
+  drawGraph('g-boost', bstData, '#ff6600', 20);
+  drawGraph('g-oil', oilData, '#cc0000', 240);
+  drawGraph('g-bat', batData, '#00cc44', 4);
+}
+setTimeout(drawAllGraphs, 300);
+
+// ── TIER 2 NOTIFICATION SYSTEM ──────────────────────────
+let notifyQueue   = [];   // queue of pending requests
+let currentNotify = null; // currently displayed notification
+const t1RequestLog = [];
+
+function dismissT2Banner() {
+  document.getElementById('t2-notify').classList.remove('on');
+  // Show next in queue after 1 second if any
+  setTimeout(showNextNotify, 1000);
+}
+
+function showNextNotify() {
+  if (!notifyQueue.length) {
+    document.getElementById('t2-notify').classList.remove('on');
+    currentNotify = null;
+    return;
+  }
+  currentNotify = notifyQueue.shift();
+  const banner = document.getElementById('t2-notify');
+  document.getElementById('t2-notify-from').textContent = (currentNotify.from + ' — PASSENGER').toUpperCase();
+  document.getElementById('t2-notify-msg').textContent  = currentNotify.message;
+  // Queue count badge
+  const badge = document.getElementById('t2-queue-badge');
+  if (badge) badge.textContent = notifyQueue.length > 0 ? '+' + notifyQueue.length + ' more' : '';
+  banner.classList.add('on');
+  speakText(currentNotify.from + ' says: ' + currentNotify.message);
+  // Auto-dismiss after 60 seconds if ignored
+  setTimeout(() => {
+    if (currentNotify && banner.classList.contains('on')) {
+      addToT1Log(currentNotify.from, currentNotify.message, 'ignored');
+      dismissT2Banner();
+    }
+  }, 60000);
+}
+
+function addToT1Log(from, msg, status) {
+  t1RequestLog.unshift({
+    from, msg, status,
+    time: new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})
+  });
+  if (t1RequestLog.length > 10) t1RequestLog.pop();
+  renderT1Log();
+}
+
+function renderT1Log() {
+  const el = document.getElementById('t1-request-log');
+  if (!el) return;
+  if (!t1RequestLog.length) { el.innerHTML = '<div style="font-size:10px;color:var(--label)">No requests yet</div>'; return; }
+  el.innerHTML = t1RequestLog.map(r => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:10px">
+      <div>
+        <div style="color:var(--text2);font-size:11px">${r.msg}</div>
+        <div style="color:var(--label);font-size:9px;letter-spacing:1px">${r.from} — ${r.time}</div>
+      </div>
+      <div style="color:${r.status==='approved'?'var(--green)':r.status==='denied'?'var(--red)':r.status==='ignored'?'#333':'var(--label)'};font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;flex-shrink:0;margin-left:8px">${r.status.toUpperCase()}</div>
+    </div>`).join('');
+}
+
+async function pollT2Notifications() {
+  try {
+    const r = await fetch(window.location.origin + '/tier_notifications');
+    const d = await r.json();
+    const pendingAll = d.notifications?.filter(n => n.status === 'pending') || [];
+
+    // Add new ones to queue, skip cancelled
+    pendingAll.forEach(p => {
+      const alreadyQueued = notifyQueue.find(q => q.id === p.id);
+      const isCurrent     = currentNotify && currentNotify.id === p.id;
+      if (!alreadyQueued && !isCurrent) {
+        notifyQueue.push(p);
+      }
+    });
+
+    // Remove cancelled from queue
+    notifyQueue = notifyQueue.filter(q => {
+      const still = d.notifications?.find(n => n.id === q.id);
+      return still && still.status === 'pending';
+    });
+
+    // If current was cancelled — dismiss and show next
+    if (currentNotify) {
+      const current = d.notifications?.find(n => n.id === currentNotify.id);
+      if (current && current.status === 'cancelled') {
+        document.getElementById('t2-notify').classList.remove('on');
+        currentNotify = null;
+        setTimeout(showNextNotify, 500);
+        return;
+      }
+    }
+
+    // Show first if nothing currently displayed
+    const banner = document.getElementById('t2-notify');
+    if (!currentNotify && notifyQueue.length > 0) {
+      showNextNotify();
+    }
+
+    // Update queue badge
+    const badge = document.getElementById('t2-queue-badge');
+    if (badge) {
+      badge.textContent = notifyQueue.length > 0 ? '+' + notifyQueue.length + ' more' : '';
+      badge.style.cursor = notifyQueue.length > 0 ? 'pointer' : 'default';
+      badge.onclick = notifyQueue.length > 0 ? showQueueViewer : null;
+    }
+
+    if (pendingAll.length === 0 && !currentNotify) {
+      banner.classList.remove('on');
+    }
+  } catch(e) {}
+}
+
+function showQueueViewer() {
+  const existing = document.getElementById('queue-viewer');
+  if (existing) { existing.remove(); return; }
+
+  const viewer = document.createElement('div');
+  viewer.id = 'queue-viewer';
+  viewer.style.cssText = 'position:fixed;top:80px;left:10px;right:10px;background:#0a0a0a;border:1px solid var(--green);border-radius:10px;padding:14px;z-index:999;max-height:240px;overflow-y:auto;box-shadow:0 4px 24px rgba(0,204,68,0.18),0 2px 8px rgba(0,0,0,0.8)';
+
+  const items = notifyQueue.map((n, i) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="color:var(--text2);font-size:11px;font-family:'Share Tech Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${n.message}</div>
+        <div style="color:var(--label);font-size:9px;font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-top:2px">${n.from} — ${n.time}</div>
+      </div>
+      <button onclick="skipQueueItem(${i})" style="background:#0d0d0d;border:1px solid #333;color:#555;border-radius:4px;padding:4px 10px;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;cursor:pointer;flex-shrink:0;margin-left:10px;transition:all 0.15s;-webkit-tap-highlight-color:rgba(204,0,0,0.2)" onpointerdown="this.style.background='#1a0000';this.style.borderColor='var(--red)';this.style.color='var(--red)'" onpointerup="this.style.background='';this.style.borderColor='';this.style.color=''">SKIP</button>
+    </div>`).join('');
+
+  viewer.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-bottom:1px solid #1a1a1a;padding-bottom:8px">
+      <div>
+        <div style="font-size:10px;color:var(--green);letter-spacing:3px;font-family:'Share Tech Mono',monospace">QUEUED REQUESTS</div>
+        <div style="font-size:9px;color:var(--label);letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-top:2px">${notifyQueue.length} pending</div>
+      </div>
+      <div onclick="document.getElementById('queue-viewer').remove()" style="color:var(--label);cursor:pointer;font-size:18px;padding:2px 6px;border-radius:4px;border:1px solid #1a1a1a">✕</div>
+    </div>
+    ${notifyQueue.length === 0 ? '<div style="font-size:11px;color:var(--label);font-family:Share Tech Mono,monospace;text-align:center;padding:8px 0">Queue is empty</div>' : items}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">
+      <button onclick="ignoreAllQueue()" style="background:#1a0000;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:8px;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;cursor:pointer">IGNORE ALL</button>
+      <button onclick="clearAllAndDismiss()" style="background:#001a0d;border:1px solid var(--green);color:var(--green);border-radius:6px;padding:8px;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;cursor:pointer">CLEAR + DISMISS</button>
+    </div>`;
+  document.body.appendChild(viewer);
+}
+
+async function clearAllAndDismiss() {
+  for (const item of notifyQueue) {
+    addToT1Log(item.from, item.message, 'ignored');
+    await fetch(window.location.origin + '/tier_respond', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: item.id, response: 'denied', action: ''})
+    }).catch(() => {});
+  }
+  notifyQueue = [];
+  document.getElementById('t2-notify').classList.remove('on');
+  currentNotify = null;
+  const badge = document.getElementById('t2-queue-badge');
+  if (badge) badge.textContent = '';
+  const existing = document.getElementById('queue-viewer');
+  if (existing) existing.remove();
+  setArcherMsg('All requests cleared.');
+  speakText('All requests cleared.');
+}
+
+async function skipQueueItem(index) {
+  const item = notifyQueue[index];
+  if (!item) return;
+  notifyQueue.splice(index, 1);
+  addToT1Log(item.from, item.message, 'ignored');
+  await fetch(window.location.origin + '/tier_respond', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: item.id, response: 'denied', action: ''})
+  }).catch(() => {});
+  const existing = document.getElementById('queue-viewer');
+  if (existing) existing.remove();
+  showQueueViewer();
+}
+
+async function ignoreAllQueue() {
+  for (const item of notifyQueue) {
+    addToT1Log(item.from, item.message, 'ignored');
+    await fetch(window.location.origin + '/tier_respond', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: item.id, response: 'denied', action: ''})
+    }).catch(() => {});
+  }
+  notifyQueue = [];
+  const existing = document.getElementById('queue-viewer');
+  if (existing) existing.remove();
+  const badge = document.getElementById('t2-queue-badge');
+  if (badge) badge.textContent = '';
+}
+
+async function respondT2(response) {
+  if (!currentNotify) return;
+  const n = currentNotify;
+  document.getElementById('t2-notify').classList.remove('on');
+  await fetch(window.location.origin + '/tier_respond', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: n.id, response, action: n.message})
+  });
+  const msg = response === 'approved' ? 'Done — request approved.' : 'Request denied.';
+  setArcherMsg(msg);
+  speakText(msg);
+  addToT1Log(n.from, n.message, response);
+  currentNotify = null;
+  // Show next in queue
+  setTimeout(showNextNotify, 800);
+}
+
+setInterval(pollT2Notifications, 3000);
+pollT2Notifications();
+
+// ── TIER 1 SPOTIFY ──────────────────────────────────────
+const T1BASE = window.location.origin;
+let t1SpotifyTimer = null;
+
+async function t1ConnectSpotify() {
+  const r = await fetch(T1BASE + '/spotify/login');
+  const d = await r.json();
+  window.open(d.redirect, '_blank', 'width=500,height=600');
+  setTimeout(t1CheckSpotify, 3000);
+}
+async function t1CheckSpotify() {
+  try {
+    const r = await fetch(T1BASE + '/spotify/status');
+    const d = await r.json();
+    if (d.connected) {
+      document.getElementById('t1-spotify-disconnected').style.display = 'none';
+      document.getElementById('t1-spotify-connected').style.display = 'flex';
+      t1UpdateNP(d); t1LoadPlaylists(); t1LoadQueue();
+      if (!t1SpotifyTimer) t1SpotifyTimer = setInterval(t1PollSpotify, 4000);
+    }
+  } catch(e) {}
+}
+async function t1PollSpotify() {
+  try { const r = await fetch(T1BASE+'/spotify/status'); const d = await r.json(); if(d.connected) t1UpdateNP(d); } catch(e) {}
+}
+function t1Fmt(s) { const m=Math.floor(s/60); return m+':'+(s%60<10?'0':'')+s%60; }
+function t1UpdateNP(d) {
+  if (!d.track) return;
+  document.getElementById('t1-np-title').textContent = d.track;
+  document.getElementById('t1-np-artist').textContent = d.artist;
+  document.getElementById('t1-play-btn').textContent = d.playing ? '⏸' : '▶';
+  const pct = d.duration > 0 ? (d.progress/d.duration)*100 : 0;
+  document.getElementById('t1-np-fill').style.width = pct + '%';
+  document.getElementById('t1-np-cur').textContent = t1Fmt(Math.floor(d.progress/1000));
+  document.getElementById('t1-np-dur').textContent = t1Fmt(Math.floor(d.duration/1000));
+  if (d.art) { document.getElementById('t1-np-art').src=d.art; document.getElementById('t1-np-art').style.display='block'; document.getElementById('t1-np-disc').style.display='none'; }
+  document.getElementById('t1-vol').value = d.volume||50;
+}
+async function t1SpotifyToggle() {
+  const p = document.getElementById('t1-play-btn').textContent==='⏸';
+  await fetch(T1BASE+'/spotify/'+(p?'pause':'play'),{method:'POST'});
+  document.getElementById('t1-play-btn').textContent = p?'▶':'⏸';
+}
+async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POST'}); setTimeout(t1PollSpotify,600); setTimeout(t1LoadQueue,1200); }
+async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST'}); setTimeout(t1PollSpotify,600); }
+async function t1SpotifyVolume(v) { await fetch(T1BASE+'/spotify/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:parseInt(v)})}); }
+async function t1LoadPlaylists() {
+  try {
+    const r = await fetch(T1BASE+'/spotify/playlists'); const d = await r.json();
+    const el = document.getElementById('t1-playlist-list');
+    if (!d.playlists?.length) { el.textContent='No playlists'; return; }
+    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks} ▶</span></div>`).join('');
+  } catch(e) {}
+}
+async function t1LoadQueue() {
+  try {
+    const r = await fetch(T1BASE+'/spotify/queue'); const d = await r.json();
+    const el = document.getElementById('t1-queue-list');
+    if (!d.queue?.length) { el.textContent='Queue empty'; return; }
+    el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${t.name} <span style="color:var(--label)">— ${t.artist}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
+  } catch(e) {}
+}
+async function t1PlayPlaylist(id) {
+  await fetch(T1BASE+'/spotify/play_playlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_id:id})});
+  setTimeout(t1PollSpotify,800); setTimeout(t1LoadQueue,1500);
+}
+setTimeout(t1CheckSpotify, 1000);
+
+// ─── SHOW MODE ───
+const showMsgs = {
+  FLEX:'Yeah. That\'s right. Look at it.',SLAM:'Dropping. Hold on.',DRUNK:'Okay this is for the fans.',
+  STALKER:'I see you looking.',KAREN:'May I speak to your manufacturer.',STADIUM:'Good evening Salem.',
+  THERAPY:'And how does that make you feel.',GOODBYE:'It\'s been real. Peace.',CONCERT:'Drop the beat.',
+};
+function setShow(btn, mode) {
+  document.querySelectorAll('.show-btn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  const msg = document.getElementById('show-msg');
+  if (msg) msg.textContent = showMsgs[mode] || 'Activated.';
+}
+
+// Init speech on first interaction
+document.addEventListener('click', () => { if (!recognition) initSpeech(); }, { once: true });
+
+</script>
+</body>
+</html>
