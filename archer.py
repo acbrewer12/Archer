@@ -7390,6 +7390,16 @@ def fan_page():
 
 
 
+def run_display_server():
+    import logging as _log
+    _log.getLogger('werkzeug').setLevel(_log.ERROR)
+    port = int(os.environ.get('PORT', 7860))
+    display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+
+def run_tier_server(tier, port):
+    pass  # Tier servers disabled on HuggingFace
+
+
 # ── MAIN ─────────────────────────────────────────────────
 def main():
     threading.Thread(target=tts_worker,          daemon=True).start()
