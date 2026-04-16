@@ -6140,7 +6140,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 def display_index():
     import os
     if os.path.exists('archer_tier1.html'):
-        with open('archer_tier1.html', 'r') as f:
+        with open('archer_tier1.html', 'r', encoding='utf-8') as f:
             return f.read()
     return render_template_string(DISPLAY_HTML)
 @display_app.route('/voice_command', methods=['POST'])
@@ -7381,7 +7381,7 @@ def get_tier_html(tier, name=None):
     
     html_file = tier_files.get(tier)
     if html_file and os.path.exists(html_file):
-        with open(html_file, 'r') as f:
+        with open(html_file, 'r', encoding='utf-8') as f:
             html = f.read()
         if name and tier == 2:
             html = html.replace("const passengerName = 'Khloe'", f"const passengerName = '{name}'")
@@ -7400,7 +7400,7 @@ def fan_page():
     import os
     from flask import Response as FR
     if os.path.exists('archer_fan.html'):
-        with open('archer_fan.html', 'r') as f:
+        with open('archer_fan.html', 'r', encoding='utf-8') as f:
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
@@ -7426,17 +7426,21 @@ SIM_SCENARIOS = {
 def simulator_page():
     from flask import Response as FR
     if os.path.exists('archer_simulator.html'):
-        with open('archer_simulator.html', 'r') as f:
+        with open('archer_simulator.html', 'r', encoding='utf-8') as f:
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">SIMULATOR — archer_simulator.html not found</body></html>', mimetype='text/html')
 
 @display_app.route('/sim/set', methods=['POST'])
 def sim_set():
-    """Set individual truck_state values from simulator sliders."""
+    """Set individual truck_state values from simulator sliders.
+    If oil_temp, coolant_temp, or battery_main are explicitly set, auto-disable
+    sim random noise so update_awareness doesn't overwrite them every 2 s."""
+    global sim_random_enabled
     from flask import request as req
     data = req.get_json() or {}
     allowed = {'rpm', 'speed', 'boost', 'ethanol', 'oil_temp', 'coolant_temp', 'battery_main', 'battery_aux', 'exhaust'}
+    noise_keys = {'oil_temp', 'coolant_temp', 'battery_main'}
     updated = {}
     for key, val in data.items():
         if key in allowed and key in truck_state:
@@ -7445,7 +7449,21 @@ def sim_set():
                 updated[key] = truck_state[key]
             except (ValueError, TypeError):
                 pass
+    # If the user is manually controlling any key that random noise would overwrite,
+    # turn off noise automatically so slider values stick.
+    if updated.keys() & noise_keys:
+        sim_random_enabled = False
     return jsonify({'ok': True, 'updated': updated, 'sim_random': sim_random_enabled})
+
+@display_app.route('/sim/random', methods=['POST'])
+def sim_random_toggle():
+    """Explicitly enable or disable simulated random noise.
+    Body: {"enabled": true} or {"enabled": false}"""
+    global sim_random_enabled
+    from flask import request as req
+    data = req.get_json() or {}
+    sim_random_enabled = bool(data.get('enabled', True))
+    return jsonify({'ok': True, 'sim_random_enabled': sim_random_enabled})
 
 @display_app.route('/sim/scenario', methods=['POST'])
 def sim_scenario():

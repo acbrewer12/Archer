@@ -267,13 +267,14 @@ function setSlider(slId, lblId, val, unit) {
 }
 
 function setRandom(on) {
-  // Flip sim_random_enabled via a known key POST
-  fetch('/sim/set', {
+  fetch('/sim/random', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({_rand: on ? 1 : 0})  // server ignores unknown keys, but we poll status
-  }).catch(()=>{});
-  appendLog('sim noise ' + (on ? 'ON' : 'OFF'), 'ok');
+    body: JSON.stringify({enabled: on})
+  })
+  .then(r => r.json())
+  .then(d => appendLog('sim noise ' + (d.sim_random_enabled ? 'ON' : 'OFF'), 'ok'))
+  .catch(() => appendLog('sim noise toggle failed', ''));
 }
 
 // ── POLL LIVE STATE ──────────────────────────────────────
@@ -295,9 +296,9 @@ function poll() {
         mode.textContent = 'SIM';
         obd.textContent  = 'disconnected';
       }
-      // Sync random toggle to server state
+      // Sync random toggle to server state (catches auto-disable from slider writes)
       const rt = document.getElementById('rand-toggle');
-      if (rt) rt.checked = d.sim_random_enabled;
+      if (rt && rt.checked !== d.sim_random_enabled) rt.checked = d.sim_random_enabled;
       // Tick indicator
       pollTick = !pollTick;
       document.getElementById('poll-tick').style.color = pollTick ? '#333' : '#cc0000';
