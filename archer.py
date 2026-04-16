@@ -29,6 +29,10 @@ obd2_display = {
     'mode':      'default',
 }
 
+# True  = update_awareness injects random noise (simulation mode)
+# False = real OBD data is feeding truck_state; don't overwrite it
+sim_random_enabled = True
+
 # ── PUBLIC URL TRACKING ──────────────────
 public_url = {'url': ''}
 
@@ -809,10 +813,11 @@ def update_awareness():
         if rpm > 5800:                           warnings.append('near_redline')
         awareness['warnings_active'] = warnings
 
-        truck_state['oil_temp']     = 195 + random.randint(-3, 5)
-        truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
-        truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
-        truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
+        if sim_random_enabled:
+            truck_state['oil_temp']     = 195 + random.randint(-3, 5)
+            truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
+            truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
+            truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
 
         time.sleep(2)
 
@@ -6218,7 +6223,15 @@ def terminal_access_check(request):
     return tier in TERMINAL_ALLOWED_TIERS, tier
 
 # ── REAL SHELL EXECUTION ─────────────────────────────────
-import subprocess, select, pty, os as _os
+import subprocess, select, os as _os
+import platform as _plt
+if _plt.system() != 'Windows':
+    try:
+        import pty as pty
+    except ImportError:
+        pty = None
+else:
+    pty = None
 
 @display_app.route('/terminal')
 def terminal_page():
@@ -7394,6 +7407,105 @@ def fan_page():
 
 
 
+# ══════════════════════════════════════════
+# SIMULATOR CONTROL PANEL
+# ══════════════════════════════════════════
+
+SIM_SCENARIOS = {
+    'idle':     {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 195, 'coolant_temp': 190, 'battery_main': 13.8},
+    'warmup':   {'rpm': 900,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 160, 'coolant_temp': 150, 'battery_main': 14.1},
+    'cruise':   {'rpm': 1800, 'speed': 55, 'boost': 2,  'ethanol': 82, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8},
+    'highway':  {'rpm': 2200, 'speed': 75, 'boost': 4,  'ethanol': 82, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9},
+    'wot':      {'rpm': 4500, 'speed': 90, 'boost': 18, 'ethanol': 82, 'oil_temp': 215, 'coolant_temp': 210, 'battery_main': 13.5},
+    'launch':   {'rpm': 5200, 'speed': 15, 'boost': 22, 'ethanol': 82, 'oil_temp': 220, 'coolant_temp': 215, 'battery_main': 13.2},
+    'cooldown': {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 230, 'coolant_temp': 220, 'battery_main': 13.8},
+    'warning':  {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235, 'coolant_temp': 225, 'battery_main': 11.8},
+}
+
+@display_app.route('/simulator')
+def simulator_page():
+    from flask import Response as FR
+    if os.path.exists('archer_simulator.html'):
+        with open('archer_simulator.html', 'r') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">SIMULATOR — archer_simulator.html not found</body></html>', mimetype='text/html')
+
+@display_app.route('/sim/set', methods=['POST'])
+def sim_set():
+    """Set individual truck_state values from simulator sliders."""
+    from flask import request as req
+    data = req.get_json() or {}
+    allowed = {'rpm', 'speed', 'boost', 'ethanol', 'oil_temp', 'coolant_temp', 'battery_main', 'battery_aux', 'exhaust'}
+    updated = {}
+    for key, val in data.items():
+        if key in allowed and key in truck_state:
+            try:
+                truck_state[key] = float(val) if '.' in str(val) else int(val)
+                updated[key] = truck_state[key]
+            except (ValueError, TypeError):
+                pass
+    return jsonify({'ok': True, 'updated': updated, 'sim_random': sim_random_enabled})
+
+@display_app.route('/sim/scenario', methods=['POST'])
+def sim_scenario():
+    """Apply a preset driving scenario to truck_state."""
+    from flask import request as req
+    data = req.get_json() or {}
+    name = data.get('name', '').lower()
+    if name not in SIM_SCENARIOS:
+        return jsonify({'error': f'Unknown scenario: {name}', 'valid': list(SIM_SCENARIOS.keys())}), 400
+    for key, val in SIM_SCENARIOS[name].items():
+        if key in truck_state:
+            truck_state[key] = val
+    return jsonify({'ok': True, 'scenario': name, 'state': {k: truck_state[k] for k in SIM_SCENARIOS[name]}})
+
+@display_app.route('/sim/status')
+def sim_status():
+    """Return simulator / OBD status."""
+    return jsonify({
+        'sim_random_enabled': sim_random_enabled,
+        'obd_connected':      obd2_display['connected'],
+        'obd_mode':           obd2_display['mode'],
+        'rpm':   truck_state['rpm'],
+        'speed': truck_state['speed'],
+        'boost': truck_state['boost'],
+    })
+
+# ── OBD AUTO-DETECT ──────────────────────────────────────
+def obd_autodetect():
+    """Scan serial ports every 5 s for an OBDLink MX+ (or ELM327/STN).
+    When found: disables sim noise and marks obd2_display connected.
+    When unplugged: re-enables sim noise."""
+    global sim_random_enabled
+    OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
+    while True:
+        try:
+            import serial.tools.list_ports
+            ports = list(serial.tools.list_ports.comports())
+            found = False
+            for p in ports:
+                desc = (p.description or '').lower()
+                mfr  = (p.manufacturer or '').lower()
+                if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
+                    found = True
+                    if not obd2_display['connected']:
+                        obd2_display['connected'] = True
+                        obd2_display['mode']      = 'live'
+                        sim_random_enabled        = False
+                        print(f'[OBD] OBDLink detected on {p.device} — live data active')
+                    break
+            if not found and obd2_display['connected']:
+                obd2_display['connected'] = False
+                obd2_display['mode']      = 'default'
+                sim_random_enabled        = True
+                print('[OBD] OBDLink disconnected — simulation resumed')
+        except ImportError:
+            pass  # pyserial not installed — stay in sim mode
+        except Exception as e:
+            print(f'[OBD] autodetect error: {e}')
+        time.sleep(5)
+
 def run_display_server():
     import logging as _log
     _log.getLogger('werkzeug').setLevel(_log.ERROR)
@@ -7422,6 +7534,7 @@ def main():
     threading.Thread(target=discord_monitor,     daemon=True).start()
     threading.Thread(target=openclaw_monitor,    daemon=True).start()
     threading.Thread(target=fetch_ngrok_url,     daemon=True).start()
+    threading.Thread(target=obd_autodetect,      daemon=True).start()
 
     archer_memory['total_sessions'] += 1
     if not archer_memory['first_drive']:
