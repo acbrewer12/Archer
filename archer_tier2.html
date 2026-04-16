@@ -146,6 +146,34 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
 .footer{background:var(--bg2);border-top:1px solid var(--border);padding:6px 14px;display:flex;justify-content:space-between;align-items:center}
 .footer-txt{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
 .footer-txt span{color:var(--pink2)}
+
+/* ── RESPONSIVE ─────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .status-speed { font-size: clamp(44px, 18vw, 72px) !important; }
+  .nav-btn { font-size: 7px; padding: 8px 4px; }
+  .archer-text { font-size: 11px; }
+  .status-val { font-size: clamp(14px, 5vw, 20px); }
+  .status-lbl { font-size: 7px; }
+  .section-title { font-size: 8px; }
+  .card { padding: 10px; }
+}
+@media (max-width: 360px) {
+  .nav-btn { font-size: 6px; padding: 7px 3px; }
+  .status-speed { font-size: clamp(36px, 15vw, 60px) !important; }
+}
+@media (max-height: 300px) {
+  .nav-bar { padding: 2px 0; }
+  .nav-btn { padding: 4px 6px; font-size: 7px; }
+  .status-speed { font-size: clamp(30px, 12vh, 52px) !important; }
+}
+@media (min-width: 768px) {
+  .status-speed { font-size: 96px !important; }
+  .nav-btn { padding: 14px 18px; font-size: 10px; }
+  .card { padding: 16px; }
+}
+@media (min-width: 1024px) {
+  .nav-btn { font-size: 11px; letter-spacing: 3px; }
+}
 </style>
 </head>
 <body>

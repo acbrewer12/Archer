@@ -434,6 +434,60 @@ body.day{background:#111}
 .footer-score{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
 .footer-score span{color:var(--green)}
 .footer-time{font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace}
+
+/* ── RESPONSIVE ─────────────────────────────────────────── */
+/* Fluid base — scales everything off viewport width */
+:root { --scale: clamp(0.7, 2.5vw, 1); }
+
+/* Small phones / mirror monitor (≤ 480 px wide) */
+@media (max-width: 480px) {
+  .tab { padding: 7px 9px; font-size: 8px; letter-spacing: 1px; }
+  .drive-speed { font-size: clamp(52px, 18vw, 80px); }
+  .drive-rpm-num { font-size: clamp(14px, 4.5vw, 20px); }
+  .drive-gear-num { font-size: clamp(28px, 10vw, 44px); }
+  .drive-boost-num { font-size: clamp(18px, 6vw, 28px); }
+  .perf-rpm { font-size: clamp(44px, 14vw, 70px); }
+  .sensor-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 4px; }
+  .perf-stats { grid-template-columns: repeat(3, 1fr) !important; }
+  .perf-stat-val { font-size: clamp(14px, 5vw, 22px); }
+  .dash-big-num { font-size: clamp(32px, 12vw, 52px); }
+  .metric-row { font-size: 9px; }
+  .section-title { font-size: 8px; }
+  .health-item { font-size: 10px; padding: 5px 8px; }
+}
+
+/* Very small / landscape phone / mirror monitor (≤ 360 px wide) */
+@media (max-width: 360px) {
+  .tab { padding: 6px 7px; font-size: 7px; }
+  .section-title { font-size: 7px; letter-spacing: 2px; }
+  .sensor-lbl, .perf-stat-lbl, .drive-stat-lbl { font-size: 6px; }
+}
+
+/* Short screens — mirror monitor landscape (≤ 300 px tall) */
+@media (max-height: 300px) {
+  .tab { padding: 4px 8px; font-size: 7px; }
+  .footer { padding: 3px 8px; }
+  .drive-speed { font-size: clamp(40px, 14vh, 60px); }
+  .perf-rpm { font-size: clamp(32px, 12vh, 56px); }
+}
+
+/* Tablets / large phones (≥ 768 px wide) — open things up */
+@media (min-width: 768px) {
+  .tab { padding: 10px 18px; font-size: 10px; }
+  .drive-speed { font-size: 96px; }
+  .perf-rpm { font-size: 80px; }
+  .sensor-grid { grid-template-columns: repeat(4, 1fr); }
+  .perf-stats { grid-template-columns: repeat(6, 1fr); }
+  .dash-big-num { font-size: 60px; }
+  .health-item { font-size: 13px; }
+}
+
+/* Desktop / widescreen (≥ 1024 px) */
+@media (min-width: 1024px) {
+  .tab { padding: 11px 22px; font-size: 11px; letter-spacing: 3px; }
+  .screen { padding: 16px; }
+  .sensor-grid { grid-template-columns: repeat(6, 1fr); }
+}
 </style>
 </head>
 <body>
@@ -623,7 +677,7 @@ body.day{background:#111}
       <div class="row4">
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="da-oil">205°</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">BATT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--green)" id="da-bat">14.2V</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)">84%</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">84%</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)">SPORT</div></div>
       </div>
       <div class="box" style="display:flex;align-items:center;gap:8px">
@@ -639,20 +693,20 @@ body.day{background:#111}
       <div style="padding:0 2px">
         <div class="metric-row"><span>RPM</span><span style="color:var(--yellow)" id="pf-rpm-pct">62%</span></div>
         <div class="thick-bar"><div class="thick-fill" id="pf-rpm-bar" style="width:62%;background:linear-gradient(90deg,var(--green),var(--yellow),var(--red))"></div></div>
-        <div class="metric-row"><span>BOOST</span><span style="color:var(--orange)">9 PSI</span></div>
-        <div class="thick-bar"><div class="thick-fill" style="width:47%;background:var(--orange)"></div></div>
-        <div class="metric-row"><span>THROTTLE</span><span style="color:var(--text)">78%</span></div>
-        <div class="thick-bar"><div class="thick-fill" style="width:78%;background:#888"></div></div>
-        <div class="metric-row"><span>E85</span><span style="color:var(--blue)">84%</span></div>
-        <div class="thick-bar"><div class="thick-fill" style="width:84%;background:var(--blue)"></div></div>
+        <div class="metric-row"><span>BOOST</span><span style="color:var(--orange)" id="pf-boost">0 PSI</span></div>
+        <div class="thick-bar"><div class="thick-fill" id="pf-boost-bar" style="width:0%;background:var(--orange)"></div></div>
+        <div class="metric-row"><span>THROTTLE</span><span style="color:var(--text)" id="pf-throttle">0%</span></div>
+        <div class="thick-bar"><div class="thick-fill" id="pf-throttle-bar" style="width:0%;background:#888"></div></div>
+        <div class="metric-row"><span>E85</span><span style="color:var(--blue)" id="pf-eth">82%</span></div>
+        <div class="thick-bar"><div class="thick-fill" id="pf-eth-bar" style="width:82%;background:var(--blue)"></div></div>
       </div>
       <div class="perf-stats">
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--red)">8.4s</div><div class="perf-stat-lbl">BEST 0-60</div></div>
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--yellow)">205°</div><div class="perf-stat-lbl">OIL TEMP</div></div>
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--green)">92</div><div class="perf-stat-lbl">SCORE</div></div>
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)">42</div><div class="perf-stat-lbl">MPH</div></div>
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--orange)">9</div><div class="perf-stat-lbl">BOOST PSI</div></div>
-        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)">3</div><div class="perf-stat-lbl">GEAR</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--red)" id="pf-stat-best">—</div><div class="perf-stat-lbl">BEST 0-60</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--yellow)" id="pf-stat-oil">195°</div><div class="perf-stat-lbl">OIL TEMP</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--green)" id="pf-stat-score">100</div><div class="perf-stat-lbl">SCORE</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)" id="pf-stat-speed">0</div><div class="perf-stat-lbl">MPH</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--orange)" id="pf-stat-boost">0</div><div class="perf-stat-lbl">BOOST PSI</div></div>
+        <div class="perf-stat"><div class="perf-stat-val" style="color:var(--text)" id="pf-stat-gear">1</div><div class="perf-stat-lbl">GEAR</div></div>
       </div>
     </div>
 
@@ -665,27 +719,27 @@ body.day{background:#111}
       <div id="live-content">
       <div class="section-title">ENGINE</div>
       <div class="sensor-grid">
-        <div class="sensor"><div class="sensor-val" style="color:var(--green)">14.7</div><div class="sensor-lbl">AFR</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--text)">18°</div><div class="sensor-lbl">TIMING</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--green)">0</div><div class="sensor-lbl">KNOCK</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--text)">78%</div><div class="sensor-lbl">TPS</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">45</div><div class="sensor-lbl">OIL PSI</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--text)">72°F</div><div class="sensor-lbl">INTAKE</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-afr">14.7</div><div class="sensor-lbl">AFR</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-timing">18°</div><div class="sensor-lbl">TIMING</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-knock">0</div><div class="sensor-lbl">KNOCK</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-tps">0%</div><div class="sensor-lbl">TPS</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)" id="lv-oilpsi">45</div><div class="sensor-lbl">OIL PSI</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-intake">75°F</div><div class="sensor-lbl">INTAKE</div></div>
       </div>
       <div class="section-title">DRIVETRAIN</div>
       <div class="sensor-grid">
-        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">162°</div><div class="sensor-lbl">TRANS</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--green)">14.2V</div><div class="sensor-lbl">ALT</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--text)">3</div><div class="sensor-lbl">GEAR</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--blue)">84%</div><div class="sensor-lbl">E85</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)">205°</div><div class="sensor-lbl">OIL °F</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--green)">190°</div><div class="sensor-lbl">COOLANT</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)" id="lv-trans">160°</div><div class="sensor-lbl">TRANS</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-alt">14.2V</div><div class="sensor-lbl">ALT</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-gear">1</div><div class="sensor-lbl">GEAR</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--blue)" id="lv-eth">82%</div><div class="sensor-lbl">E85</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--yellow)" id="lv-oil">195°</div><div class="sensor-lbl">OIL °F</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-coolant">190°</div><div class="sensor-lbl">COOLANT</div></div>
       </div>
       <div class="section-title">G-FORCE</div>
       <div class="sensor-grid">
-        <div class="sensor"><div class="sensor-val" style="color:var(--orange)">0.4g</div><div class="sensor-lbl">LONG</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--red)">0.8g</div><div class="sensor-lbl">PEAK</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--text)">42</div><div class="sensor-lbl">MPH</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--orange)" id="lv-glong">0.0g</div><div class="sensor-lbl">LONG</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--red)" id="lv-gpeak">0.0g</div><div class="sensor-lbl">PEAK</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-gmph">0</div><div class="sensor-lbl">MPH</div></div>
       </div>
     </div>
 
@@ -1306,6 +1360,27 @@ async function pollLive() {
       const msgEl = document.getElementById('archer-msg');
       if (msgEl && msgEl.textContent !== d.archer_msg) msgEl.textContent = d.archer_msg;
     }
+    // PERF score
+    if (d.drive_quality != null) set('pf-stat-score', d.drive_quality);
+    if (d.best_060 && d.best_060 > 0) set('pf-stat-best', d.best_060 + 's');
+    // LIVE tab — ENGINE sensors
+    if (sd.afr         != null) set('lv-afr',    sd.afr);
+    if (sd.timing_deg  != null) set('lv-timing', sd.timing_deg + '°');
+    if (sd.knock_count != null) set('lv-knock',  sd.knock_count);
+    if (sd.throttle_pct!= null) set('lv-tps',   sd.throttle_pct + '%');
+    if (sd.oil_pressure!= null) set('lv-oilpsi', sd.oil_pressure);
+    if (sd.intake_temp != null) set('lv-intake', Math.round(sd.intake_temp) + '°F');
+    // LIVE tab — DRIVETRAIN sensors
+    if (sd.trans_temp  != null) set('lv-trans',   Math.round(sd.trans_temp) + '°');
+    if (sd.alternator_v!= null) set('lv-alt',     sd.alternator_v + 'V');
+    if (sd.gear_pos    != null) set('lv-gear',    sd.gear_pos);
+    if (d.ethanol      != null) set('lv-eth',     Math.round(d.ethanol) + '%');
+    if (d.oil_temp     != null) set('lv-oil',     Math.round(d.oil_temp) + '°');
+    if (d.coolant      != null) set('lv-coolant', Math.round(d.coolant) + '°');
+    // LIVE tab — G-FORCE
+    if (d.gforce_now   != null) set('lv-glong', d.gforce_now.toFixed(2) + 'g');
+    if (d.gforce_peak  != null) set('lv-gpeak', Math.abs(d.gforce_peak).toFixed(2) + 'g');
+    if (d.speed        != null) set('lv-gmph',  Math.round(d.speed));
   } catch(e) {}
 }
 
@@ -1335,6 +1410,11 @@ function update() {
   setStyle('dr-boost', Math.round(liveData.boost) + ' PSI', 'color', liveData.boost > 14 ? 'var(--red)' : 'var(--orange)');
   setWidth('dr-boost-bar', bPct);
 
+  // DRIVE stats row
+  set('dr-oil', Math.round(liveData.oilTemp) + '°');
+  set('dr-bat', liveData.battery.toFixed(1) + 'V');
+  set('dr-eth', Math.round(liveData.ethanol) + '%');
+
   // DASH tab
   setStyle('da-speed', Math.round(liveData.speed), 'color', 'var(--text)');
   setStyle('da-rpm', r, 'color', rColor);
@@ -1344,11 +1424,24 @@ function update() {
   setWidth('da-boost-bar', bPct);
   set('da-oil', Math.round(liveData.oilTemp) + '°');
   set('da-bat', liveData.battery.toFixed(1) + 'V');
+  set('da-eth', Math.round(liveData.ethanol) + '%');
 
-  // PERF tab
+  // PERF tab bars + stats
   setStyle('pf-rpm', r, 'color', rColor);
   setWidth('pf-rpm-bar', rPct);
   set('pf-rpm-pct', Math.round(rPct) + '%');
+  const boostPct   = Math.min(100, Math.max(0, (liveData.boost / 25) * 100));
+  const throttlePct= Math.min(100, liveData.rpm / 65);
+  set('pf-boost', Math.round(liveData.boost) + ' PSI');
+  setWidth('pf-boost-bar', boostPct);
+  set('pf-throttle', Math.round(throttlePct) + '%');
+  setWidth('pf-throttle-bar', throttlePct);
+  set('pf-eth', Math.round(liveData.ethanol) + '%');
+  setWidth('pf-eth-bar', liveData.ethanol);
+  set('pf-stat-oil', Math.round(liveData.oilTemp) + '°');
+  set('pf-stat-speed', Math.round(liveData.speed));
+  set('pf-stat-boost', Math.round(liveData.boost));
+  set('pf-stat-gear', liveData.gear);
 
   // Speed lock
   const moving = liveData.speed > 10;
