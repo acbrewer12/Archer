@@ -871,13 +871,35 @@ function setHeat(btn) {
 }
 
 // ─── LIVE DATA ───
-setInterval(() => {
-  currentSpeed += (Math.random() - 0.48) * 4;
-  currentSpeed = Math.max(0, Math.min(80, currentSpeed));
-  document.getElementById('s-speed').textContent = Math.round(currentSpeed);
+async function pollLive() {
+  try {
+    const r = await fetch('/display_data');
+    const d = await r.json();
+    if (d.speed != null) {
+      currentSpeed = d.speed;
+      document.getElementById('s-speed').textContent = Math.round(currentSpeed);
+    }
+    if (d.battery != null) {
+      const batEl = document.getElementById('s-bat');
+      if (batEl) batEl.textContent = d.battery.toFixed(1) + 'V';
+    }
+    if (d.archer_msg) {
+      const msgEl = document.getElementById('archer-msg');
+      if (msgEl && msgEl._archLock !== d.archer_msg) {
+        msgEl.textContent = d.archer_msg;
+        msgEl._archLock = d.archer_msg;
+      }
+    }
+  } catch(e) {}
   document.getElementById('footer-time').textContent =
     new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
-}, 500);
+}
+pollLive();
+setInterval(pollLive, 1500);
+setInterval(() => {
+  document.getElementById('footer-time').textContent =
+    new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+}, 1000);
 
 // ─── ARCHER MESSAGES ───
 function updateArcherMsg(text) {

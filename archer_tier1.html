@@ -1236,14 +1236,14 @@ const VOICE_CMDS = {
   'show graphs':  () => { setTab('graphs'); return 'History graphs.'; },
   'acknowledge':  () => { dismissWarn(); return 'Warning acknowledged.'; },
   'dismiss':      () => { dismissWarn(); return 'Cleared.'; },
-  'oil temp':     () => `Oil is ${Math.round(fakeData.oilTemp)} degrees. ${fakeData.oilTemp > 220 ? 'Running hot.' : 'Nominal.'}`,
-  'oil pressure': () => `Oil pressure ${fakeData.oilPsi} PSI. ${fakeData.oilPsi < 25 ? 'That is low.' : 'Good.'}`,
-  'boost':        () => `Boost is ${Math.round(fakeData.boost)} PSI.`,
-  'rpm':          () => `RPM is ${Math.round(fakeData.rpm)}.`,
-  'battery':      () => `Battery ${fakeData.battery.toFixed(1)} volts.`,
-  'speed':        () => `${Math.round(fakeData.speed)} miles per hour.`,
-  'e85':          () => `Ethanol at ${fakeData.ethanol} percent.`,
-  'status':       () => `RPM ${Math.round(fakeData.rpm)}, oil ${Math.round(fakeData.oilTemp)} degrees, battery ${fakeData.battery.toFixed(1)} volts. ${fakeData.oilTemp < 220 && fakeData.battery > 13 ? 'All good.' : 'Watch your temps.'}`,
+  'oil temp':     () => `Oil is ${Math.round(liveData.oilTemp)} degrees. ${liveData.oilTemp > 220 ? 'Running hot.' : 'Nominal.'}`,
+  'oil pressure': () => `Oil pressure ${liveData.oilPsi} PSI. ${liveData.oilPsi < 25 ? 'That is low.' : 'Good.'}`,
+  'boost':        () => `Boost is ${Math.round(liveData.boost)} PSI.`,
+  'rpm':          () => `RPM is ${Math.round(liveData.rpm)}.`,
+  'battery':      () => `Battery ${liveData.battery.toFixed(1)} volts.`,
+  'speed':        () => `${Math.round(liveData.speed)} miles per hour.`,
+  'e85':          () => `Ethanol at ${liveData.ethanol} percent.`,
+  'status':       () => `RPM ${Math.round(liveData.rpm)}, oil ${Math.round(liveData.oilTemp)} degrees, battery ${liveData.battery.toFixed(1)} volts. ${liveData.oilTemp < 220 && liveData.battery > 13 ? 'All good.' : 'Watch your temps.'}`,
   'day mode':     () => { setMode('day'); return 'Day mode on.'; },
   'night mode':   () => { setMode('night'); return 'Night mode on.'; },
   'red mode':     () => { setMode('red'); return 'Night shift on. Red mode.'; },
@@ -1282,46 +1282,76 @@ function setArcherMsg(text) {
 }
 
 // ─── LIVE DATA ───
-let fakeData = { rpm:3842, boost:9, speed:42, gear:3, oilTemp:205, oilPsi:45, battery:14.2, ethanol:84, knock:0 };
+// liveData = what's currently displayed (animated)
+// targetData = last value received from the server
+let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190 };
+let targetData = Object.assign({}, liveData);
+
+async function pollLive() {
+  try {
+    const r = await fetch('/display_data');
+    const d = await r.json();
+    if (d.rpm      != null) targetData.rpm      = d.rpm;
+    if (d.speed    != null) targetData.speed    = d.speed;
+    if (d.boost    != null) targetData.boost    = d.boost;
+    if (d.oil_temp != null) targetData.oilTemp  = d.oil_temp;
+    if (d.battery  != null) targetData.battery  = d.battery;
+    if (d.ethanol  != null) targetData.ethanol  = d.ethanol;
+    if (d.coolant  != null) targetData.coolant  = d.coolant;
+    const sd = d.sensor_data || {};
+    if (sd.oil_pressure != null) targetData.oilPsi = sd.oil_pressure;
+    if (sd.gear_pos     != null) targetData.gear   = sd.gear_pos;
+    targetData.knock = (sd.knock_count > 0) ? 1 : 0;
+    if (d.archer_msg) {
+      const msgEl = document.getElementById('archer-msg');
+      if (msgEl && msgEl.textContent !== d.archer_msg) msgEl.textContent = d.archer_msg;
+    }
+  } catch(e) {}
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
 
 function update() {
-  fakeData.rpm += (Math.random() - 0.46) * 300;
-  fakeData.rpm = Math.max(750, Math.min(5800, fakeData.rpm));
-  fakeData.speed = Math.max(0, Math.round(fakeData.rpm / 88));
-  fakeData.boost = Math.round((fakeData.rpm - 800) / 220);
-  fakeData.boost = Math.max(-2, Math.min(20, fakeData.boost));
-  fakeData.gear = fakeData.rpm < 1500 ? 1 : fakeData.rpm < 2500 ? 2 : fakeData.rpm < 3500 ? 3 : fakeData.rpm < 4500 ? 4 : 5;
-  fakeData.knock = fakeData.rpm > 5400 ? 1 : 0;
-  vehicleSpeed = fakeData.speed;
+  // Smoothly animate displayed values toward server targets
+  liveData.rpm     = lerp(liveData.rpm,     targetData.rpm,     0.12);
+  liveData.speed   = lerp(liveData.speed,   targetData.speed,   0.12);
+  liveData.boost   = lerp(liveData.boost,   targetData.boost,   0.12);
+  liveData.oilTemp = lerp(liveData.oilTemp, targetData.oilTemp, 0.08);
+  liveData.battery = lerp(liveData.battery, targetData.battery, 0.08);
+  liveData.gear    = targetData.gear;
+  liveData.knock   = targetData.knock;
+  vehicleSpeed     = Math.round(liveData.speed);
 
-  const r = Math.round(fakeData.rpm);
+  const r      = Math.round(liveData.rpm);
   const rColor = r > 5000 ? 'var(--red)' : r > 3800 ? 'var(--yellow)' : 'var(--text)';
-  const rPct = Math.min(100, (r / 6200) * 100);
-  const bPct = Math.min(100, Math.max(0, ((fakeData.boost + 10) / 40) * 100));
+  const rPct   = Math.min(100, (r / 6200) * 100);
+  const bPct   = Math.min(100, Math.max(0, ((liveData.boost + 10) / 40) * 100));
 
-  // DRIVE
-  set('dr-speed', fakeData.speed);
+  // DRIVE tab
+  set('dr-speed', Math.round(liveData.speed));
   setStyle('dr-rpm', r, 'color', rColor);
   setWidth('dr-rpm-bar', rPct);
-  set('dr-gear', fakeData.gear);
-  setStyle('dr-boost', fakeData.boost + ' PSI', 'color', fakeData.boost > 14 ? 'var(--red)' : 'var(--orange)');
+  set('dr-gear', liveData.gear);
+  setStyle('dr-boost', Math.round(liveData.boost) + ' PSI', 'color', liveData.boost > 14 ? 'var(--red)' : 'var(--orange)');
   setWidth('dr-boost-bar', bPct);
 
-  // DASH
-  setStyle('da-speed', fakeData.speed, 'color', 'var(--text)');
+  // DASH tab
+  setStyle('da-speed', Math.round(liveData.speed), 'color', 'var(--text)');
   setStyle('da-rpm', r, 'color', rColor);
   setWidth('da-rpm-bar', rPct);
-  set('da-gear', fakeData.gear);
-  set('da-boost', fakeData.boost);
+  set('da-gear', liveData.gear);
+  set('da-boost', Math.round(liveData.boost));
   setWidth('da-boost-bar', bPct);
+  set('da-oil', Math.round(liveData.oilTemp) + '°');
+  set('da-bat', liveData.battery.toFixed(1) + 'V');
 
-  // PERF
+  // PERF tab
   setStyle('pf-rpm', r, 'color', rColor);
   setWidth('pf-rpm-bar', rPct);
   set('pf-rpm-pct', Math.round(rPct) + '%');
 
   // Speed lock
-  const moving = fakeData.speed > 10;
+  const moving = liveData.speed > 10;
   document.getElementById('speed-lock').classList.toggle('on', moving);
   document.querySelectorAll('.tab').forEach((t, i) => {
     const n = TAB_NAMES[i];
@@ -1334,13 +1364,13 @@ function update() {
   autoForceDrive();
 
   // Radar
-  document.getElementById('radar').classList.toggle('on', fakeData.speed > 55);
+  document.getElementById('radar').classList.toggle('on', liveData.speed > 55);
 
   // Clock
   document.getElementById('ft-time').textContent = new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 
   // Warnings
-  checkWarnings(fakeData);
+  checkWarnings(liveData);
 
   // Parked content
   updateParkedContent();
@@ -1350,6 +1380,8 @@ function set(id, val) { const el = document.getElementById(id); if(el) el.textCo
 function setStyle(id, val, prop, css) { const el = document.getElementById(id); if(el){el.textContent = val; el.style[prop] = css;} }
 function setWidth(id, pct) { const el = document.getElementById(id); if(el) el.style.width = pct + '%'; }
 
+pollLive();
+setInterval(pollLive, 1000);
 setInterval(update, 150);
 update();
 
