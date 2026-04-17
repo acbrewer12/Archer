@@ -11,6 +11,34 @@ import asyncio
 import edge_tts
 import tempfile
 import queue
+import platform as _platform
+
+# ── PLATFORM DETECTION ───────────────────
+_IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
+
+if _IS_PI:
+    try:
+        from vosk import Model as _VoskModel, KaldiRecognizer as _KaldiRec
+        import sounddevice as _sd
+        _VOSK_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'vosk-model-small-en-us')
+        _vosk_model = _VoskModel(_VOSK_MODEL_PATH) if os.path.exists(_VOSK_MODEL_PATH) else None
+        _VOSK_AVAILABLE = _vosk_model is not None
+    except ImportError:
+        _VOSK_AVAILABLE = False
+        _vosk_model     = None
+
+    _PIPER_BIN   = next((p for p in ['/usr/bin/piper', './piper', os.path.expanduser('~/piper')] if os.path.exists(p)), None)
+    _PIPER_MODEL = next((p for p in [
+        os.path.join(os.path.dirname(__file__), 'models', 'en_US-ryan-medium.onnx'),
+        os.path.expanduser('~/models/en_US-ryan-medium.onnx'),
+    ] if os.path.exists(p)), None)
+    _PIPER_AVAILABLE = bool(_PIPER_BIN and _PIPER_MODEL)
+else:
+    _VOSK_AVAILABLE  = False
+    _PIPER_AVAILABLE = False
+    _vosk_model      = None
+    _PIPER_BIN       = None
+    _PIPER_MODEL     = None
 
 os.environ['OLLAMA_DEBUG'] = '0'
 os.environ['OLLAMA_NONHISTORY'] = '1'
@@ -28,6 +56,8 @@ obd2_display = {
     'connected': False,
     'mode':      'default',
 }
+
+arduino_state = {'connected': False, 'port': None, 'conn': None}
 
 # True  = update_awareness injects random noise (simulation mode)
 # False = real OBD data is feeding truck_state; don't overwrite it
@@ -131,17 +161,27 @@ tts_lock  = threading.Lock()
 
 async def _speak_async(text):
     try:
+        if _IS_PI and _PIPER_AVAILABLE:
+            # Offline TTS via piper — pipes raw PCM to aplay
+            piper_proc = subprocess.Popen(
+                [_PIPER_BIN, '--model', _PIPER_MODEL, '--output_raw'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            raw_audio, _ = piper_proc.communicate(input=text.encode())
+            subprocess.run(
+                ['aplay', '-r', '22050', '-f', 'S16_LE', '-c', '1', '-'],
+                input=raw_audio, capture_output=True,
+            )
+            return
+
+        # ── Online path: edge-tts ──────────────────
         voice       = "en-US-GuyNeural"
         communicate = edge_tts.Communicate(text, voice)
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             tmp_path = f.name
         await communicate.save(tmp_path)
-
-        # Broadcast to display devices
         broadcast_audio(tmp_path)
-
-        import platform
-        if platform.system() == 'Linux':
+        if _platform.system() == 'Linux':
             result = subprocess.run(['which', 'mpg123'], capture_output=True)
             if result.returncode == 0:
                 subprocess.run(['mpg123', '-q', tmp_path], capture_output=True)
@@ -206,6 +246,29 @@ def check_microphone():
         print("[VOICE] No microphone found — text input only")
 
 def listen_once(timeout=5, phrase_limit=8):
+    if _IS_PI and _VOSK_AVAILABLE:
+        try:
+            import json as _json
+            samplerate = 16000
+            blocksize  = 8000
+            frames     = []
+            max_frames = int(samplerate / blocksize * (timeout + phrase_limit))
+            rec = _KaldiRec(_vosk_model, samplerate)
+            with _sd.RawInputStream(samplerate=samplerate, blocksize=blocksize,
+                                    dtype='int16', channels=1) as stream:
+                for _ in range(max_frames):
+                    data, _ = stream.read(blocksize)
+                    if rec.AcceptWaveform(bytes(data)):
+                        result = _json.loads(rec.Result())
+                        text = result.get('text', '').strip()
+                        if text:
+                            return text.lower()
+            partial = _json.loads(rec.FinalResult()).get('text', '').strip()
+            return partial.lower() if partial else None
+        except Exception as e:
+            print(f"[VOSK] {e}")
+            return None
+
     try:
         import speech_recognition as sr
         with sr.Microphone() as source:
@@ -404,9 +467,9 @@ def load_profile(profile_name):
     truck_state['octane_mode'] = profile['octane_mode']
     truck_state['ghost_mode']  = profile['ghost_mode']
     print(f"[PROFILE] Loaded: {profile['name']} — Tier {profile['tier']}")
-    print(f"[ARDUINO] → EXHAUST:{profile['exhaust_pref']}")
-    print(f"[ARDUINO] → SEAT_HEAT:{profile['seat_heat']}")
-    print(f"[ARDUINO] → DRIVE_MODE:{profile['drive_mode'].upper()}")
+    arduino_send(f"EXHAUST:{profile['exhaust_pref']}")
+    arduino_send(f"SEAT_HEAT:{profile['seat_heat']}")
+    arduino_send(f"DRIVE_MODE:{profile['drive_mode'].upper()}")
     return f"{profile['name']}. Tier {profile['tier']}. Profile loaded."
 
 def create_profile(name, tier=2, notes=''):
@@ -3743,8 +3806,8 @@ def show_archer_memory():
 # ── LEGACY FUNCTIONS ─────────────────────
 def activate_legacy():
     legacy['active'] = True
-    print("[ARDUINO] → INTERIOR:AMBER_WARM")
-    print("[ARDUINO] → EXHAUST:0")
+    arduino_send("INTERIOR:AMBER_WARM")
+    arduino_send("EXHAUST:0")
 
 def lock_legacy():
     legacy['locked'] = True; legacy['active'] = True
@@ -3783,7 +3846,7 @@ def set_road(road_key):
             print(f"[ROAD MEMORY] WET: {r['wet_warning']}"); speak(msg)
         if weather['freezing']:
             speak(f"Road freeze risk. {weather['temp']} degrees. TC staying on.")
-            truck_state['tc_on'] = True; print("[ARDUINO] → TC_LOCK")
+            truck_state['tc_on'] = True; arduino_send("TC_LOCK")
         print(); save_state()
         return r
     return None
@@ -3792,7 +3855,7 @@ def set_road(road_key):
 def set_octane(value, mode='AKI'):
     truck_state['octane']      = value
     truck_state['octane_mode'] = mode
-    print(f"[ARDUINO] → OCTANE:{value}{mode}")
+    arduino_send(f"OCTANE:{value}{mode}")
 
 # ── MUSIC AWARENESS ──────────────────────
 def set_music(song, energy='medium'):
@@ -3803,16 +3866,16 @@ def set_music(song, energy='medium'):
         print(f"[MUSIC MEMORY] Last time this played: {music_state['song_memories'][song]}")
     if song in music_state.get('song_lighting', {}):
         lighting = music_state['song_lighting'][song]
-        print(f"[ARDUINO] → INTERIOR:{lighting['interior']}")
-        print(f"[ARDUINO] → UNDERBODY:{lighting['underbody']}")
+        arduino_send(f"INTERIOR:{lighting['interior']}")
+        arduino_send(f"UNDERBODY:{lighting['underbody']}")
     if energy == 'hype':
-        print("[ARDUINO] → UNDERBODY:200")
+        arduino_send("UNDERBODY:200")
         print("[ARCHER] Music is hype. Exhaust suggestion — want it open?")
     elif energy == 'calm':
-        print("[ARDUINO] → INTERIOR:80")
+        arduino_send("INTERIOR:80")
         print("[ARCHER] Good late night track.")
     elif energy == 'medium':
-        print("[ARDUINO] → INTERIOR:140")
+        arduino_send("INTERIOR:140")
 
 def link_song_to_moment(song, moment):
     music_state['song_memories'][song] = moment
@@ -3835,9 +3898,9 @@ def set_drive_mode(mode):
     truck_state['exhaust']    = m['exhaust']
     truck_state['tc_on']      = m['tc']
     truck_state['ghost_mode'] = mode == 'ghost'
-    print(f"[ARDUINO] → EXHAUST:{m['exhaust']}")
-    print(f"[ARDUINO] → TC:{'LOCK' if m['tc'] else 'RELEASE'}")
-    print(f"[ARDUINO] → DRIVE_MODE:{mode.upper()}")
+    arduino_send(f"EXHAUST:{m['exhaust']}")
+    arduino_send(f"TC:{'LOCK' if m['tc'] else 'RELEASE'}")
+    arduino_send(f"DRIVE_MODE:{mode.upper()}")
     return m['desc']
 
 # ── CASUAL CONVERSATION ──────────────────
@@ -3894,182 +3957,186 @@ Archer says:"""
 
 # ── SHOW MODES ───────────────────────────
 def run_flex():
-    print("[ARDUINO] → SHOW:FLEX")
-    print("[ARDUINO] → All amber LEDs pulse — warning")
-    print("[ARDUINO] → EXHAUST:80")
+    arduino_send("SHOW:FLEX")
+    print("[ARDUINO] All amber LEDs pulse — warning")
+    arduino_send("EXHAUST:80")
     for i in range(1, 5):
-        print(f"[ARDUINO] → Corner {i} rising"); time.sleep(0.3)
-    print("[ARDUINO] → Rev sequence 3000 RPM"); time.sleep(0.4)
-    print("[ARDUINO] → Rev sequence 4000 RPM"); time.sleep(0.4)
-    print("[ARDUINO] → Rev sequence 5000 RPM"); time.sleep(0.6)
-    print("[ARDUINO] → EXHAUST:30")
-    print("[ARDUINO] → Lights return to normal — Amber LEDs off")
+        print(f"[ARDUINO] Corner {i} rising"); time.sleep(0.3)
+    print("[ARDUINO] Rev sequence 3000 RPM"); time.sleep(0.4)
+    print("[ARDUINO] Rev sequence 4000 RPM"); time.sleep(0.4)
+    print("[ARDUINO] Rev sequence 5000 RPM"); time.sleep(0.6)
+    arduino_send("EXHAUST:30")
+    print("[ARDUINO] Lights return to normal — Amber LEDs off")
 
 def run_drunk():
-    print("[ARDUINO] → SHOW:DRUNK")
+    arduino_send("SHOW:DRUNK")
     for corner in ['Front left', 'Front right', 'Rear left', 'Rear right']:
-        print(f"[ARDUINO] → {corner} bag deflates"); time.sleep(0.5)
+        print(f"[ARDUINO] {corner} bag deflates"); time.sleep(0.5)
     time.sleep(1)
-    print("[ARDUINO] → All bags inflate — snaps back level")
-    print("[ARDUINO] → DIC: I'M FINE")
+    print("[ARDUINO] All bags inflate — snaps back level")
+    print("[ARDUINO] DIC: I'M FINE")
 
 def run_sneeze():
-    print("[ARDUINO] → SHOW:SNEEZE")
-    print("[ARDUINO] → PA horn buildup sound"); time.sleep(0.8)
-    print("[ARDUINO] → All four bags dump — EXHAUST:100 — Horn blast — Lights flash white"); time.sleep(0.5)
-    print("[ARDUINO] → Everything returns — DIC: BLESS YOU")
+    arduino_send("SHOW:SNEEZE")
+    print("[ARDUINO] PA horn buildup sound"); time.sleep(0.8)
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] All four bags dump — Horn blast — Lights flash white"); time.sleep(0.5)
+    print("[ARDUINO] Everything returns — DIC: BLESS YOU")
 
 def run_stalker():
-    print("[ARDUINO] → SHOW:STALKER")
-    print("[ARDUINO] → Underbody lights rotate — wheel well brightens")
-    print("[ARDUINO] → PA horn: I can see you"); time.sleep(1)
-    print("[ARDUINO] → All lights off — Train horn — DIC: GOT YOU")
+    arduino_send("SHOW:STALKER")
+    print("[ARDUINO] Underbody lights rotate — wheel well brightens")
+    print("[ARDUINO] PA horn: I can see you"); time.sleep(1)
+    print("[ARDUINO] All lights off — Train horn — DIC: GOT YOU")
 
 def run_existential():
-    print("[ARDUINO] → SHOW:EXISTENTIAL_CRISIS")
-    print("[ARDUINO] → All lights off — Sad violin — Deep bass")
+    arduino_send("SHOW:EXISTENTIAL_CRISIS")
+    print("[ARDUINO] All lights off — Sad violin — Deep bass")
     for line in ['WHAT IS EVEN THE POINT', '408 CUBIC INCHES', 'AND FOR WHAT', 'I COULD HAVE BEEN A MINIVAN']:
-        print(f"[ARDUINO] → DIC: {line}"); time.sleep(0.5)
+        print(f"[ARDUINO] DIC: {line}"); time.sleep(0.5)
     time.sleep(1)
-    print("[ARDUINO] → ALL LIGHTS ON — EXHAUST:100 — Train horn x5 — Max height")
-    print("[ARDUINO] → DIC: JUST KIDDING — LET'S GO")
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] ALL LIGHTS ON — Train horn x5 — Max height")
+    print("[ARDUINO] DIC: JUST KIDDING — LET'S GO")
 
 def run_negotiations():
-    print("[ARDUINO] → SHOW:NEGOTIATIONS")
-    print("[ARDUINO] → Truck drops slow — PA: I have a particular set of skills"); time.sleep(0.8)
-    print("[ARDUINO] → Exhaust crack open — Lights dark red"); time.sleep(0.8)
-    print("[ARDUINO] → Truck rises fast — Engine blip 4500 — PA: What I do have is a very specific truck"); time.sleep(0.5)
-    print("[ARDUINO] → Train horn — DIC: GOOD LUCK")
+    arduino_send("SHOW:NEGOTIATIONS")
+    print("[ARDUINO] Truck drops slow — PA: I have a particular set of skills"); time.sleep(0.8)
+    print("[ARDUINO] Exhaust crack open — Lights dark red"); time.sleep(0.8)
+    print("[ARDUINO] Truck rises fast — Engine blip 4500 — PA: What I do have is a very specific truck"); time.sleep(0.5)
+    print("[ARDUINO] Train horn — DIC: GOOD LUCK")
 
 def run_goodbye():
-    print("[ARDUINO] → SHOW:GOODBYE"); time.sleep(1)
-    print("[ARDUINO] → Lights fade — Truck lowers — Exhaust blip — Engine off")
-    print("[ARDUINO] → Underbody pulse once — DIC: SEE YOU TOMORROW — Alarm arms")
+    arduino_send("SHOW:GOODBYE"); time.sleep(1)
+    print("[ARDUINO] Lights fade — Truck lowers — Exhaust blip — Engine off")
+    print("[ARDUINO] Underbody pulse once — DIC: SEE YOU TOMORROW — Alarm arms")
 
 def run_motivational():
-    print("[ARDUINO] → SHOW:MOTIVATIONAL_SPEAKER"); time.sleep(1)
-    print("[ARDUINO] → Rocky music builds — EXHAUST:100 — DIC: LET'S GO CHAMP")
+    arduino_send("SHOW:MOTIVATIONAL_SPEAKER"); time.sleep(1)
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] Rocky music builds — DIC: LET'S GO CHAMP")
 
 def run_karen():
-    print("[ARDUINO] → SHOW:KAREN")
-    print("[ARDUINO] → PA: Can I speak to your manager?"); time.sleep(1)
-    print("[ARDUINO] → Train horn x3 — DIC: I SAID GOOD DAY")
+    arduino_send("SHOW:KAREN")
+    print("[ARDUINO] PA: Can I speak to your manager?"); time.sleep(1)
+    print("[ARDUINO] Train horn x3 — DIC: I SAID GOOD DAY")
 
 def run_reveille():
-    print("[ARDUINO] → SHOW:REVEILLE")
-    print("[ARDUINO] → 6AM bugle call through PA")
-    print("[ARDUINO] → Interior lights ramp from 0 to full slowly")
-    print("[ARDUINO] → Engine remote start — EXHAUST:30")
-    print("[ARDUINO] → DIC: RISE AND GRIND")
+    arduino_send("SHOW:REVEILLE")
+    print("[ARDUINO] 6AM bugle call through PA")
+    print("[ARDUINO] Interior lights ramp from 0 to full slowly")
+    arduino_send("EXHAUST:30")
+    print("[ARDUINO] Engine remote start — DIC: RISE AND GRIND")
 
 def run_impatient():
-    print("[ARDUINO] → SHOW:IMPATIENT")
-    print("[ARDUINO] → Horn — three short taps"); time.sleep(0.5)
-    print("[ARDUINO] → Horn — two more taps"); time.sleep(0.3)
-    print("[ARDUINO] → Horn — one long blast — EXHAUST:60 blip")
-    print("[ARDUINO] → DIC: LETS GO")
+    arduino_send("SHOW:IMPATIENT")
+    print("[ARDUINO] Horn — three short taps"); time.sleep(0.5)
+    print("[ARDUINO] Horn — two more taps"); time.sleep(0.3)
+    print("[ARDUINO] Horn — one long blast")
+    arduino_send("EXHAUST:60")
 
 def run_politician():
-    print("[ARDUINO] → SHOW:POLITICIAN")
-    print("[ARDUINO] → PA: I have always supported trucks"); time.sleep(0.8)
-    print("[ARDUINO] → PA: Big trucks. The biggest."); time.sleep(0.8)
-    print("[ARDUINO] → PA: Nobody knows trucks better than me"); time.sleep(0.5)
-    print("[ARDUINO] → Train horn — DIC: YOU ARE WELCOME")
+    arduino_send("SHOW:POLITICIAN")
+    print("[ARDUINO] PA: I have always supported trucks"); time.sleep(0.8)
+    print("[ARDUINO] PA: Big trucks. The biggest."); time.sleep(0.8)
+    print("[ARDUINO] PA: Nobody knows trucks better than me"); time.sleep(0.5)
+    print("[ARDUINO] Train horn — DIC: YOU ARE WELCOME")
 
 def run_suspicious():
-    print("[ARDUINO] → SHOW:SUSPICIOUS")
-    print("[ARDUINO] → All lights off except single amber pulse"); time.sleep(1)
-    print("[ARDUINO] → Slow creep — interior dims — DIC: I SAW THAT")
+    arduino_send("SHOW:SUSPICIOUS")
+    print("[ARDUINO] All lights off except single amber pulse"); time.sleep(1)
+    print("[ARDUINO] Slow creep — interior dims — DIC: I SAW THAT")
 
 def run_conspiracy():
-    print("[ARDUINO] → SHOW:CONSPIRACY")
-    print("[ARDUINO] → All lights flicker — PA: They do not want you to know about this truck"); time.sleep(0.8)
-    print("[ARDUINO] → EXHAUST:100 blast — ALL LIGHTS ON — DIC: DO YOUR RESEARCH")
+    arduino_send("SHOW:CONSPIRACY")
+    print("[ARDUINO] All lights flicker — PA: They do not want you to know about this truck"); time.sleep(0.8)
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] ALL LIGHTS ON — DIC: DO YOUR RESEARCH")
 
 def run_introvert():
-    print("[ARDUINO] → SHOW:INTROVERT")
-    print("[ARDUINO] → All exterior lights off — Interior 10% — Exhaust closed")
-    print("[ARDUINO] → Engine minimum idle — DIC: DO NOT TALK TO ME")
+    arduino_send("SHOW:INTROVERT")
+    arduino_send("EXHAUST:0")
+    print("[ARDUINO] All exterior lights off — Interior 10% — Engine minimum idle — DIC: DO NOT TALK TO ME")
 
 def run_wrong_neighborhood():
-    print("[ARDUINO] → SHOW:WRONG_NEIGHBORHOOD")
-    print("[ARDUINO] → Truck raises to full height instantly — All lights max")
-    print("[ARDUINO] → EXHAUST:100 — Train horn x2 — DIC: NOTED")
+    arduino_send("SHOW:WRONG_NEIGHBORHOOD")
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] Truck raises to full height instantly — All lights max — Train horn x2 — DIC: NOTED")
 
 def run_passive_aggressive():
-    print("[ARDUINO] → SHOW:PASSIVE_AGGRESSIVE")
-    print("[ARDUINO] → Horn — one very polite tap — Interior slightly warmer")
-    print("[ARDUINO] → DIC: NO ITS FINE"); time.sleep(1)
-    print("[ARDUINO] → DIC: EVERYTHING IS FINE"); time.sleep(0.5)
-    print("[ARDUINO] → EXHAUST:80 blip — DIC: I SAID ITS FINE")
+    arduino_send("SHOW:PASSIVE_AGGRESSIVE")
+    print("[ARDUINO] Horn — one very polite tap — Interior slightly warmer")
+    print("[ARDUINO] DIC: NO ITS FINE"); time.sleep(1)
+    print("[ARDUINO] DIC: EVERYTHING IS FINE"); time.sleep(0.5)
+    arduino_send("EXHAUST:80")
+    print("[ARDUINO] DIC: I SAID ITS FINE")
 
 def run_identity_crisis():
-    print("[ARDUINO] → SHOW:IDENTITY_CRISIS")
-    print("[ARDUINO] → Truck slams — then raises — Exhaust open then close then open")
-    print("[ARDUINO] → DIC: AM I A SHOW TRUCK"); time.sleep(0.5)
-    print("[ARDUINO] → DIC: AM I A WORK TRUCK"); time.sleep(0.5)
-    print("[ARDUINO] → DIC: YES")
+    arduino_send("SHOW:IDENTITY_CRISIS")
+    print("[ARDUINO] Truck slams — then raises — Exhaust open then close then open")
+    print("[ARDUINO] DIC: AM I A SHOW TRUCK"); time.sleep(0.5)
+    print("[ARDUINO] DIC: AM I A WORK TRUCK"); time.sleep(0.5)
+    print("[ARDUINO] DIC: YES")
 
 def run_exit_interview():
-    print("[ARDUINO] → SHOW:EXIT_INTERVIEW")
-    print("[ARDUINO] → Interior white — PA: So. Tell me about yourself."); time.sleep(1)
-    print("[ARDUINO] → PA: Where do you see yourself in five years."); time.sleep(1)
-    print("[ARDUINO] → Train horn blast — DIC: YOU DID NOT GET THE JOB")
+    arduino_send("SHOW:EXIT_INTERVIEW")
+    print("[ARDUINO] Interior white — PA: So. Tell me about yourself."); time.sleep(1)
+    print("[ARDUINO] PA: Where do you see yourself in five years."); time.sleep(1)
+    print("[ARDUINO] Train horn blast — DIC: YOU DID NOT GET THE JOB")
 
 def run_backup_warning():
-    print("[ARDUINO] → SHOW:BACKUP_WARNING")
-    print("[ARDUINO] → Reverse lights full — PA: Caution. Truck backing up."); time.sleep(0.5)
-    print("[ARDUINO] → PA: Seriously. Move.")
-    print("[ARDUINO] → Train horn — one blast")
+    arduino_send("SHOW:BACKUP_WARNING")
+    print("[ARDUINO] Reverse lights full — PA: Caution. Truck backing up."); time.sleep(0.5)
+    print("[ARDUINO] PA: Seriously. Move.")
+    print("[ARDUINO] Train horn — one blast")
 
 def run_cinema():
-    print("[ARDUINO] → SHOW:CINEMA")
-    print("[ARDUINO] → Engine off — Projector deploys — 100in screen lowers")
-    print("[ARDUINO] → Interior lights off — Seat heat on — Subwoofers active")
-    print("[ARDUINO] → DIC: CINEMA MODE — ENJOY THE SHOW")
+    arduino_send("SHOW:CINEMA")
+    print("[ARDUINO] Engine off — Projector deploys — 100in screen lowers")
+    print("[ARDUINO] Interior lights off — Seat heat on — Subwoofers active — DIC: CINEMA MODE")
 
 def run_concert():
-    print("[ARDUINO] → SHOW:CONCERT")
-    print("[ARDUINO] → EXHAUST:100 — All speakers max — Subwoofers full")
-    print("[ARDUINO] → Interior color sync — Underbody pulse to beat")
-    print("[ARDUINO] → DIC: TURN IT UP")
+    arduino_send("SHOW:CONCERT")
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] All speakers max — Subwoofers full — Interior color sync — DIC: TURN IT UP")
 
 def run_argument():
-    print("[ARDUINO] → SHOW:ARGUMENT")
-    print("[ARDUINO] → PA: Oh really."); time.sleep(0.5)
-    print("[ARDUINO] → PA: Because I disagree."); time.sleep(0.5)
-    print("[ARDUINO] → EXHAUST:100 sustained — PA: We clear? — DIC: I WIN")
+    arduino_send("SHOW:ARGUMENT")
+    print("[ARDUINO] PA: Oh really."); time.sleep(0.5)
+    print("[ARDUINO] PA: Because I disagree."); time.sleep(0.5)
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] PA: We clear? — DIC: I WIN")
 
 def run_haunted():
-    print("[ARDUINO] → SHOW:HAUNTED")
-    print("[ARDUINO] → All lights flicker slow — Engine RPM fluctuates")
-    print("[ARDUINO] → PA: creaking door sound"); time.sleep(1)
-    print("[ARDUINO] → All lights off"); time.sleep(1)
-    print("[ARDUINO] → ALL LIGHTS BLAST ON — Train horn — DIC: BOO")
+    arduino_send("SHOW:HAUNTED")
+    print("[ARDUINO] All lights flicker slow — Engine RPM fluctuates")
+    print("[ARDUINO] PA: creaking door sound"); time.sleep(1)
+    print("[ARDUINO] All lights off"); time.sleep(1)
+    print("[ARDUINO] ALL LIGHTS BLAST ON — Train horn — DIC: BOO")
 
 def run_stadium():
-    print("[ARDUINO] → SHOW:STADIUM")
-    print("[ARDUINO] → PA: crowd roar — EXHAUST:100 — All lights full")
-    print("[ARDUINO] → Truck raises to max — Horn victory sequence")
-    print("[ARDUINO] → DIC: LETS GOOO")
+    arduino_send("SHOW:STADIUM")
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] PA: crowd roar — All lights full — Truck raises to max — Horn victory sequence — DIC: LETS GOOO")
 
 def run_sleeping_giant():
-    print("[ARDUINO] → SHOW:SLEEPING_GIANT")
-    print("[ARDUINO] → All lights off — Engine minimum idle"); time.sleep(2)
-    print("[ARDUINO] → Single amber pulse slow"); time.sleep(1)
-    print("[ARDUINO] → EXHAUST:100 sudden blast — ALL LIGHTS ON — Max height")
-    print("[ARDUINO] → Train horn x5 — DIC: DID YOU THINK I WAS SLEEPING")
+    arduino_send("SHOW:SLEEPING_GIANT")
+    print("[ARDUINO] All lights off — Engine minimum idle"); time.sleep(2)
+    print("[ARDUINO] Single amber pulse slow"); time.sleep(1)
+    arduino_send("EXHAUST:100")
+    print("[ARDUINO] ALL LIGHTS ON — Max height — Train horn x5 — DIC: DID YOU THINK I WAS SLEEPING")
 
 def run_fuel_economy():
-    print("[ARDUINO] → SHOW:FUEL_ECONOMY")
-    print("[ARDUINO] → Truck lowers to lowest — EXHAUST:0 — Interior green dim")
-    print("[ARDUINO] → Engine minimum idle — DIC: 8 MPG — OUTSTANDING")
+    arduino_send("SHOW:FUEL_ECONOMY")
+    arduino_send("EXHAUST:0")
+    print("[ARDUINO] Truck lowers to lowest — Interior green dim — Engine minimum idle — DIC: 8 MPG OUTSTANDING")
 
 def run_ultimatum():
-    print("[ARDUINO] → SHOW:ULTIMATUM")
-    print("[ARDUINO] → Amber LEDs pulse slow — PA: I am going to say this once."); time.sleep(1)
-    print("[ARDUINO] → EXHAUST:100 sustained"); time.sleep(1)
-    print("[ARDUINO] → PA: We clear? — DIC: GOOD TALK")
+    arduino_send("SHOW:ULTIMATUM")
+    print("[ARDUINO] Amber LEDs pulse slow — PA: I am going to say this once."); time.sleep(1)
+    arduino_send("EXHAUST:100")
+    time.sleep(1)
+    print("[ARDUINO] PA: We clear? — DIC: GOOD TALK")
 
 # ── SMART KNOB ───────────────────────────
 smart_knob = {'menu': 'main', 'position': 0, 'open': False}
@@ -4128,7 +4195,7 @@ def knob_select():
         pct_map = {'0%':0,'closed':0,'15%':15,'neighborhood':15,'30%':30,'cruise':30,'50%':50,'street':50,'75%':75,'sport':75,'100%':100,'full':100}
         for key, val in pct_map.items():
             if key in item:
-                truck_state['exhaust'] = val; print(f"[ARDUINO] → EXHAUST:{val}"); return f"Exhaust at {val} percent."
+                truck_state['exhaust'] = val; arduino_send(f"EXHAUST:{val}"); return f"Exhaust at {val} percent."
     elif menu == 'octane':
         if 'back'    in item: return go_back()
         if 'e85'     in item: truck_state['ethanol'] = 85; return "Full E85. Power map loaded."
@@ -4151,14 +4218,14 @@ def knob_select():
         return handle_command(items[pos].lower())
     elif menu == 'lighting':
         if 'back'            in item: return go_back()
-        if 'underglow on'    in item: print("[ARDUINO] → UNDERBODY:255"); return "Underglow on."
-        if 'underglow off'   in item: print("[ARDUINO] → UNDERBODY:0");   return "Underglow off."
-        if 'wheel wells on'  in item: print("[ARDUINO] → WHEELWELL:255"); return "Wheel wells on."
-        if 'wheel wells off' in item: print("[ARDUINO] → WHEELWELL:0");   return "Wheel wells off."
-        if 'interior dim'    in item: print("[ARDUINO] → INTERIOR:80");   return "Interior dimmed."
-        if 'interior full'   in item: print("[ARDUINO] → INTERIOR:255");  return "Interior full brightness."
+        if 'underglow on'    in item: arduino_send("UNDERBODY:255"); return "Underglow on."
+        if 'underglow off'   in item: arduino_send("UNDERBODY:0");   return "Underglow off."
+        if 'wheel wells on'  in item: arduino_send("WHEELWELL:255"); return "Wheel wells on."
+        if 'wheel wells off' in item: arduino_send("WHEELWELL:0");   return "Wheel wells off."
+        if 'interior dim'    in item: arduino_send("INTERIOR:80");   return "Interior dimmed."
+        if 'interior full'   in item: arduino_send("INTERIOR:255");  return "Interior full brightness."
         if 'all off'         in item:
-            print("[ARDUINO] → UNDERBODY:0\n[ARDUINO] → WHEELWELL:0\n[ARDUINO] → INTERIOR:0")
+            arduino_send("UNDERBODY:0"); arduino_send("WHEELWELL:0"); arduino_send("INTERIOR:0")
             return "All lights off."
     elif menu == 'profiles':
         if 'back'       in item: return go_back()
@@ -4266,7 +4333,7 @@ def handle_command(text):
     if any(x in t for x in ['flex', 'show mode', 'car show']):
         truck_state['exhaust'] = 80; run_flex(); return "Alright. Watch this."
     if 'slam' in t:
-        truck_state['exhaust'] = 100; print("[ARDUINO] → SHOW:SLAM"); return "Dropping it."
+        truck_state['exhaust'] = 100; arduino_send("SHOW:SLAM"); return "Dropping it."
     if 'drunk' in t:       run_drunk();        return "Activating the Drunk. Try to look casual."
     if 'sneeze' in t:      run_sneeze();       return "Gesundheit."
     if 'stalker' in t:     run_stalker();      return "Going dark."
@@ -4276,7 +4343,8 @@ def handle_command(text):
     if 'motivational' in t or 'motivate me' in t: run_motivational(); return "Let's go champ."
     if 'karen' in t:       run_karen();        return "Can I speak to your manager."
     if any(x in t for x in ['therapy', 'need a minute', 'rough day']):
-        print("[ARDUINO] → SHOW:THERAPY\n[ARDUINO] → Seat heat ON\n[ARDUINO] → Interior warm amber")
+        arduino_send("SHOW:THERAPY")
+        print("[ARDUINO] Seat heat ON — Interior warm amber")
         return "Seat heat is on. Take your time."
     if any(x in t for x in ['reveille', 'wake up show']): run_reveille(); return "Rise and grind."
     if any(x in t for x in ['impatient', 'hurry up show']): run_impatient(); return "Some people need encouragement."
@@ -4317,7 +4385,7 @@ def handle_command(text):
     if t in ['octane','octane?','what octane']:
         return f"Octane is at {truck_state['octane']} {truck_state['octane_mode']}."
     if 'e85' in t and any(x in t for x in ['fill','putting','about to','just filled']):
-        truck_state['ethanol'] = 85; print("[ARDUINO] → ETHANOL:85"); return "Full E85. Power map loaded. About time."
+        truck_state['ethanol'] = 85; arduino_send("ETHANOL:85"); return "Full E85. Power map loaded. About time."
     if any(x in t for x in ['octane','fuel grade','ron','filling','fill up','about to fill']):
         if any(x in t for x in ['ron','international','europe']):
             for grade in sorted(RON_OCTANE_GRADES, reverse=True):
@@ -4340,97 +4408,97 @@ def handle_command(text):
 
     # ── EXHAUST ──────────────────────────
     if any(x in t for x in ['open exhaust','open it up','cut it open','open the exhaust']):
-        truck_state['exhaust'] = 100; print("[ARDUINO] → EXHAUST:100"); return "Opening it up."
+        truck_state['exhaust'] = 100; arduino_send("EXHAUST:100"); return "Opening it up."
     if any(x in t for x in ['close exhaust','quiet down','close it','close the exhaust']):
-        truck_state['exhaust'] = 0; print("[ARDUINO] → EXHAUST:0"); return "Closing it down."
+        truck_state['exhaust'] = 0; arduino_send("EXHAUST:0"); return "Closing it down."
     if t in ['exhaust','exhaust level','exhaust percent']:
         return f"Exhaust is at {truck_state['exhaust']} percent."
     if 'exhaust' in t and any(x in t for x in ['50','half','halfway']):
-        truck_state['exhaust'] = 50; print("[ARDUINO] → EXHAUST:50"); return "Exhaust at 50 percent."
+        truck_state['exhaust'] = 50; arduino_send("EXHAUST:50"); return "Exhaust at 50 percent."
 
     # ── TRACTION CONTROL ─────────────────
     if any(x in t for x in ['tc off','traction off','kill tc']):
         truck_state['tc_on'] = False; truck_state['tc_locked'] = False
-        print("[ARDUINO] → TC_OFF"); return "TC off. Road looks dry. We are good."
+        arduino_send("TC_OFF"); return "TC off. Road looks dry. We are good."
     if any(x in t for x in ['tc on','traction on','lock tc']):
         truck_state['tc_on'] = True; truck_state['tc_locked'] = True
-        print("[ARDUINO] → TC_LOCK"); return "TC on."
+        arduino_send("TC_LOCK"); return "TC on."
 
     # ── GHOST MODE ───────────────────────
     if 'ghost' in t and 'off' not in t:
         truck_state['ghost_mode'] = True; truck_state['exhaust'] = 0
-        print("[ARDUINO] → EXHAUST:0\n[ARDUINO] → UNDERBODY:0\n[ARDUINO] → GROUND:0")
+        arduino_send("EXHAUST:0"); arduino_send("UNDERBODY:0"); arduino_send("GROUND:0")
         return "Going invisible."
     if any(x in t for x in ['ghost off','turn ghost off']):
-        truck_state['ghost_mode'] = False; print("[ARDUINO] → GHOST_OFF"); return "Back to normal."
+        truck_state['ghost_mode'] = False; arduino_send("GHOST_OFF"); return "Back to normal."
 
     # ── FACTORY CONTROLS ─────────────────
     if any(x in t for x in ['headlights on','lights on','turn on lights']):
-        truck_state['headlights'] = True; print("[ARDUINO] → HEADLIGHTS:ON"); return "Headlights on."
+        truck_state['headlights'] = True; arduino_send("HEADLIGHTS:ON"); return "Headlights on."
     if any(x in t for x in ['headlights off','lights off','turn off lights']):
-        truck_state['headlights'] = False; print("[ARDUINO] → HEADLIGHTS:OFF"); return "Headlights off."
+        truck_state['headlights'] = False; arduino_send("HEADLIGHTS:OFF"); return "Headlights off."
     if any(x in t for x in ['high beams on','brights on']):
-        truck_state['high_beams'] = True; print("[ARDUINO] → HIGHBEAMS:ON"); return "High beams on."
+        truck_state['high_beams'] = True; arduino_send("HIGHBEAMS:ON"); return "High beams on."
     if any(x in t for x in ['high beams off','brights off']):
-        truck_state['high_beams'] = False; print("[ARDUINO] → HIGHBEAMS:OFF"); return "High beams off."
+        truck_state['high_beams'] = False; arduino_send("HIGHBEAMS:OFF"); return "High beams off."
     if any(x in t for x in ['fog lights on','fogs on']):
-        truck_state['fog_lights'] = True; print("[ARDUINO] → FOGLIGHTS:ON"); return "Fog lights on."
+        truck_state['fog_lights'] = True; arduino_send("FOGLIGHTS:ON"); return "Fog lights on."
     if any(x in t for x in ['fog lights off','fogs off']):
-        truck_state['fog_lights'] = False; print("[ARDUINO] → FOGLIGHTS:OFF"); return "Fog lights off."
+        truck_state['fog_lights'] = False; arduino_send("FOGLIGHTS:OFF"); return "Fog lights off."
     if any(x in t for x in ['hazards on','flashers on','four ways on']):
-        truck_state['hazards'] = True; print("[ARDUINO] → HAZARDS:ON"); return "Hazards on."
+        truck_state['hazards'] = True; arduino_send("HAZARDS:ON"); return "Hazards on."
     if any(x in t for x in ['hazards off','flashers off','four ways off']):
-        truck_state['hazards'] = False; print("[ARDUINO] → HAZARDS:OFF"); return "Hazards off."
+        truck_state['hazards'] = False; arduino_send("HAZARDS:OFF"); return "Hazards off."
     if any(x in t for x in ['ac on','air on','turn on ac']):
-        truck_state['ac_on'] = True; print("[ARDUINO] → AC:ON"); return "AC on."
+        truck_state['ac_on'] = True; arduino_send("AC:ON"); return "AC on."
     if any(x in t for x in ['ac off','air off','turn off ac']):
-        truck_state['ac_on'] = False; print("[ARDUINO] → AC:OFF"); return "AC off."
+        truck_state['ac_on'] = False; arduino_send("AC:OFF"); return "AC off."
     if any(x in t for x in ['heat on','heater on','turn on heat']):
-        truck_state['heat_on'] = True; print("[ARDUINO] → HEAT:ON"); return "Heat on."
+        truck_state['heat_on'] = True; arduino_send("HEAT:ON"); return "Heat on."
     if any(x in t for x in ['heat off','heater off','turn off heat']):
-        truck_state['heat_on'] = False; print("[ARDUINO] → HEAT:OFF"); return "Heat off."
+        truck_state['heat_on'] = False; arduino_send("HEAT:OFF"); return "Heat off."
     if 'fan' in t:
         for level in ['1','2','3','4','5','6','7','8']:
             if level in t:
-                truck_state['fan_speed'] = int(level); print(f"[ARDUINO] → FAN:{level}"); return f"Fan speed {level}."
+                truck_state['fan_speed'] = int(level); arduino_send(f"FAN:{level}"); return f"Fan speed {level}."
         if 'up' in t or 'higher' in t:
             new = min(8, truck_state['fan_speed'] + 1)
-            truck_state['fan_speed'] = new; print(f"[ARDUINO] → FAN:{new}"); return f"Fan speed {new}."
+            truck_state['fan_speed'] = new; arduino_send(f"FAN:{new}"); return f"Fan speed {new}."
         if 'down' in t or 'lower' in t:
             new = max(0, truck_state['fan_speed'] - 1)
-            truck_state['fan_speed'] = new; print(f"[ARDUINO] → FAN:{new}"); return f"Fan speed {new}."
+            truck_state['fan_speed'] = new; arduino_send(f"FAN:{new}"); return f"Fan speed {new}."
     if any(x in t for x in ['windows down','roll down windows','open windows']):
         truck_state['windows'] = {'fl':'down','fr':'down','rl':'down','rr':'down'}
-        print("[ARDUINO] → WINDOWS:ALL_DOWN"); return "Windows down."
+        arduino_send("WINDOWS:ALL_DOWN"); return "Windows down."
     if any(x in t for x in ['windows up','roll up windows','close windows']):
         truck_state['windows'] = {'fl':'up','fr':'up','rl':'up','rr':'up'}
-        print("[ARDUINO] → WINDOWS:ALL_UP"); return "Windows up."
+        arduino_send("WINDOWS:ALL_UP"); return "Windows up."
     if 'driver window' in t and 'down' in t:
-        truck_state['windows']['fl'] = 'down'; print("[ARDUINO] → WINDOW:FL_DOWN"); return "Driver window down."
+        truck_state['windows']['fl'] = 'down'; arduino_send("WINDOW:FL_DOWN"); return "Driver window down."
     if 'driver window' in t and 'up' in t:
-        truck_state['windows']['fl'] = 'up'; print("[ARDUINO] → WINDOW:FL_UP"); return "Driver window up."
+        truck_state['windows']['fl'] = 'up'; arduino_send("WINDOW:FL_UP"); return "Driver window up."
     if 'passenger window' in t and 'down' in t:
-        truck_state['windows']['fr'] = 'down'; print("[ARDUINO] → WINDOW:FR_DOWN"); return "Passenger window down."
+        truck_state['windows']['fr'] = 'down'; arduino_send("WINDOW:FR_DOWN"); return "Passenger window down."
     if 'passenger window' in t and 'up' in t:
-        truck_state['windows']['fr'] = 'up'; print("[ARDUINO] → WINDOW:FR_UP"); return "Passenger window up."
+        truck_state['windows']['fr'] = 'up'; arduino_send("WINDOW:FR_UP"); return "Passenger window up."
     if any(x in t for x in ['wipers on','turn on wipers']):
-        truck_state['wipers'] = 'on'; print("[ARDUINO] → WIPERS:ON"); return "Wipers on."
+        truck_state['wipers'] = 'on'; arduino_send("WIPERS:ON"); return "Wipers on."
     if any(x in t for x in ['wipers off','turn off wipers']):
-        truck_state['wipers'] = 'off'; print("[ARDUINO] → WIPERS:OFF"); return "Wipers off."
+        truck_state['wipers'] = 'off'; arduino_send("WIPERS:OFF"); return "Wipers off."
     if 'wiper' in t and 'fast' in t:
-        truck_state['wipers'] = 'fast'; print("[ARDUINO] → WIPERS:FAST"); return "Wipers on fast."
+        truck_state['wipers'] = 'fast'; arduino_send("WIPERS:FAST"); return "Wipers on fast."
     if 'wiper' in t and any(x in t for x in ['slow','intermittent','low']):
-        truck_state['wipers'] = 'slow'; print("[ARDUINO] → WIPERS:SLOW"); return "Wipers on slow."
+        truck_state['wipers'] = 'slow'; arduino_send("WIPERS:SLOW"); return "Wipers on slow."
     if any(x in t for x in ['fold mirrors','mirrors in','tuck mirrors']):
-        truck_state['mirrors_folded'] = True; print("[ARDUINO] → MIRRORS:FOLD"); return "Mirrors folded."
+        truck_state['mirrors_folded'] = True; arduino_send("MIRRORS:FOLD"); return "Mirrors folded."
     if any(x in t for x in ['unfold mirrors','mirrors out','extend mirrors']):
-        truck_state['mirrors_folded'] = False; print("[ARDUINO] → MIRRORS:EXTEND"); return "Mirrors extended."
+        truck_state['mirrors_folded'] = False; arduino_send("MIRRORS:EXTEND"); return "Mirrors extended."
     if t == 'horn' or 'tap horn' in t or 'beep' in t:
-        print("[ARDUINO] → HORN:TAP"); return "Tap."
+        arduino_send("HORN:TAP"); return "Tap."
     if 'train horn' in t:
-        print("[ARDUINO] → HORN:TRAIN"); return "Train horn."
+        arduino_send("HORN:TRAIN"); return "Train horn."
     if 'air horn' in t:
-        print("[ARDUINO] → HORN:AIR"); return "Air horn."
+        arduino_send("HORN:AIR"); return "Air horn."
 
     # ── WEATHER ──────────────────────────
     if any(x in t for x in ['weather','how cold','how hot','raining','outside temp','temperature outside']):
@@ -4514,21 +4582,21 @@ def handle_command(text):
 
     # ── LIGHTS ───────────────────────────
     if 'bed light' in t and any(x in t for x in ['on','open']):
-        truck_state['bed_lights'] = True; print("[ARDUINO] → BED_ON"); return "Bed lights on."
+        truck_state['bed_lights'] = True; arduino_send("BED_ON"); return "Bed lights on."
     if 'bed light' in t and any(x in t for x in ['off','close']):
-        truck_state['bed_lights'] = False; print("[ARDUINO] → BED_OFF"); return "Bed lights off."
+        truck_state['bed_lights'] = False; arduino_send("BED_OFF"); return "Bed lights off."
     if 'hood light' in t and 'on' in t:
-        truck_state['hood_lights'] = True; print("[ARDUINO] → HOOD_ON"); return "Hood lights on."
+        truck_state['hood_lights'] = True; arduino_send("HOOD_ON"); return "Hood lights on."
     if 'service mode' in t:
-        print("[ARDUINO] → SERVICE_MODE_ON"); return "Service mode active. Nothing will move unless you tell me."
+        arduino_send("SERVICE_MODE_ON"); return "Service mode active. Nothing will move unless you tell me."
     if any(x in t for x in ['cool down','aux pump','cooling']):
-        truck_state['cool_on'] = True; print("[ARDUINO] → COOL_ON"); return "Aux pump on. Cooling down."
+        truck_state['cool_on'] = True; arduino_send("COOL_ON"); return "Aux pump on. Cooling down."
     if any(x in t for x in ['high idle','idle up']):
         truck_state['idle_on'] = True; truck_state['rpm'] = 1500
-        print("[ARDUINO] → IDLE_ON:1500"); return "High idle active. 1500 RPM."
+        arduino_send("IDLE_ON:1500"); return "High idle active. 1500 RPM."
     if any(x in t for x in ["let's run","run it","push it","launch"]):
         truck_state['rpm'] = 5500; truck_state['speed'] = 60; truck_state['boost'] = 12
-        print("[ARDUINO] → TC_OFF\n[ARDUINO] → EXHAUST:100"); return "Ready. Let's go."
+        arduino_send("TC_OFF"); arduino_send("EXHAUST:100"); return "Ready. Let's go."
     if any(x in t for x in ['slow down','cruising','back off']):
         truck_state['rpm'] = 1800; truck_state['speed'] = 45; truck_state['boost'] = 0; return "Backing off."
 
@@ -4616,7 +4684,7 @@ def safety_monitor():
             msg = f"Oil is at {oil}. I had to step in. Closing cutouts."
             print(f"\n[ARCHER] {msg}"); speak(msg)
             truck_state['exhaust'] = 0; truck_state['tc_locked'] = True
-            print("[ARDUINO] → EXHAUST:0\n[ARDUINO] → TC_LOCK\n[ARDUINO] → COOL_ON")
+            arduino_send("EXHAUST:0"); arduino_send("TC_LOCK"); arduino_send("COOL_ON")
             log_moment('warning', f"Oil hit {oil}F — Archer stepped in"); last_oil = now
         elif oil > 220 and now - last_oil > 60:
             msg = f"Oil is climbing — {oil} degrees. Keep an eye on it."
@@ -4625,11 +4693,11 @@ def safety_monitor():
             msg = "Oil is back down. Everything is yours."
             print(f"\n[ARCHER] {msg}"); speak(msg)
             truck_state['tc_locked'] = False; truck_state['cool_on'] = False
-            print("[ARDUINO] → TC_RELEASE\n[ARDUINO] → COOL_OFF")
+            arduino_send("TC_RELEASE"); arduino_send("COOL_OFF")
 
         if v < 11.8 and now - last_bat > 60:
             msg = "Battery dropping. Connecting auxiliary."
-            print(f"\n[ARCHER] {msg}"); speak(msg); print("[ARDUINO] → AUXBAT_ON"); last_bat = now
+            print(f"\n[ARCHER] {msg}"); speak(msg); arduino_send("AUXBAT_ON"); last_bat = now
 
         if eth < 30 and boost > 5 and now - last_eth > 120:
             msg = "Low ethanol under boost. Knock risk is real right now."
@@ -7422,6 +7490,14 @@ SIM_SCENARIOS = {
     'warning':  {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235, 'coolant_temp': 225, 'battery_main': 11.8},
 }
 
+@display_app.route('/mirror')
+def mirror_page():
+    from flask import Response as FR
+    if os.path.exists('archer_mirror.html'):
+        with open('archer_mirror.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MIRROR — archer_mirror.html not found</body></html>', mimetype='text/html')
+
 @display_app.route('/simulator')
 def simulator_page():
     from flask import Response as FR
@@ -7490,6 +7566,66 @@ def sim_status():
         'boost': truck_state['boost'],
     })
 
+# ── ARDUINO SERIAL ───────────────────────────────────────
+_ARDUINO_KEYWORDS = ('arduino', 'ch340', 'cp210', 'cp2102', 'ftdi', 'uno', 'mega', 'nano')
+
+def arduino_send(cmd):
+    """Send a command to the Arduino over serial. Always logs to stdout."""
+    print(f'[ARDUINO] → {cmd}')
+    if arduino_state['connected'] and arduino_state['conn']:
+        try:
+            arduino_state['conn'].write((cmd + '\n').encode('utf-8'))
+        except Exception as e:
+            print(f'[ARDUINO] write error: {e}')
+            arduino_state['connected'] = False
+            arduino_state['conn']      = None
+
+def arduino_autodetect():
+    """Scan serial ports every 5 s for an Arduino (CH340/CP210/FTDI).
+    Opens connection at 9600 baud when found, closes on disconnect."""
+    while True:
+        try:
+            import serial
+            import serial.tools.list_ports
+            ports = list(serial.tools.list_ports.comports())
+            found = False
+            for p in ports:
+                desc = (p.description or '').lower()
+                mfr  = (p.manufacturer or '').lower()
+                if any(kw in desc or kw in mfr for kw in _ARDUINO_KEYWORDS):
+                    found = True
+                    if not arduino_state['connected']:
+                        try:
+                            conn = serial.Serial(p.device, 9600, timeout=1)
+                            arduino_state['connected'] = True
+                            arduino_state['port']      = p.device
+                            arduino_state['conn']      = conn
+                            print(f'[ARDUINO] Connected on {p.device}')
+                        except Exception as e:
+                            print(f'[ARDUINO] connect error: {e}')
+                    break
+            if not found and arduino_state['connected']:
+                arduino_state['connected'] = False
+                arduino_state['port']      = None
+                try:
+                    arduino_state['conn'].close()
+                except Exception:
+                    pass
+                arduino_state['conn'] = None
+                print('[ARDUINO] Disconnected')
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f'[ARDUINO] autodetect error: {e}')
+        time.sleep(5)
+
+@display_app.route('/arduino/status')
+def arduino_status():
+    return jsonify({
+        'connected': arduino_state['connected'],
+        'port':      arduino_state['port'],
+    })
+
 # ── OBD AUTO-DETECT ──────────────────────────────────────
 def obd_autodetect():
     """Scan serial ports every 5 s for an OBDLink MX+ (or ELM327/STN).
@@ -7553,6 +7689,7 @@ def main():
     threading.Thread(target=openclaw_monitor,    daemon=True).start()
     threading.Thread(target=fetch_ngrok_url,     daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
+    threading.Thread(target=arduino_autodetect,  daemon=True).start()
 
     archer_memory['total_sessions'] += 1
     if not archer_memory['first_drive']:

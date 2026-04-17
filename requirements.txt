@@ -3,3 +3,10 @@ edge-tts
 SpeechRecognition
 requests
 pyserial
+
+# ── Pi offline voice stack (install manually on Pi) ──────
+# pip install vosk sounddevice
+# Download vosk model:  https://alphacephei.com/vosk/models  (vosk-model-small-en-us-0.15)
+# Download piper voice: https://github.com/rhasspy/piper/releases  (en_US-ryan-medium.onnx)
+# Place both in: /home/pi/archer/models/
+# Install piper binary: pip install piper-tts  or  download binary to ~/piper

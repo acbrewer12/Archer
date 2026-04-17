@@ -8,13 +8,14 @@
     "build": "eas build --platform android --profile preview"
   },
   "dependencies": {
-    "expo": "~51.0.0",
-    "expo-status-bar": "~1.12.1",
-    "expo-secure-store": "~13.0.2",
-    "expo-keep-awake": "~13.0.2",
-    "react": "18.2.0",
-    "react-native": "0.74.5",
-    "react-native-webview": "13.10.5"
+    "expo": "~54.0.0",
+    "expo-status-bar": "~2.0.0",
+    "expo-secure-store": "~14.0.0",
+    "expo-keep-awake": "~14.0.0",
+    "expo-notifications": "~0.29.0",
+    "react": "18.3.2",
+    "react-native": "0.76.6",
+    "react-native-webview": "13.8.6"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0"

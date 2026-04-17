@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=480, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Archer Mirror</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+
+/* ── LAYOUT ─────────────────────────────── */
+#app{display:grid;grid-template-rows:26px 1fr 28px 32px 20px;height:272px;width:480px}
+
+/* ── TOP BAR ────────────────────────────── */
+#topbar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#080808;border-bottom:1px solid #111}
+#tb-logo{font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:4px;color:#cc0000}
+#tb-clock{font-size:11px;letter-spacing:2px;color:#555}
+#tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:#444}
+#obd-dot{width:7px;height:7px;border-radius:50%;background:#333;transition:background 0.4s}
+#obd-dot.live{background:#00ff44;box-shadow:0 0 5px #00ff44}
+#obd-dot.sim{background:#ff6600;box-shadow:0 0 5px #ff6600}
+
+/* ── CENTER — SPEED ─────────────────────── */
+#center{display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+#speed-wrap{text-align:center;line-height:1}
+#speed-num{font-family:'Bebas Neue',sans-serif;font-size:96px;color:#ffffff;line-height:0.9;letter-spacing:-2px;transition:color 0.3s}
+#speed-num.fast{color:#ff4400}
+#speed-unit{font-size:9px;letter-spacing:4px;color:#333;margin-top:2px}
+
+/* ── RIGHT STATS ────────────────────────── */
+#right-stats{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.rstat{text-align:right}
+.rstat-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1;transition:color 0.3s}
+.rstat-lbl{font-size:7px;letter-spacing:2px;color:#333}
+#rs-rpm .rstat-val{color:#ffaa00}
+#rs-boost .rstat-val{color:#ff6600}
+
+/* ── RPM BAR ────────────────────────────── */
+#rpm-bar-wrap{padding:0 10px;position:relative}
+#rpm-track{background:#0d0d0d;height:10px;border-radius:2px;overflow:hidden;border:1px solid #111}
+#rpm-fill{height:100%;width:12%;background:linear-gradient(90deg,#00cc44,#ffaa00,#cc0000);border-radius:2px;transition:width 0.15s ease-out}
+#rpm-labels{display:flex;justify-content:space-between;margin-top:2px;font-size:7px;color:#222;letter-spacing:0}
+#rpm-num-overlay{position:absolute;right:14px;top:-1px;font-size:9px;color:#ffaa00;letter-spacing:1px}
+
+/* ── BOTTOM STATS ───────────────────────── */
+#bottombar{display:grid;grid-template-columns:repeat(5,1fr);align-items:center;padding:0 8px;border-top:1px solid #0d0d0d;background:#050505}
+.bstat{text-align:center}
+.bstat-val{font-family:'Bebas Neue',sans-serif;font-size:18px;line-height:1;transition:color 0.3s}
+.bstat-lbl{font-size:6px;letter-spacing:1px;color:#333;margin-top:1px}
+#bs-boost .bstat-val{color:#ff6600}
+#bs-oil .bstat-val{color:#ffaa00}
+#bs-bat .bstat-val{color:#00cc44}
+#bs-eth .bstat-val{color:#4488ff}
+#bs-mood .bstat-val{font-size:11px;color:#cc0000;letter-spacing:1px}
+
+/* ── ARCHER MESSAGE ─────────────────────── */
+#msg-bar{display:flex;align-items:center;gap:8px;padding:0 10px;background:#080808;border-top:1px solid #111;overflow:hidden}
+#msg-prefix{font-size:8px;letter-spacing:2px;color:#cc0000;flex-shrink:0}
+#msg-text{font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 0.3s}
+#msg-text.fresh{color:#cc6600}
+
+/* ── WARNING FLASH ──────────────────────── */
+@keyframes warnflash{0%,100%{border-color:#cc0000}50%{border-color:transparent}}
+#app.warning{animation:warnflash 0.6s infinite}
+#app.warning{border:2px solid #cc0000}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div id="tb-logo">ARCHER</div>
+    <div id="tb-clock">—</div>
+    <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
+  </div>
+
+  <!-- CENTER -->
+  <div id="center">
+    <div id="speed-wrap">
+      <div id="speed-num">0</div>
+      <div id="speed-unit">MPH</div>
+    </div>
+    <div id="right-stats">
+      <div class="rstat" id="rs-rpm">
+        <div class="rstat-val" id="rs-rpm-val">750</div>
+        <div class="rstat-lbl">RPM</div>
+      </div>
+      <div class="rstat" id="rs-boost">
+        <div class="rstat-val" id="rs-boost-val">0 PSI</div>
+        <div class="rstat-lbl">BOOST</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RPM BAR -->
+  <div id="rpm-bar-wrap">
+    <div id="rpm-track"><div id="rpm-fill"></div></div>
+    <div id="rpm-labels">
+      <span>0</span><span>1000</span><span>2000</span><span>3000</span><span>4000</span><span>5000</span><span>6200</span>
+    </div>
+    <div id="rpm-num-overlay" id="rpm-overlay">750 RPM</div>
+  </div>
+
+  <!-- BOTTOM STATS -->
+  <div id="bottombar">
+    <div class="bstat" id="bs-boost">
+      <div class="bstat-val" id="b-boost">0</div>
+      <div class="bstat-lbl">BOOST PSI</div>
+    </div>
+    <div class="bstat" id="bs-oil">
+      <div class="bstat-val" id="b-oil">195°</div>
+      <div class="bstat-lbl">OIL °F</div>
+    </div>
+    <div class="bstat" id="bs-bat">
+      <div class="bstat-val" id="b-bat">13.8V</div>
+      <div class="bstat-lbl">BATTERY</div>
+    </div>
+    <div class="bstat" id="bs-eth">
+      <div class="bstat-val" id="b-eth">82%</div>
+      <div class="bstat-lbl">E85</div>
+    </div>
+    <div class="bstat" id="bs-mood">
+      <div class="bstat-val" id="b-mood">READY</div>
+      <div class="bstat-lbl">MOOD</div>
+    </div>
+  </div>
+
+  <!-- ARCHER MESSAGE (5th grid row) -->
+  <div id="msg-bar">
+    <span id="msg-prefix">ARCHER</span>
+    <span id="msg-text">Online. Everything looks good.</span>
+  </div>
+
+</div>
+
+<script>
+let lastMsg = '';
+let msgTimer = null;
+
+function $(id){ return document.getElementById(id); }
+function set(id, v){ const e=$(id); if(e) e.textContent = v; }
+function color(id, c){ const e=$(id); if(e) e.style.color = c; }
+
+function applyData(d) {
+  const rpm   = d.rpm   ?? 750;
+  const speed = d.speed ?? 0;
+  const boost = d.boost ?? 0;
+  const oil   = d.oil_temp ?? 195;
+  const bat   = d.battery  ?? 13.8;
+  const eth   = d.ethanol  ?? 82;
+  const mood  = (d.mood || 'ready').toUpperCase();
+  const msg   = d.archer_msg || '';
+  const warn  = d.warning ?? false;
+
+  // Speed
+  set('speed-num', Math.round(speed));
+  $('speed-num').className = speed > 85 ? 'fast' : '';
+
+  // RPM
+  set('rs-rpm-val', Math.round(rpm));
+  const rPct = Math.min(100, (rpm / 6200) * 100);
+  $('rpm-fill').style.width = rPct + '%';
+  set('rpm-num-overlay', Math.round(rpm) + ' RPM');
+
+  // Boost (right stat + bottom)
+  const boostStr = Math.round(boost) + ' PSI';
+  set('rs-boost-val', boostStr);
+  set('b-boost', Math.round(boost));
+  color('rs-boost-val', boost > 15 ? '#ff3300' : '#ff6600');
+  color('b-boost',      boost > 15 ? '#ff3300' : '#ff6600');
+
+  // Oil
+  set('b-oil', Math.round(oil) + '°');
+  color('b-oil', oil > 225 ? '#ff3300' : oil > 210 ? '#ffaa00' : '#888');
+
+  // Battery
+  set('b-bat', bat.toFixed(1) + 'V');
+  color('b-bat', bat < 12.0 ? '#ff3300' : bat < 12.8 ? '#ffaa00' : '#00cc44');
+
+  // Ethanol
+  set('b-eth', Math.round(eth) + '%');
+
+  // Mood
+  set('b-mood', mood.substring(0, 6));
+
+  // Warning flash
+  document.getElementById('app').classList.toggle('warning', warn);
+
+  // Archer message — flash orange on change
+  if (msg && msg !== lastMsg) {
+    const el = $('msg-text');
+    el.textContent = msg;
+    el.className = 'fresh';
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => { el.className = ''; }, 3000);
+    lastMsg = msg;
+  }
+}
+
+function updateObd(d) {
+  const dot   = $('obd-dot');
+  const label = $('obd-label');
+  if (d.obd_connected) {
+    dot.className   = 'live';
+    label.textContent = 'LIVE';
+  } else {
+    dot.className   = 'sim';
+    label.textContent = 'SIM';
+  }
+}
+
+function updateClock() {
+  set('tb-clock', new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+}
+
+// ── POLL ──────────────────────────────────
+let pollTick = 0;
+async function poll() {
+  try {
+    const r = await fetch('/display_data');
+    const d = await r.json();
+    applyData(d);
+    if (pollTick++ % 6 === 0) {  // check OBD every ~5 s
+      const s = await fetch('/sim/status').then(r=>r.json()).catch(()=>({}));
+      updateObd(s);
+    }
+  } catch(e) {}
+  updateClock();
+}
+
+poll();
+setInterval(poll, 800);
+</script>
+</body>
+</html>
