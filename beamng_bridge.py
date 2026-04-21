@@ -69,8 +69,13 @@ def parse_outgauge(data: bytes) -> dict | None:
     eng_temp_f = eng_temp_c * 9/5 + 32
     ethanol_pct = fuel * 100
 
-    # Gear: 0=reverse, 1=neutral, 2=1st, 3=2nd ...
-    gear_display = 'R' if gear == 0 else 'N' if gear == 1 else gear - 1
+    # BeamNG gear: 0=neutral, 1=1st, 2=2nd ... reverse varies by car (often 10+)
+    if gear == 0:
+        gear_display = 'N'
+    elif gear >= 10:
+        gear_display = 'R'
+    else:
+        gear_display = gear
 
     # Debug raw turbo every 50 packets
     if state['packets'] % 50 == 0:
