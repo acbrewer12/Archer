@@ -59,6 +59,8 @@ obd2_display = {
 
 arduino_state = {'connected': False, 'port': None, 'conn': None}
 
+beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
+
 # True  = update_awareness injects random noise (simulation mode)
 # False = real OBD data is feeding truck_state; don't overwrite it
 sim_random_enabled = True
@@ -7624,6 +7626,48 @@ def arduino_status():
     return jsonify({
         'connected': arduino_state['connected'],
         'port':      arduino_state['port'],
+    })
+
+# ── BEAMNG TELEMETRY ─────────────────────────────────────
+@display_app.route('/beamng_data', methods=['POST'])
+def beamng_data():
+    global sim_random_enabled
+    import time as _time
+    data = request.get_json(silent=True) or {}
+    if not data or data.get('source') != 'beamng':
+        return jsonify({'ok': False, 'error': 'invalid payload'}), 400
+
+    # Map BeamNG fields → truck_state
+    FIELD_MAP = {
+        'rpm':         'rpm',
+        'speed':       'speed',
+        'boost':       'boost',
+        'oil_temp':    'oil_temp',
+        'coolant_temp':'coolant_temp',
+        'throttle':    'throttle',
+        'gear':        'gear',
+    }
+    for src, dst in FIELD_MAP.items():
+        if src in data:
+            truck_state[dst] = data[src]
+
+    beamng_state['connected'] = True
+    beamng_state['last_rx']   = _time.time()
+    beamng_state['car']       = data.get('car', '')
+    beamng_state['packets']   = beamng_state.get('packets', 0) + 1
+    sim_random_enabled        = False  # freeze sim noise while BeamNG feeds data
+    return jsonify({'ok': True})
+
+@display_app.route('/beamng/status')
+def beamng_status():
+    import time as _time
+    alive = beamng_state['connected'] and (_time.time() - beamng_state['last_rx'] < 5)
+    if not alive and beamng_state['connected']:
+        beamng_state['connected'] = False
+    return jsonify({
+        'connected': beamng_state['connected'],
+        'car':       beamng_state['car'],
+        'packets':   beamng_state.get('packets', 0),
     })
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────

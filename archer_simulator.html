@@ -53,6 +53,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .toggle-thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#444;transition:transform 0.2s,background 0.2s;pointer-events:none}
 .toggle input:checked~.toggle-thumb{transform:translateX(16px);background:#cc0000}
 
+/* BeamNG status card */
+#beamng-card{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:7px 12px;margin-bottom:14px;font-size:10px;letter-spacing:1px}
+#beamng-dot{width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0;transition:background 0.4s}
+#beamng-dot.live{background:#00aaff;box-shadow:0 0 6px #00aaff}
+#beamng-label{flex:1;color:#666}
+#beamng-label span{color:#0088cc}
+#beamng-car{font-size:9px;color:#333;letter-spacing:1px}
+
 /* Log */
 #log{background:#050505;border:1px solid #111;border-radius:4px;padding:8px 10px;height:80px;overflow-y:auto;font-size:10px;color:#444;line-height:1.6}
 #log .entry{color:#555}
@@ -64,6 +72,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 
 <h1>ARCHER SIMULATOR</h1>
 <p class="subtitle">2006 GMC SIERRA 2500HD — OBD CONTROL PANEL</p>
+
+<!-- BeamNG status -->
+<div id="beamng-card">
+  <div id="beamng-dot"></div>
+  <div id="beamng-label">BeamNG: <span id="beamng-status">disconnected</span></div>
+  <div id="beamng-car"></div>
+</div>
 
 <!-- Status bar -->
 <div id="status-bar">
@@ -302,6 +317,25 @@ function poll() {
       // Tick indicator
       pollTick = !pollTick;
       document.getElementById('poll-tick').style.color = pollTick ? '#333' : '#cc0000';
+    })
+    .catch(() => {});
+
+  // BeamNG status
+  fetch('/beamng/status')
+    .then(r => r.json())
+    .then(d => {
+      const dot = document.getElementById('beamng-dot');
+      const lbl = document.getElementById('beamng-status');
+      const car = document.getElementById('beamng-car');
+      if (d.connected) {
+        dot.className      = 'live';
+        lbl.textContent    = 'LIVE';
+        car.textContent    = d.car ? `car: ${d.car}  pkts: ${d.packets}` : '';
+      } else {
+        dot.className      = '';
+        lbl.textContent    = 'disconnected';
+        car.textContent    = 'run beamng_bridge.py to connect';
+      }
     })
     .catch(() => {});
 
