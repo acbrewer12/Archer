@@ -1596,6 +1596,8 @@ def update_sensors_from_truck():
     sensor_data['oil_temp']     = truck_state['oil_temp']
     sensor_data['battery_v']    = truck_state['battery_main']
     sensor_data['throttle_pct'] = min(100, int(truck_state['rpm'] / 65))
+    # Gear from truck_state (set by BeamNG bridge or OBD)
+    sensor_data['gear_pos']     = truck_state.get('gear', 1)
     # Simulate AFR based on ethanol and boost
     eth = truck_state['ethanol']
     boost = truck_state['boost']

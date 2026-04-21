@@ -59,13 +59,22 @@ def parse_outgauge(data: bytes) -> dict | None:
 
     # Unit conversions
     speed_mph  = speed_ms  * 2.23694
-    boost_psi  = max(0.0, (turbo_bar - 1.0) * 14.5038)  # MAP gauge: subtract 1 atm
+    # Boost: try gauge first (bar), fall back to treating as MAP absolute
+    if turbo_bar < 0.5:
+        boost_psi = turbo_bar * 14.5038          # gauge pressure in bar
+    else:
+        boost_psi = max(0.0, (turbo_bar - 1.0) * 14.5038)  # MAP absolute
+
     oil_temp_f = oil_temp_c * 9/5 + 32
     eng_temp_f = eng_temp_c * 9/5 + 32
-    ethanol_pct = fuel * 100          # placeholder: fuel 0-1 → 0-100%
+    ethanol_pct = fuel * 100
 
     # Gear: 0=reverse, 1=neutral, 2=1st, 3=2nd ...
     gear_display = 'R' if gear == 0 else 'N' if gear == 1 else gear - 1
+
+    # Debug raw turbo every 50 packets
+    if state['packets'] % 50 == 0:
+        print(f'[BEAMNG DEBUG] raw turbo_bar={turbo_bar:.4f}  boost_psi={boost_psi:.2f}  gear_raw={gear}')
 
     return {
         'source':      'beamng',
