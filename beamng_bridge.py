@@ -59,11 +59,13 @@ def parse_outgauge(data: bytes) -> dict | None:
 
     # Unit conversions
     speed_mph  = speed_ms  * 2.23694
-    # Boost: try gauge first (bar), fall back to treating as MAP absolute
-    if turbo_bar < 0.5:
-        boost_psi = turbo_bar * 14.5038          # gauge pressure in bar
+    # Boost: use OutGauge turbo if non-zero, otherwise estimate from RPM+throttle
+    # (LSA supercharger: boost scales with RPM and throttle like a Roots blower)
+    if turbo_bar > 0.05:
+        boost_psi = max(0.0, (turbo_bar - 1.0) * 14.5038) if turbo_bar > 0.5 else turbo_bar * 14.5038
     else:
-        boost_psi = max(0.0, (turbo_bar - 1.0) * 14.5038)  # MAP absolute
+        rpm_factor     = max(0.0, (rpm - 800) / 5400)   # 0 at idle, 1 at 6200
+        boost_psi      = round(rpm_factor * throttle * 14.0, 1)  # max ~14 PSI at WOT redline
 
     oil_temp_f = oil_temp_c * 9/5 + 32
     eng_temp_f = eng_temp_c * 9/5 + 32
