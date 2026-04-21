@@ -7633,7 +7633,8 @@ def arduino_status():
 def beamng_data():
     global sim_random_enabled
     import time as _time
-    data = request.get_json(silent=True) or {}
+    from flask import request as req
+    data = req.get_json(silent=True) or {}
     if not data or data.get('source') != 'beamng':
         return jsonify({'ok': False, 'error': 'invalid payload'}), 400
 

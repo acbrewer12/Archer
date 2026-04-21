@@ -59,7 +59,7 @@ def parse_outgauge(data: bytes) -> dict | None:
 
     # Unit conversions
     speed_mph  = speed_ms  * 2.23694
-    boost_psi  = max(0.0, turbo_bar * 14.5038)
+    boost_psi  = max(0.0, (turbo_bar - 1.0) * 14.5038)  # MAP gauge: subtract 1 atm
     oil_temp_f = oil_temp_c * 9/5 + 32
     eng_temp_f = eng_temp_c * 9/5 + 32
     ethanol_pct = fuel * 100          # placeholder: fuel 0-1 → 0-100%
