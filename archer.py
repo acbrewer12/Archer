@@ -88,7 +88,7 @@ def fetch_ngrok_url():
                             print('║              ARCHER PUBLIC ACCESS                ║')
                             print('╠══════════════════════════════════════════════════╣')
                             print(f'║  Main display : {url:<35}║')
-                            print(f'║  Ayden (T1)   : {url+"/ayden":<35}║')
+                            print(f'║  Display (T1) : {url+"/display":<35}║')
                             print(f'║  Passenger(T2): {url+"/pass":<35}║')
                             print(f'║  Family  (T3) : {url+"/family":<35}║')
                             print(f'║  Valet   (T4) : {url+"/valet":<35}║')
@@ -6261,6 +6261,7 @@ def device_tier_endpoint():
 
 
 # ── TIER ROUTES ON MAIN APP (for ngrok remote access) ───
+@display_app.route('/display')
 @display_app.route('/ayden')
 @display_app.route('/tier1')
 def tier1_page():
@@ -7163,9 +7164,9 @@ def tier_response_status():
 import urllib.parse
 import base64
 
-SPOTIFY_CLIENT_ID     = os.environ.get('SPOTIFY_CLIENT_ID', '')
-SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '')
-SPOTIFY_REDIRECT_URI  = os.environ.get('SPOTIFY_REDIRECT_URI', 'https://aydencatman-archer.hf.space/spotify/callback')
+SPOTIFY_CLIENT_ID     = os.environ.get('SPOTIFY_CLIENT_ID', '0addd6f26ccb4fb0a372a3c82ce51a23')
+SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '624b601479cb426aa7c79a99571922d2')
+SPOTIFY_REDIRECT_URI  = os.environ.get('SPOTIFY_REDIRECT_URI', '')
 SPOTIFY_SCOPES        = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative'
 
 spotify_tokens = {
@@ -7221,10 +7222,12 @@ def spotify_api(method, endpoint, data=None):
 @display_app.route('/spotify/login')
 def spotify_login():
     """Redirect to Spotify OAuth."""
+    from flask import request as freq
+    redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
     params = urllib.parse.urlencode({
         'client_id':     SPOTIFY_CLIENT_ID,
         'response_type': 'code',
-        'redirect_uri':  SPOTIFY_REDIRECT_URI,
+        'redirect_uri':  redirect_uri,
         'scope':         SPOTIFY_SCOPES,
         'show_dialog':   'false',
     })
@@ -7240,10 +7243,11 @@ def spotify_callback():
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
     try:
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+        redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
         data  = urllib.parse.urlencode({
             'grant_type':   'authorization_code',
             'code':          code,
-            'redirect_uri':  SPOTIFY_REDIRECT_URI,
+            'redirect_uri':  redirect_uri,
         }).encode()
         req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
                   headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
