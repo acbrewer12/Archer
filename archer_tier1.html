@@ -1002,8 +1002,8 @@ body.day{background:#0d0d0d}
     </div>
 
     <!-- ══════════ MUSIC (Spotify) ══════════ -->
-    <div class="screen" id="screen-music">
-      <div id="t1-spotify-disconnected" style="text-align:center;padding:32px 8px;display:flex;flex-direction:column;align-items:center;gap:12px;background:#050505;border:1px solid #1a1a1a;border-radius:8px;margin:6px">
+    <div class="screen" id="screen-music" style="min-height:200px">
+      <div id="t1-spotify-disconnected" style="text-align:center;padding:32px 8px;display:flex;flex-direction:column;align-items:center;gap:12px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:6px">
         <div style="font-size:40px">🎵</div>
         <div style="font-size:16px;color:#fff;letter-spacing:3px;font-family:'Bebas Neue',sans-serif">SPOTIFY</div>
         <div style="font-size:10px;color:#666;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Tap to connect your account</div>
@@ -1085,6 +1085,7 @@ function setTab(name) {
   document.getElementById('screen-' + name).classList.add('active');
   currentTab = name;
   if (name === 'graphs') drawAllGraphs();
+  if (name === 'music') refreshMusicTab();
   updateParkedContent();
 }
 
@@ -1744,6 +1745,20 @@ async function t1ConnectSpotify() {
   window.open(d.redirect, '_blank', 'width=500,height=600');
   setTimeout(t1CheckSpotify, 3000);
 }
+function refreshMusicTab() {
+  // Always ensure something is visible immediately when tab is opened
+  const disc = document.getElementById('t1-spotify-disconnected');
+  const conn = document.getElementById('t1-spotify-connected');
+  // If both are somehow hidden, reset to disconnected state
+  if (disc && conn) {
+    if (disc.style.display === 'none' && conn.style.display === 'none') {
+      disc.style.display = 'flex';
+    }
+  }
+  // Refresh Spotify status
+  t1CheckSpotify();
+}
+
 async function t1CheckSpotify() {
   try {
     const r = await fetch(T1BASE + '/spotify/status');
