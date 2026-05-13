@@ -7453,6 +7453,9 @@ def get_tier_html(tier, name=None):
         4: 'archer_tier4.html',
     }
     if tier == 1:
+        if os.path.exists('archer_tier1.html'):
+            with open('archer_tier1.html', 'r', encoding='utf-8') as f:
+                return f.read()
         return DISPLAY_HTML.replace("'profile-name'>AYDEN", "'profile-name' style='color:#cc0000'>AYDEN ★")
     
     html_file = tier_files.get(tier)
