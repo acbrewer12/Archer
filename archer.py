@@ -7443,14 +7443,16 @@ def audio_stream():
 def get_tier_html(tier, name=None):
     """Returns tier HTML — loads from file or falls back to basic."""
     import os
+    _base = os.path.dirname(os.path.abspath(__file__))
     tier_files = {
-        2: 'archer_tier2.html',
-        3: 'archer_tier3.html',
-        4: 'archer_tier4.html',
+        2: os.path.join(_base, 'archer_tier2.html'),
+        3: os.path.join(_base, 'archer_tier3.html'),
+        4: os.path.join(_base, 'archer_tier4.html'),
     }
     if tier == 1:
-        if os.path.exists('archer_tier1.html'):
-            with open('archer_tier1.html', 'r', encoding='utf-8') as f:
+        _t1 = os.path.join(_base, 'archer_tier1.html')
+        if os.path.exists(_t1):
+            with open(_t1, 'r', encoding='utf-8') as f:
                 return f.read()
         return DISPLAY_HTML.replace("'profile-name'>AYDEN", "'profile-name' style='color:#cc0000'>AYDEN ★")
     
