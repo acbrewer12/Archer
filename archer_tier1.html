@@ -1003,11 +1003,11 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ MUSIC (Spotify) ══════════ -->
     <div class="screen" id="screen-music">
-      <div id="t1-spotify-disconnected" style="text-align:center;padding:24px 8px;display:flex;flex-direction:column;align-items:center;gap:8px">
-        <div style="font-size:36px">🎵</div>
-        <div style="font-size:13px;color:#fff;letter-spacing:2px;font-family:'Share Tech Mono',monospace">SPOTIFY</div>
-        <div style="font-size:10px;color:#444;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Connect to control playback</div>
-        <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:20px;padding:10px 24px;color:#fff;font-size:12px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace;margin-top:4px">CONNECT SPOTIFY</button>
+      <div id="t1-spotify-disconnected" style="text-align:center;padding:32px 8px;display:flex;flex-direction:column;align-items:center;gap:12px;background:#050505;border:1px solid #1a1a1a;border-radius:8px;margin:6px">
+        <div style="font-size:40px">🎵</div>
+        <div style="font-size:16px;color:#fff;letter-spacing:3px;font-family:'Bebas Neue',sans-serif">SPOTIFY</div>
+        <div style="font-size:10px;color:#666;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Tap to connect your account</div>
+        <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:24px;padding:12px 28px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace;margin-top:4px;box-shadow:0 0 20px rgba(29,185,84,0.4)">CONNECT SPOTIFY</button>
       </div>
       <div id="t1-spotify-connected" style="display:none;flex-direction:column;gap:6px">
         <div class="box" style="display:flex;align-items:center;gap:10px">
@@ -1753,15 +1753,26 @@ async function t1CheckSpotify() {
       document.getElementById('t1-spotify-connected').style.display = 'flex';
       t1UpdateNP(d); t1LoadPlaylists(); t1LoadQueue();
       if (!t1SpotifyTimer) t1SpotifyTimer = setInterval(t1PollSpotify, 4000);
+    } else {
+      document.getElementById('t1-spotify-disconnected').style.display = 'flex';
+      document.getElementById('t1-spotify-connected').style.display = 'none';
     }
-  } catch(e) {}
+  } catch(e) {
+    document.getElementById('t1-spotify-disconnected').style.display = 'flex';
+    document.getElementById('t1-spotify-connected').style.display = 'none';
+  }
 }
 async function t1PollSpotify() {
   try { const r = await fetch(T1BASE+'/spotify/status'); const d = await r.json(); if(d.connected) t1UpdateNP(d); } catch(e) {}
 }
 function t1Fmt(s) { const m=Math.floor(s/60); return m+':'+(s%60<10?'0':'')+s%60; }
 function t1UpdateNP(d) {
-  if (!d.track) return;
+  if (!d.track) {
+    document.getElementById('t1-np-title').textContent = '— nothing playing —';
+    document.getElementById('t1-np-artist').textContent = 'Open Spotify on your phone first';
+    document.getElementById('t1-play-btn').textContent = '▶';
+    return;
+  }
   document.getElementById('t1-np-title').textContent = d.track;
   document.getElementById('t1-np-artist').textContent = d.artist;
   document.getElementById('t1-play-btn').textContent = d.playing ? '⏸' : '▶';
