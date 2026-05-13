@@ -13,6 +13,18 @@
         "WAKE_LOCK",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
+      ],
+      "intentFilters": [
+        {
+          "action": "android.intent.action.ASSIST",
+          "category": ["android.intent.category.DEFAULT"],
+          "data": []
+        },
+        {
+          "action": "android.intent.action.VOICE_COMMAND",
+          "category": ["android.intent.category.DEFAULT"],
+          "data": []
+        }
       ]
     }
   }
