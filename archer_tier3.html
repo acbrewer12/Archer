@@ -214,8 +214,8 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
     </div>
     <div class="health-card">
       <div>
-        <div class="health-name">FUEL</div>
-        <div class="health-val" id="t3-fuel">20 GAL</div>
+        <div class="health-name">E85</div>
+        <div class="health-val" id="t3-fuel">82%</div>
       </div>
       <div class="health-dot good-dot" id="t3-fuel-dot"></div>
     </div>
@@ -392,10 +392,10 @@ async function poll() {
     setEl('t3-cool', cool + 'F');
     setColor('t3-cool', coolCls); setDot('t3-cool-dot', coolCls);
 
-    // Fuel
-    const fuel = d.fuel_gal || 20;
-    const fuelCls = fuel < 3 ? 'bad' : fuel < 6 ? 'warn' : 'good';
-    setEl('t3-fuel', fuel + ' GAL');
+    // E85 ethanol
+    const eth3 = d.ethanol != null ? d.ethanol : 82;
+    const fuelCls = eth3 < 30 ? 'bad' : eth3 < 55 ? 'warn' : 'good';
+    setEl('t3-fuel', eth3 + '%');
     setColor('t3-fuel', fuelCls); setDot('t3-fuel-dot', fuelCls);
 
     // TC

@@ -190,8 +190,8 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
       <div class="stat-val" id="v-gear" style="color:#fff">1</div>
     </div>
     <div class="stat-box">
-      <div class="stat-label">FUEL</div>
-      <div class="stat-val" id="v-fuel" style="color:var(--green)">20G</div>
+      <div class="stat-label">E85</div>
+      <div class="stat-val" id="v-fuel" style="color:var(--green)">82%</div>
     </div>
     <div class="stat-box">
       <div class="stat-label">SESSION MI</div>
@@ -387,6 +387,13 @@ async function poll() {
       tcEl.textContent  = tcOn ? 'ON' : 'OFF';
       tcEl.style.color  = tcOn ? 'var(--green)' : 'var(--red)';
       if (!tcOn && lastTcOn) logEvent('🚨 Traction control turned off', 'alert');
+    }
+
+    // ── E85 ────────────────────────────────
+    const fuelEl4 = document.getElementById('v-fuel');
+    if (fuelEl4 && d.ethanol != null) {
+      fuelEl4.textContent = d.ethanol + '%';
+      fuelEl4.style.color = d.ethanol < 30 ? 'var(--red)' : d.ethanol < 55 ? 'var(--amber)' : 'var(--green)';
     }
 
     // ── ARCHER MSG ─────────────────────────

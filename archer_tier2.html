@@ -918,6 +918,13 @@ async function pollLive() {
         msgEl._archLock = d.archer_msg;
       }
     }
+    if (d.ethanol != null) {
+      const fuelEl = document.getElementById('s-fuel');
+      if (fuelEl) {
+        fuelEl.textContent = d.ethanol + '%';
+        fuelEl.className = 'status-val ' + (d.ethanol > 75 ? 'status-fine' : d.ethanol > 50 ? 'status-ok' : 'status-warn');
+      }
+    }
   } catch(e) {}
   document.getElementById('footer-time').textContent =
     new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});

@@ -772,7 +772,7 @@ body.day{background:#111}
       <div class="launch-grid">
         <div class="launch-box"><div class="launch-val" style="color:var(--yellow)">3500</div><div class="launch-lbl">HOLD RPM</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)">ON</div><div class="launch-lbl">TC STATUS</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--blue)">84%</div><div class="launch-lbl">E85</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--blue)" id="lc-eth">84%</div><div class="launch-lbl">E85</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--text)">8.4s</div><div class="launch-lbl">BEST 0-60</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--orange)">9 PSI</div><div class="launch-lbl">BOOST</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)">68°F</div><div class="launch-lbl">AIR TEMP</div></div>
@@ -794,7 +794,7 @@ body.day{background:#111}
       <div class="track-sum">
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)">112</div><div class="track-sum-lbl">TRAP MPH</div></div>
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--orange)">9</div><div class="track-sum-lbl">BOOST PSI</div></div>
-        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)">84%</div><div class="track-sum-lbl">E85</div></div>
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-eth">84%</div><div class="track-sum-lbl">E85</div></div>
       </div>
     </div>
 
@@ -1438,6 +1438,8 @@ function update() {
   setWidth('pf-throttle-bar', throttlePct);
   set('pf-eth', Math.round(liveData.ethanol) + '%');
   setWidth('pf-eth-bar', liveData.ethanol);
+  set('lc-eth', Math.round(liveData.ethanol) + '%');
+  set('tk-eth', Math.round(liveData.ethanol) + '%');
   set('pf-stat-oil', Math.round(liveData.oilTemp) + '°');
   set('pf-stat-speed', Math.round(liveData.speed));
   set('pf-stat-boost', Math.round(liveData.boost));

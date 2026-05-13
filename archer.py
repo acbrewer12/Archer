@@ -7565,9 +7565,13 @@ def sim_status():
         'sim_random_enabled': sim_random_enabled,
         'obd_connected':      obd2_display['connected'],
         'obd_mode':           obd2_display['mode'],
-        'rpm':   truck_state['rpm'],
-        'speed': truck_state['speed'],
-        'boost': truck_state['boost'],
+        'rpm':          truck_state['rpm'],
+        'speed':        truck_state['speed'],
+        'boost':        truck_state['boost'],
+        'ethanol':      truck_state['ethanol'],
+        'oil_temp':     truck_state['oil_temp'],
+        'coolant_temp': truck_state['coolant_temp'],
+        'battery_main': truck_state['battery_main'],
     })
 
 # ── ARDUINO SERIAL ───────────────────────────────────────
