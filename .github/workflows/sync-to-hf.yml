@@ -1,0 +1,23 @@
+name: Sync to HuggingFace
+
+on:
+  push:
+    branches: [main, claude/archer-truck-ai-system-TlfGE]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config user.email "archer@ayden.local"
+          git config user.name "Archer"
+          git remote add hf https://aydencatman:${HF_TOKEN}@huggingface.co/spaces/aydencatman/Archer
+          git push hf HEAD:main --force
