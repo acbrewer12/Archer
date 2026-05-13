@@ -1395,6 +1395,7 @@ function update() {
   liveData.battery = lerp(liveData.battery, targetData.battery, 0.08);
   liveData.gear    = targetData.gear;
   liveData.knock   = targetData.knock;
+  liveData.ethanol = targetData.ethanol;
   vehicleSpeed     = Math.round(liveData.speed);
 
   const r      = Math.round(liveData.rpm);
