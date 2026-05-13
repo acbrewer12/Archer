@@ -19,7 +19,7 @@ WORKDIR /app
 
 # Install Python deps
 COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir flask edge-tts SpeechRecognition requests
+RUN pip install --no-cache-dir flask edge-tts SpeechRecognition requests pyserial
 
 # Copy app
 COPY --chown=user . .
