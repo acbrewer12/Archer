@@ -1,9 +1,7 @@
-<!DOCTYPE html><!-- archer-t1-v8 -->
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
 <title>Archer</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Rajdhani:wght@400;600;700&display=swap');
@@ -496,12 +494,6 @@ body.day{background:#0d0d0d}
   .screen { padding: 16px; }
   .sensor-grid { grid-template-columns: repeat(6, 1fr); }
 }
-
-/* ── MUSIC TAB: class-based state switching ── */
-#t1-spotify-disconnected { display: flex; }
-#t1-spotify-connected    { display: none; }
-#screen-music.sp-on #t1-spotify-disconnected { display: none !important; }
-#screen-music.sp-on #t1-spotify-connected    { display: flex !important; }
 </style>
 </head>
 <body>
@@ -1010,11 +1002,11 @@ body.day{background:#0d0d0d}
     </div>
 
     <!-- ══════════ MUSIC (Spotify) ══════════ -->
-    <div class="screen" id="screen-music">
-      <div id="t1-spotify-disconnected" style="display:flex;text-align:center;padding:32px 8px;flex-direction:column;align-items:center;gap:12px;background:#0d0d0d;border:1px solid #333;border-radius:8px;margin:6px">
-        <div style="font-size:40px">&#127925;</div>
+    <div class="screen" id="screen-music" style="min-height:200px">
+      <div id="t1-spotify-disconnected" style="text-align:center;padding:32px 8px;display:flex;flex-direction:column;align-items:center;gap:12px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:6px">
+        <div style="font-size:40px">🎵</div>
         <div style="font-size:16px;color:#fff;letter-spacing:3px;font-family:'Bebas Neue',sans-serif">SPOTIFY</div>
-        <div style="font-size:10px;color:#888;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Tap to connect your account</div>
+        <div style="font-size:10px;color:#666;letter-spacing:1px;font-family:'Share Tech Mono',monospace">Tap to connect your account</div>
         <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:24px;padding:12px 28px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace;margin-top:4px;box-shadow:0 0 20px rgba(29,185,84,0.4)">CONNECT SPOTIFY</button>
       </div>
       <div id="t1-spotify-connected" style="display:none;flex-direction:column;gap:6px">
@@ -1090,8 +1082,7 @@ function setTab(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const idx = TAB_NAMES.indexOf(name);
   if (idx >= 0) document.querySelectorAll('.tab')[idx].classList.add('active');
-  const _scr = document.getElementById('screen-' + name);
-  if (_scr) _scr.classList.add('active');
+  document.getElementById('screen-' + name).classList.add('active');
   currentTab = name;
   if (name === 'graphs') drawAllGraphs();
   if (name === 'music') refreshMusicTab();
@@ -1754,12 +1745,17 @@ async function t1ConnectSpotify() {
   window.open(d.redirect, '_blank', 'width=500,height=600');
   setTimeout(t1CheckSpotify, 3000);
 }
-function setSpotifyState(connected) {
-  const screen = document.getElementById('screen-music');
-  if (screen) screen.classList.toggle('sp-on', connected);
-}
-
 function refreshMusicTab() {
+  // Always ensure something is visible immediately when tab is opened
+  const disc = document.getElementById('t1-spotify-disconnected');
+  const conn = document.getElementById('t1-spotify-connected');
+  // If both are somehow hidden, reset to disconnected state
+  if (disc && conn) {
+    if (disc.style.display === 'none' && conn.style.display === 'none') {
+      disc.style.display = 'flex';
+    }
+  }
+  // Refresh Spotify status
   t1CheckSpotify();
 }
 
@@ -1768,14 +1764,17 @@ async function t1CheckSpotify() {
     const r = await fetch(T1BASE + '/spotify/status');
     const d = await r.json();
     if (d.connected) {
-      setSpotifyState(true);
+      document.getElementById('t1-spotify-disconnected').style.display = 'none';
+      document.getElementById('t1-spotify-connected').style.display = 'flex';
       t1UpdateNP(d); t1LoadPlaylists(); t1LoadQueue();
       if (!t1SpotifyTimer) t1SpotifyTimer = setInterval(t1PollSpotify, 4000);
     } else {
-      setSpotifyState(false);
+      document.getElementById('t1-spotify-disconnected').style.display = 'flex';
+      document.getElementById('t1-spotify-connected').style.display = 'none';
     }
   } catch(e) {
-    setSpotifyState(false);
+    document.getElementById('t1-spotify-disconnected').style.display = 'flex';
+    document.getElementById('t1-spotify-connected').style.display = 'none';
   }
 }
 async function t1PollSpotify() {
