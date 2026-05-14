@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v16</div>
+      <div class="hdr-badge">T1 v17</div>
     </div>
   </div>
 
@@ -1807,20 +1807,24 @@ async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POS
 async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST'}); setTimeout(t1PollSpotify,600); }
 async function t1SpotifyVolume(v) { await fetch(T1BASE+'/spotify/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:parseInt(v)})}); }
 async function t1LoadPlaylists() {
+  const el = document.getElementById('t1-playlist-list');
   try {
-    const r = await fetch(T1BASE+'/spotify/playlists'); const d = await r.json();
-    const el = document.getElementById('t1-playlist-list');
-    if (!d.playlists?.length) { el.textContent='No playlists'; return; }
+    const r = await fetch(T1BASE+'/spotify/playlists');
+    if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
+    const d = await r.json();
+    if (!d.playlists?.length) { el.textContent = 'No playlists found'; return; }
     el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks} ▶</span></div>`).join('');
-  } catch(e) {}
+  } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1LoadQueue() {
+  const el = document.getElementById('t1-queue-list');
   try {
-    const r = await fetch(T1BASE+'/spotify/queue'); const d = await r.json();
-    const el = document.getElementById('t1-queue-list');
-    if (!d.queue?.length) { el.textContent='Queue empty'; return; }
+    const r = await fetch(T1BASE+'/spotify/queue');
+    if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
+    const d = await r.json();
+    if (!d.queue?.length) { el.textContent = 'Queue empty'; return; }
     el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${t.name} <span style="color:var(--label)">— ${t.artist}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
-  } catch(e) {}
+  } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1PlayPlaylist(id) {
   await fetch(T1BASE+'/spotify/play_playlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_id:id})});
