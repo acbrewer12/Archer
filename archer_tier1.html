@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">AYDEN T1</div>
+      <div class="hdr-badge">T1 v12</div>
     </div>
   </div>
 
@@ -565,7 +565,7 @@ body.day{background:#0d0d0d}
     <div class="tab" onclick="setTab('show')">SHOW</div>
     <div class="tab" onclick="setTab('map')">MAP</div>
     <div class="tab" onclick="setTab('cams')">CAMS</div>
-    <div class="tab" onclick="setTab('music')">MUSIC</div>
+    <div class="tab" onclick="musicTabDirect(this)">MUSIC</div>
   </div>
 
   <div class="screens">
@@ -1087,6 +1087,27 @@ function setTab(name) {
   if (name === 'graphs') drawAllGraphs();
   if (name === 'music') refreshMusicTab();
   updateParkedContent();
+}
+
+function musicTabDirect(btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.screen').forEach(function(s) {
+    s.style.display = 'none';
+    s.classList.remove('active');
+  });
+  var music = document.getElementById('screen-music');
+  if (music) {
+    music.classList.add('active');
+    music.style.display = 'flex';
+  }
+  currentTab = 'music';
+  refreshMusicTab();
+  updateParkedContent();
+  setTimeout(function() {
+    var m = document.getElementById('screen-music');
+    if (m && currentTab === 'music') m.style.display = 'flex';
+  }, 500);
 }
 
 function showParkedMsg() {

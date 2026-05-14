@@ -6259,7 +6259,10 @@ def device_tier_endpoint():
 @display_app.route('/tier1')
 def tier1_page():
     from flask import Response as FR
-    return FR(get_tier_html(1), mimetype='text/html')
+    resp = FR(get_tier_html(1), mimetype='text/html')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 @display_app.route('/pass')
 @display_app.route('/passenger')
