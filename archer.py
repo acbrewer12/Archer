@@ -7315,13 +7315,25 @@ def spotify_volume():
 
 @display_app.route('/spotify/playlists')
 def spotify_playlists():
-    data = spotify_api('GET', 'me/playlists?limit=20')
-    if not data:
-        return jsonify({'playlists': []})
-    playlists = [{'id': p['id'], 'name': p['name'], 'tracks': p['tracks']['total'],
-                  'art': p['images'][0]['url'] if p.get('images') else ''}
-                 for p in data.get('items', [])]
-    return jsonify({'playlists': playlists})
+    try:
+        data = spotify_api('GET', 'me/playlists?limit=50')
+        if not data:
+            return jsonify({'playlists': []})
+        playlists = []
+        for p in data.get('items', []):
+            try:
+                playlists.append({
+                    'id':     p['id'],
+                    'name':   p['name'],
+                    'tracks': (p.get('tracks') or {}).get('total', 0),
+                    'art':    p['images'][0]['url'] if p.get('images') else '',
+                })
+            except Exception:
+                continue
+        return jsonify({'playlists': playlists})
+    except Exception as e:
+        print(f'[SPOTIFY] Playlists error: {e}')
+        return jsonify({'error': str(e), 'playlists': []}), 500
 
 @display_app.route('/spotify/play_playlist', methods=['POST'])
 def spotify_play_playlist():
