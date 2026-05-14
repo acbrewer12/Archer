@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v17</div>
+      <div class="hdr-badge">T1 v18</div>
     </div>
   </div>
 
@@ -1813,7 +1813,7 @@ async function t1LoadPlaylists() {
     if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
     const d = await r.json();
     if (!d.playlists?.length) { el.textContent = 'No playlists found'; return; }
-    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks} ▶</span></div>`).join('');
+    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks || '?'} songs ▶</span></div>`).join('');
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1LoadQueue() {
