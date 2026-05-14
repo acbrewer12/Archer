@@ -7210,7 +7210,16 @@ def spotify_api(method, endpoint, data=None):
                        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=5) as r:
             raw = r.read()
-            return json.loads(raw) if raw else {}
+            if not raw or not raw.strip():
+                return {}
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return {}
+    except urllib.error.HTTPError as e:
+        body = e.read()
+        print(f'[SPOTIFY] API error {endpoint}: HTTP {e.code} {body[:200]}')
+        return None
     except Exception as e:
         print(f'[SPOTIFY] API error {endpoint}: {e}')
         return None
@@ -7324,7 +7333,10 @@ def spotify_playlists():
             try:
                 tracks_obj = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
-                print(f'[SPOTIFY] Playlist "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
+                if tracks_total is None:
+                    full = spotify_api('GET', f'playlists/{p["id"]}?fields=tracks.total')
+                    if full and isinstance(full.get('tracks'), dict):
+                        tracks_total = full['tracks'].get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
