@@ -7334,9 +7334,12 @@ def spotify_playlists():
                 tracks_obj = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
                 if tracks_total is None:
-                    full = spotify_api('GET', f'playlists/{p["id"]}?fields=tracks.total')
-                    if full and isinstance(full.get('tracks'), dict):
-                        tracks_total = full['tracks'].get('total')
+                    # me/playlists simplified object has null tracks for some playlists;
+                    # fetch count from the tracks paging endpoint which always has 'total'
+                    full = spotify_api('GET', f'playlists/{p["id"]}/tracks?limit=1&fields=total')
+                    print(f'[SPOTIFY] fallback for "{p.get("name")}": {full}')
+                    if isinstance(full, dict):
+                        tracks_total = full.get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
