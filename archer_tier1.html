@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v14</div>
+      <div class="hdr-badge">T1 v15</div>
     </div>
   </div>
 
@@ -1095,26 +1095,45 @@ function setTab(name) {
   updateParkedContent();
 }
 
+function musicDiag(msg) {
+  var d = document.getElementById('mdiag');
+  if (!d) { d = document.createElement('div'); d.id = 'mdiag'; d.style.cssText = 'position:fixed;bottom:56px;left:0;right:0;background:#900;color:#fff;font-size:9px;font-family:monospace;padding:5px 8px;z-index:99999;white-space:pre'; document.body.appendChild(d); }
+  d.textContent = msg;
+}
+
 function musicTabDirect(btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
-  // Use classList only (not inline style) — inline display:none on .screen elements
-  // also catches the .screens container in some browsers, hiding everything
   document.querySelectorAll('.screen').forEach(function(s) {
     s.classList.remove('active');
-    s.style.display = '';  // clear any leftover inline style
+    s.style.display = '';
   });
-  // Explicitly guarantee .screens container is visible
-  var sc = document.querySelector('.screens');
-  if (sc) sc.style.display = 'block';
   var music = document.getElementById('screen-music');
+  // Use parentElement directly — avoids any class-selector weirdness with querySelector
+  var screensWrap = music ? music.parentElement : null;
+  if (screensWrap) {
+    screensWrap.style.cssText = 'display:block !important';
+  }
   if (music) {
     music.classList.add('active');
-    music.style.display = 'flex';  // inline overrides CSS display:none from .screen class
+    music.style.cssText = 'display:flex !important; flex-direction:column; gap:4px; padding:6px; min-height:200px';
   }
   currentTab = 'music';
   refreshMusicTab();
   updateParkedContent();
+  setTimeout(function() {
+    var m = document.getElementById('screen-music');
+    var w = m ? m.parentElement : null;
+    var disc = document.getElementById('t1-spotify-disconnected');
+    musicDiag(
+      'wrap=' + (w ? window.getComputedStyle(w).display : 'NULL') +
+      ' scr=' + (m ? window.getComputedStyle(m).display : 'NULL') +
+      ' h=' + (m ? m.offsetHeight : '?') +
+      '\ndisc=' + (disc ? window.getComputedStyle(disc).display : 'NULL') +
+      ' discH=' + (disc ? disc.offsetHeight : '?') +
+      '\nwrapTag=' + (w ? w.tagName + '.' + w.className : 'NULL')
+    );
+  }, 700);
 }
 
 function showParkedMsg() {
