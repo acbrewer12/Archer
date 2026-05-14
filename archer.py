@@ -7322,13 +7322,17 @@ def spotify_playlists():
         playlists = []
         for p in data.get('items', []):
             try:
+                tracks_obj = p.get('tracks')
+                tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
+                print(f'[SPOTIFY] Playlist "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
-                    'tracks': (p.get('tracks') or {}).get('total', 0),
+                    'tracks': tracks_total,
                     'art':    p['images'][0]['url'] if p.get('images') else '',
                 })
-            except Exception:
+            except Exception as ex:
+                print(f'[SPOTIFY] Playlist parse error for {p.get("name")}: {ex}')
                 continue
         return jsonify({'playlists': playlists})
     except Exception as e:
