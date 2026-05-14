@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v12</div>
+      <div class="hdr-badge">T1 v13</div>
     </div>
   </div>
 
@@ -1089,6 +1089,17 @@ function setTab(name) {
   updateParkedContent();
 }
 
+function musicDebug(msg) {
+  var d = document.getElementById('music-diag');
+  if (!d) {
+    d = document.createElement('div');
+    d.id = 'music-diag';
+    d.style.cssText = 'position:fixed;bottom:60px;left:0;right:0;background:#cc0000;color:#fff;font-size:10px;font-family:monospace;padding:6px 10px;z-index:99999;white-space:pre-wrap;line-height:1.4';
+    document.body.appendChild(d);
+  }
+  d.textContent = msg;
+}
+
 function musicTabDirect(btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
@@ -1099,15 +1110,28 @@ function musicTabDirect(btn) {
   var music = document.getElementById('screen-music');
   if (music) {
     music.classList.add('active');
-    music.style.display = 'flex';
+    music.setAttribute('style', 'display:flex !important; flex-direction:column; gap:4px; padding:6px; min-height:200px');
   }
   currentTab = 'music';
   refreshMusicTab();
   updateParkedContent();
   setTimeout(function() {
     var m = document.getElementById('screen-music');
-    if (m && currentTab === 'music') m.style.display = 'flex';
-  }, 500);
+    if (!m) { musicDebug('ERR: screen-music is NULL'); return; }
+    var cs = window.getComputedStyle(m);
+    var disc = document.getElementById('t1-spotify-disconnected');
+    var discCS = disc ? window.getComputedStyle(disc).display : 'null';
+    musicDebug(
+      'screen-music: inline=' + m.style.display +
+      ' computed=' + cs.display +
+      ' h=' + cs.height + ' vis=' + cs.visibility +
+      '\nparent(.screens) computed=' + window.getComputedStyle(m.parentElement).display +
+      '\ndisc computed=' + discCS
+    );
+    if (m && currentTab === 'music') {
+      m.setAttribute('style', 'display:flex !important; flex-direction:column; gap:4px; padding:6px; min-height:200px');
+    }
+  }, 600);
 }
 
 function showParkedMsg() {
