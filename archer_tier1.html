@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v29</div>
+      <div class="hdr-badge">T1 v30</div>
     </div>
   </div>
 
@@ -1745,8 +1745,7 @@ let t1SpotifyTimer = null;
 async function t1ConnectSpotify() {
   const r = await fetch(T1BASE + '/spotify/login');
   const d = await r.json();
-  window.open(d.redirect, '_blank', 'width=500,height=600');
-  setTimeout(t1CheckSpotify, 3000);
+  window.location.href = d.redirect;
 }
 function refreshMusicTab() {
   // Always ensure something is visible immediately when tab is opened

@@ -7255,7 +7255,7 @@ def spotify_callback():
     if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
         return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
-<script>setTimeout(()=>window.close(),1500)</script></body></html>"""
+<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1000)</script></body></html>"""
     try:
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
         redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
@@ -7275,7 +7275,7 @@ def spotify_callback():
             return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
 <div style="font-size:12px;color:#444">You can close this tab</div>
-<script>setTimeout(()=>window.close(),2000)</script></body></html>"""
+<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1500)</script></body></html>"""
     except Exception as e:
         print(f'[SPOTIFY] Token exchange failed: {e}')
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
