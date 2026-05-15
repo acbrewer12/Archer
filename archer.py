@@ -6733,6 +6733,20 @@ def index():
     from flask import request as freq, make_response
     import hashlib as _hashlib
 
+    # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
+    owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
+    if owner_pin and freq.args.get('pin') == owner_pin:
+        cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+        import hashlib as _hl2
+        token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:16]
+        resp = make_response()
+        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=False, samesite='Lax')
+        from flask import Response as FR
+        r2 = FR(get_tier_html(1), mimetype='text/html')
+        r2.headers['Cache-Control'] = 'no-store'
+        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=False, samesite='Lax')
+        return r2
+
     # 1. Try MAC detection
     mac = get_client_mac(freq)
     tier_info = get_tier_for_mac(mac)
@@ -6758,7 +6772,10 @@ def index():
         tier = tier_info['tier']
         name = tier_info.get('name', '')
         if tier == 1:
-            return render_template_string(DISPLAY_HTML)
+            from flask import Response as FR
+            resp = FR(get_tier_html(1), mimetype='text/html')
+            resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            return resp
         elif tier == 2:
             return get_tier_html(2, name=name)
         elif tier == 3:
@@ -6839,6 +6856,12 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-hei
 </div>
 
 <script>
+let _selectedTier = 0;
+function selectTier(tier) {{
+  _selectedTier = tier;
+  document.getElementById('code-section').classList.add('on');
+  document.getElementById('code-input').focus();
+}}
 async function submitCode() {{
   const code = document.getElementById('code-input').value.trim();
   if (code.length !== 6) return;
