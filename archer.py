@@ -7342,10 +7342,10 @@ def spotify_playlists():
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
                 print(f'[SPOTIFY-PL] "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
                 if tracks_total is None:
-                    full = spotify_api('GET', f'playlists/{p["id"]}/tracks?limit=1')
-                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": {full}')
-                    if isinstance(full, dict):
-                        tracks_total = full.get('total')
+                    full = spotify_api('GET', f'playlists/{p["id"]}')
+                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": tracks={full.get("tracks") if isinstance(full, dict) else full}')
+                    if isinstance(full, dict) and isinstance(full.get('tracks'), dict):
+                        tracks_total = full['tracks'].get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
