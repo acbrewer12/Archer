@@ -7268,7 +7268,7 @@ def spotify_callback():
             spotify_tokens['access_token']  = resp['access_token']
             spotify_tokens['refresh_token'] = resp.get('refresh_token')
             spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
-            print('[SPOTIFY] Authenticated successfully')
+            print(f'[SPOTIFY] Authenticated. Granted scopes: {resp.get("scope")}')
             return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
 <div style="font-size:12px;color:#444">You can close this tab</div>
@@ -7342,11 +7342,11 @@ def spotify_playlists():
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
                 print(f'[SPOTIFY-PL] "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
                 if tracks_total is None:
-                    # Drop fields filter — just get paging object, read 'total' from it
-                    full = spotify_api('GET', f'playlists/{p["id"]}/tracks?limit=1')
-                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": type={type(full)} keys={list(full.keys()) if isinstance(full, dict) else full}')
-                    if isinstance(full, dict):
-                        tracks_total = full.get('total')
+                    # Try full playlist object — tracks field is a paging object with 'total'
+                    full = spotify_api('GET', f'playlists/{p["id"]}?fields=tracks(total)')
+                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": {full}')
+                    if isinstance(full, dict) and isinstance(full.get('tracks'), dict):
+                        tracks_total = full['tracks'].get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
