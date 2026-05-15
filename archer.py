@@ -7333,19 +7333,21 @@ def spotify_playlists():
             try:
                 tracks_obj = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
+                print(f'[SPOTIFY-PL] "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
                 if tracks_total is None:
-                    full = spotify_api('GET', f'playlists/{p["id"]}/tracks?limit=1&fields=total')
+                    # Drop fields filter — just get paging object, read 'total' from it
+                    full = spotify_api('GET', f'playlists/{p["id"]}/tracks?limit=1')
+                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": type={type(full)} keys={list(full.keys()) if isinstance(full, dict) else full}')
                     if isinstance(full, dict):
                         tracks_total = full.get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
                     'tracks': tracks_total,
-                    '_debug_tracks_obj': str(tracks_obj),
                     'art':    p['images'][0]['url'] if p.get('images') else '',
                 })
             except Exception as ex:
-                print(f'[SPOTIFY] Playlist parse error for {p.get("name")}: {ex}')
+                print(f'[SPOTIFY-PL] parse error for "{p.get("name")}": {ex}')
                 continue
         return jsonify({'playlists': playlists})
     except Exception as e:
