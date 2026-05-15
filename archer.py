@@ -7179,13 +7179,12 @@ def spotify_refresh():
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
         data  = urllib.parse.urlencode({'grant_type': 'refresh_token', 'refresh_token': spotify_tokens['refresh_token']}).encode()
         req   = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
-                    headers={'Authorization': f'Bearer {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
-        # Use basic auth properly
-        req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
-                headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
+                    headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
         with urllib.request.urlopen(req, timeout=5) as r:
             resp = json.loads(r.read())
             spotify_tokens['access_token'] = resp['access_token']
+            if resp.get('refresh_token'):
+                spotify_tokens['refresh_token'] = resp['refresh_token']
             spotify_tokens['expires_at']   = time.time() + resp.get('expires_in', 3600) - 60
             return True
     except Exception as e:
@@ -7253,6 +7252,10 @@ def spotify_callback():
     error = freq.args.get('error')
     if error or not code:
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
+    if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
+        return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
+<script>setTimeout(()=>window.close(),1500)</script></body></html>"""
     try:
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
         redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
@@ -7340,20 +7343,13 @@ def spotify_playlists():
             try:
                 tracks_obj = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
-                print(f'[SPOTIFY-PL] "{p.get("name")}" public={p.get("public")} tracks_obj={tracks_obj} total={tracks_total}')
-                if tracks_total is None:
-                    full = spotify_api('GET', f'playlists/{p["id"]}')
-                    print(f'[SPOTIFY-PL] fallback "{p.get("name")}": tracks={full.get("tracks") if isinstance(full, dict) else full}')
-                    if isinstance(full, dict) and isinstance(full.get('tracks'), dict):
-                        tracks_total = full['tracks'].get('total')
                 playlists.append({
                     'id':     p['id'],
                     'name':   p['name'],
                     'tracks': tracks_total,
                     'art':    p['images'][0]['url'] if p.get('images') else '',
                 })
-            except Exception as ex:
-                print(f'[SPOTIFY-PL] parse error for "{p.get("name")}": {ex}')
+            except Exception:
                 continue
         return jsonify({'playlists': playlists})
     except Exception as e:
