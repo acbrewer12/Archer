@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v23</div>
+      <div class="hdr-badge">T1 v24</div>
     </div>
   </div>
 
@@ -1028,6 +1028,9 @@ body.day{background:#0d0d0d}
             </div>
             <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:100%;accent-color:#cc0000">
           </div>
+        </div>
+        <div style="text-align:right;padding:0 2px 2px">
+          <button onclick="t1SpotifyDisconnect()" style="background:none;border:1px solid #333;border-radius:3px;padding:2px 8px;color:#555;font-size:9px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:1px">DISCONNECT</button>
         </div>
         <div class="box">
           <div class="section-title">PLAYLISTS</div>
@@ -1802,6 +1805,11 @@ async function t1SpotifyToggle() {
   const p = document.getElementById('t1-play-btn').textContent==='⏸';
   await fetch(T1BASE+'/spotify/'+(p?'pause':'play'),{method:'POST'});
   document.getElementById('t1-play-btn').textContent = p?'▶':'⏸';
+}
+async function t1SpotifyDisconnect() {
+  await fetch(T1BASE+'/spotify/disconnect');
+  document.getElementById('t1-spotify-disconnected').style.display = 'flex';
+  document.getElementById('t1-spotify-connected').style.display = 'none';
 }
 async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POST'}); setTimeout(t1PollSpotify,600); setTimeout(t1LoadQueue,1200); }
 async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST'}); setTimeout(t1PollSpotify,600); }

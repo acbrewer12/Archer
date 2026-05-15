@@ -7224,6 +7224,13 @@ def spotify_api(method, endpoint, data=None):
         print(f'[SPOTIFY] API error {endpoint}: {e}')
         return None
 
+@display_app.route('/spotify/disconnect')
+def spotify_disconnect():
+    spotify_tokens['access_token']  = None
+    spotify_tokens['refresh_token'] = None
+    spotify_tokens['expires_at']    = 0
+    return jsonify({'ok': True})
+
 @display_app.route('/spotify/login')
 def spotify_login():
     """Redirect to Spotify OAuth."""
@@ -7234,7 +7241,7 @@ def spotify_login():
         'response_type': 'code',
         'redirect_uri':  redirect_uri,
         'scope':         SPOTIFY_SCOPES,
-        'show_dialog':   'false',
+        'show_dialog':   'true',
     })
     return json.dumps({'redirect': f'https://accounts.spotify.com/authorize?{params}'}), 200, {'Content-Type': 'application/json'}
 
