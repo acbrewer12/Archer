@@ -7340,7 +7340,7 @@ def spotify_playlists():
             try:
                 tracks_obj = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
-                print(f'[SPOTIFY-PL] "{p.get("name")}" tracks_obj={tracks_obj} total={tracks_total}')
+                print(f'[SPOTIFY-PL] "{p.get("name")}" public={p.get("public")} tracks_obj={tracks_obj} total={tracks_total}')
                 if tracks_total is None:
                     full = spotify_api('GET', f'playlists/{p["id"]}')
                     print(f'[SPOTIFY-PL] fallback "{p.get("name")}": tracks={full.get("tracks") if isinstance(full, dict) else full}')
