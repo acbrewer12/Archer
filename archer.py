@@ -6286,10 +6286,34 @@ def tier4_page():
 # ── TERMINAL ACCESS CONTROL ─────────────────────────────
 TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
 
-def terminal_access_check(request):
+def get_request_tier(request):
+    """Resolve the tier for any request using MAC auth cookie, fingerprint, or both."""
+    import hashlib as _hl
+    # 1. MAC auth cookie (primary system)
+    cookie_val = request.cookies.get('archer_auth', '')
+    if cookie_val:
+        try:
+            parts = cookie_val.split(':')
+            if len(parts) == 3:
+                c_tier, c_name, c_token = parts
+                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                if c_token == expected:
+                    return int(c_tier)
+        except Exception:
+            pass
+    # 2. Fingerprint system (legacy / in-cabin devices)
     fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
-    tier = get_device_tier(fp)
+    return get_device_tier(fp)
+
+def terminal_access_check(request):
+    tier = get_request_tier(request)
     return tier in TERMINAL_ALLOWED_TIERS, tier
+
+def require_tier1(request):
+    """Returns (is_tier1: bool, tier: int)."""
+    tier = get_request_tier(request)
+    return tier == 1, tier
 
 # ── REAL SHELL EXECUTION ─────────────────────────────────
 import subprocess, select, os as _os
@@ -6457,7 +6481,19 @@ setInterval(checkPiStatus, 15000);
     return FR(terminal_html, mimetype='text/html')
 
 # ── TERMINAL EXEC ENDPOINT ───────────────────────────────
-BLOCKED_CMDS = ['rm -rf /', 'mkfs', 'dd if=/dev/zero', ':(){ :|:& };:', 'shutdown', 'reboot']
+import re as _re
+_DANGEROUS = _re.compile(
+    r'\brm\s+(-[a-z]*f[a-z]*\s+)?/'      # rm -rf / or rm /
+    r'|\bmkfs\b'
+    r'|\bdd\s+if=/dev/zero\b'
+    r'|\b(shutdown|reboot|poweroff|halt)\b'
+    r'|:\(\)\s*\{.*\|.*&'                 # fork bomb
+    r'|\bpasswd\b|\buseradd\b|\buserdel\b'
+    r'|\|\s*(sh|bash|zsh|dash)\b'         # pipe to shell
+    r'|>\s*/dev/sd'                        # overwrite disk
+    r'|\bchmod\s+[0-7]*7\s+/'             # chmod on root
+    r'|\bcrontab\s+-r\b'
+)
 
 @display_app.route('/terminal/exec', methods=['POST'])
 def terminal_exec():
@@ -6469,10 +6505,8 @@ def terminal_exec():
     cmd  = data.get('cmd', '').strip()
     if not cmd:
         return jsonify({'stdout': '', 'stderr': ''})
-    # Block dangerous commands
-    for blocked in BLOCKED_CMDS:
-        if blocked in cmd:
-            return jsonify({'error': f'Blocked: {blocked}'})
+    if _DANGEROUS.search(cmd):
+        return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=15,
@@ -6939,6 +6973,10 @@ def deregister_mac():
 @display_app.route('/registered_devices')
 def registered_devices():
     """List all registered devices (Tier 1 only)."""
+    from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required', 'tier': tier}), 403
     whitelist = load_mac_whitelist()
     devices = [{'mac': mac, 'tier': info['tier'], 'name': info['name']}
                for mac, info in whitelist.items()]
@@ -6948,6 +6986,10 @@ def registered_devices():
 @display_app.route('/devices')
 def devices_page():
     """Tier 1 only — manage registered devices and generate codes."""
+    from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return f'<html><body style="background:#000;color:#cc0000;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><div style="font-size:32px">🔒</div><div style="font-size:14px;letter-spacing:3px;margin-top:12px">ACCESS DENIED — TIER 1 ONLY</div></div></body></html>', 403
     whitelist = load_mac_whitelist()
     cleanup_expired_codes()
     active_codes = [(c, e) for c, e in one_time_codes.items() if not e['used']]
@@ -7070,13 +7112,16 @@ async function revokeCode(code) {{
 def generate_code_route():
     """Generate a one-time invite code (Tier 1 only)."""
     from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     data = freq.json or {}
     name = data.get('name', '').strip()
-    tier = data.get('tier', 2)
+    inv_tier = data.get('tier', 2)
     if not name:
         return jsonify({'success': False, 'error': 'Name required'})
-    code = generate_one_time_code(name, tier)
-    return jsonify({'success': True, 'code': code, 'name': name, 'tier': tier})
+    code = generate_one_time_code(name, inv_tier)
+    return jsonify({'success': True, 'code': code, 'name': name, 'tier': inv_tier})
 
 @display_app.route('/revoke_code', methods=['POST'])
 def revoke_code():
