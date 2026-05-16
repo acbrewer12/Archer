@@ -12,6 +12,32 @@ import edge_tts
 import tempfile
 import queue
 import platform as _platform
+import sys
+import collections
+
+# ── LOG CAPTURE (captures all print() output into a ring buffer) ──
+_log_buffer = collections.deque(maxlen=2000)
+_log_lock   = threading.Lock()
+
+class _TeeWriter:
+    """Writes to original stdout AND appends to _log_buffer."""
+    def __init__(self, original):
+        self._orig = original
+    def write(self, text):
+        self._orig.write(text)
+        stripped = text.rstrip('\n')
+        if stripped:
+            with _log_lock:
+                for line in stripped.split('\n'):
+                    if line:
+                        _log_buffer.append(line)
+    def flush(self):
+        self._orig.flush()
+    def __getattr__(self, name):
+        return getattr(self._orig, name)
+
+sys.stdout = _TeeWriter(sys.stdout)
+sys.stderr = _TeeWriter(sys.stderr)
 
 # ── PLATFORM DETECTION ───────────────────
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
@@ -6354,6 +6380,15 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 .pi-offline{background:#1a0000;color:#cc0000;border:1px solid #330000}
 #terminal-container{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #output{flex:1;padding:10px 12px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+#log-output{flex:1;padding:10px 12px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
+.log-spotify{color:#1db954}.log-archer{color:#cc4444}.log-display{color:#cc8800}
+.log-auth{color:#4488ff}.log-voice{color:#44cccc}.log-arduino{color:#ff8800}
+.log-err{color:#ff4444}.log-default{color:#888}
+#log-filter{background:#000;border:1px solid #222;color:#888;font-family:'Courier New',monospace;font-size:10px;padding:4px 8px;outline:none;width:160px;border-radius:3px}
+#log-filter:focus{border-color:#cc0000}
+#log-toolbar{display:none;padding:6px 8px;border-bottom:1px solid #1a1a1a;background:#050505;flex-shrink:0;gap:8px;align-items:center}
+.log-dot{width:8px;height:8px;border-radius:50%;background:#00ff00;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
 #input-row{display:flex;padding:8px;border-top:1px solid #1a1a1a;background:#050505;flex-shrink:0}
 .prompt-label{color:#cc0000;padding:6px 8px;font-size:13px;flex-shrink:0}
 #cmd{flex:1;background:#000;color:#ff3333;border:1px solid #1a1a1a;border-radius:4px;padding:6px 8px;font-family:'Courier New',monospace;font-size:12px;outline:none;caret-color:#ff3333}
@@ -6373,6 +6408,7 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 <div id="header">
   <div id="header-title">⚡ ARCHER TERMINAL</div>
   <button class="tab-btn active" id="tab-server" onclick="switchTab('server')">SERVER</button>
+  <button class="tab-btn" id="tab-logs" onclick="switchTab('logs')">LOGS</button>
   <button class="tab-btn" id="tab-pi" onclick="switchTab('pi')">PI</button>
   <span id="pi-status" class="pi-offline">PI OFFLINE</span>
 </div>
@@ -6384,6 +6420,15 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
       <input id="cmd" type="text" placeholder="enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
       <button id="send-btn" onclick="sendCmd()">RUN</button>
     </div>
+  </div>
+  <div id="logs-panel" style="display:none;flex-direction:column;height:100%">
+    <div id="log-toolbar">
+      <div class="log-dot"></div>
+      <span style="font-size:9px;color:#444;letter-spacing:2px">LIVE</span>
+      <input id="log-filter" placeholder="filter..." oninput="filterLogs()">
+      <button onclick="clearLogs()" style="background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;letter-spacing:1px">CLEAR</button>
+    </div>
+    <div id="log-output"></div>
   </div>
   <iframe id="pi-iframe" src="about:blank"></iframe>
 </div>
@@ -6405,11 +6450,77 @@ function append(text, cls) {
 
 function switchTab(tab) {
     currentTab = tab;
-    document.getElementById('tab-server').classList.toggle('active', tab === 'server');
-    document.getElementById('tab-pi').classList.toggle('active', tab === 'pi');
+    ['server','logs','pi'].forEach(t => document.getElementById('tab-'+t)?.classList.toggle('active', t === tab));
     document.getElementById('server-terminal').style.display = tab === 'server' ? 'flex' : 'none';
-    document.getElementById('pi-iframe').style.display = tab === 'pi' ? 'block' : 'none';
-    if (tab === 'pi') checkPiStatus();
+    document.getElementById('logs-panel').style.display     = tab === 'logs'   ? 'flex' : 'none';
+    document.getElementById('log-toolbar').style.display    = tab === 'logs'   ? 'flex' : 'none';
+    document.getElementById('log-output').style.display     = tab === 'logs'   ? 'block' : 'none';
+    document.getElementById('pi-iframe').style.display      = tab === 'pi'     ? 'block' : 'none';
+    if (tab === 'pi')   checkPiStatus();
+    if (tab === 'logs') startLogStream();
+}
+
+// ── LOG STREAM ──────────────────────────────────
+let _logLines = [];
+let _logFilter = '';
+let _logEs = null;
+
+function logClass(line) {
+    if (line.includes('[SPOTIFY]')) return 'log-spotify';
+    if (line.includes('[ARCHER]'))  return 'log-archer';
+    if (line.includes('[DISPLAY]')) return 'log-display';
+    if (line.includes('[AUTH]'))    return 'log-auth';
+    if (line.includes('[VOICE]'))   return 'log-voice';
+    if (line.includes('[ARDUINO]')) return 'log-arduino';
+    if (line.toLowerCase().includes('error') || line.includes('Traceback')) return 'log-err';
+    return 'log-default';
+}
+
+function renderLogs() {
+    const el = document.getElementById('log-output');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    const frag = document.createDocumentFragment();
+    _logLines.forEach(line => {
+        if (_logFilter && !line.toLowerCase().includes(_logFilter)) return;
+        const d = document.createElement('div');
+        d.className = logClass(line);
+        d.textContent = line;
+        frag.appendChild(d);
+    });
+    el.innerHTML = '';
+    el.appendChild(frag);
+    if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function appendLog(line) {
+    _logLines.push(line);
+    if (_logLines.length > 2000) _logLines.shift();
+    if (_logFilter && !line.toLowerCase().includes(_logFilter)) return;
+    const el = document.getElementById('log-output');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    const d = document.createElement('div');
+    d.className = logClass(line);
+    d.textContent = line;
+    el.appendChild(d);
+    if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function filterLogs() {
+    _logFilter = document.getElementById('log-filter').value.toLowerCase();
+    renderLogs();
+}
+
+function clearLogs() { _logLines = []; document.getElementById('log-output').innerHTML = ''; }
+
+function startLogStream() {
+    if (_logEs) return;
+    _logEs = new EventSource('/terminal/log_stream');
+    _logEs.onmessage = e => {
+        const d = JSON.parse(e.data);
+        if (d.snapshot) { _logLines = d.snapshot; renderLogs(); }
+        else if (d.line) appendLog(d.line);
+    };
+    _logEs.onerror = () => { _logEs.close(); _logEs = null; setTimeout(startLogStream, 3000); };
 }
 
 function checkPiStatus() {
@@ -6517,6 +6628,34 @@ def terminal_exec():
         return jsonify({'error': 'Command timed out (15s limit)'})
     except Exception as e:
         return jsonify({'error': str(e)})
+
+# ── LOG STREAM (SSE) ─────────────────────────────────────
+@display_app.route('/terminal/log_stream')
+def terminal_log_stream():
+    from flask import request as req, Response as FR
+    allowed, _ = terminal_access_check(req)
+    if not allowed:
+        return FR('', status=403)
+    def generate():
+        # Send current buffer as snapshot
+        with _log_lock:
+            snapshot = list(_log_buffer)
+        yield f"data: {json.dumps({'snapshot': snapshot})}\n\n"
+        last_len = len(snapshot)
+        while True:
+            time.sleep(0.4)
+            with _log_lock:
+                current = list(_log_buffer)
+            cur_len = len(current)
+            if cur_len > last_len:
+                for line in current[last_len:]:
+                    yield f"data: {json.dumps({'line': line})}\n\n"
+            elif cur_len < last_len:
+                # Buffer was trimmed (maxlen eviction) — re-snapshot
+                yield f"data: {json.dumps({'snapshot': current})}\n\n"
+            last_len = cur_len
+    return FR(generate(), mimetype='text/event-stream',
+              headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 # ── PI TERMINAL STATUS ───────────────────────────────────
 pi_tunnel_url = {'url': None, 'online': False, 'last_seen': None}
