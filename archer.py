@@ -7996,6 +7996,13 @@ def main():
     print(f"[ARCHER] {greeting}")
     speak(greeting)
 
+    # On HuggingFace / non-interactive environments stdin is not a TTY.
+    # Skip the local text input loop entirely — all interaction is via the web UI.
+    if not sys.stdin.isatty():
+        print("[ARCHER] No TTY detected — web-only mode. Text input disabled.")
+        while True:
+            time.sleep(60)
+
     while True:
         try:
             try:
