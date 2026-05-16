@@ -1124,18 +1124,19 @@ Truck data right now:
 
     response = None
 
-    # Try 1 — Local Ollama
-    try:
-        result = subprocess.run(
-            ['ollama', 'run', 'llama3.2', full_prompt],
-            capture_output=True, timeout=15,
-            encoding='utf-8', errors='replace'
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            response = result.stdout.strip()
-            print("[AI] Local Ollama")
-    except Exception:
-        pass
+    # Try 1 — Local Ollama (Pi only; CPU inference on HF is too slow)
+    if _IS_PI:
+        try:
+            result = subprocess.run(
+                ['ollama', 'run', 'llama3.2', full_prompt],
+                capture_output=True, timeout=15,
+                encoding='utf-8', errors='replace'
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                response = result.stdout.strip()
+                print("[AI] Local Ollama")
+        except Exception:
+            pass
 
     # Try 2 — OllamaFreeAPI
     if not response:

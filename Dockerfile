@@ -28,4 +28,4 @@ EXPOSE 7860
 
 # Start Ollama, pull model, run Archer
 HEALTHCHECK NONE
-CMD ollama serve & sleep 8 && PORT=7860 python3 archer.py
+CMD ollama serve >/tmp/ollama.log 2>&1 & sleep 8 && PORT=7860 python3 archer.py
