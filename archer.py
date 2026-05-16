@@ -1138,18 +1138,30 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 2 — OllamaFreeAPI
+    # Try 2 — HuggingFace Inference API
     if not response:
-        try:
-            from ollamafreeapi import OllamaFreeAPI
-            client = OllamaFreeAPI()
-            r = client.chat(model="llama3.2:3b", prompt=full_prompt, temperature=0.7)
-            r = str(r).strip()
-            if r and len(r) > 2:
-                response = r
-                print("[AI] OllamaFreeAPI")
-        except Exception:
-            pass
+        HF_TOKEN = os.environ.get('HF_TOKEN', '')
+        if HF_TOKEN:
+            try:
+                payload = json.dumps({
+                    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150,
+                    "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] HF Inference API")
+            except Exception as e:
+                print(f"[AI] HF Inference failed: {e}")
 
     # Try 3 — Groq
     if not response:
@@ -3529,11 +3541,24 @@ def smart_fallback(text):
     for key, fn in SMART_FALLBACKS.items():
         if key in t:
             return fn()
+    if any(w in t for w in ['how are you', "how's it", "how you doing", "what's up", "sup", "you good"]):
+        return random.choice([
+            "Running smooth. All systems green.",
+            "Good. Oil's warm, boost is ready.",
+            "Ready to roll. What do you need?",
+            "All good. Truck's sitting happy.",
+        ])
+    if any(w in t for w in ['thanks', 'thank you', 'good job', 'nice work', 'appreciate']):
+        return random.choice(["Anytime.", "That's what I'm here for.", "Copy that."])
+    if any(w in t for w in ['hello', 'hey archer', 'hi archer', 'yo archer']):
+        return random.choice(["What's up.", "Ready when you are.", "Here. What do you need?"])
+    if any(w in t for w in ['what can you do', 'what do you know', 'help']):
+        return "Ask me about RPM, temps, weather, fuel, music, or just talk."
     return random.choice([
         'Say that again.',
         'Not sure what you mean.',
         'Try asking differently.',
-        f'I heard you but not sure what you need. Status: {truck_state["rpm"]} RPM, {truck_state["oil_temp"]}F oil.',
+        f'I heard you. Truck status: {truck_state["rpm"]} RPM, {truck_state["oil_temp"]}F oil.',
     ])
 
 
