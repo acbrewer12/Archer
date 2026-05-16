@@ -1307,6 +1307,8 @@ const VOICE_CMDS = {
   'dismiss':      () => { dismissWarn(); return 'Cleared.'; },
   'oil temp':     () => `Oil is ${Math.round(liveData.oilTemp)} degrees. ${liveData.oilTemp > 220 ? 'Running hot.' : 'Nominal.'}`,
   'oil pressure': () => `Oil pressure ${liveData.oilPsi} PSI. ${liveData.oilPsi < 25 ? 'That is low.' : 'Good.'}`,
+  'trans temp':   () => { const t = liveData.transTemp || 0; return `Trans is ${Math.round(t)} degrees. ${t > 200 ? 'Running hot.' : 'Nominal.'}`; },
+  'transmission temp': () => { const t = liveData.transTemp || 0; return `Trans is ${Math.round(t)} degrees. ${t > 200 ? 'Running hot.' : 'Nominal.'}`; },
   'boost':        () => `Boost is ${Math.round(liveData.boost)} PSI.`,
   'rpm':          () => `RPM is ${Math.round(liveData.rpm)}.`,
   'battery':      () => `Battery ${liveData.battery.toFixed(1)} volts.`,
@@ -1376,7 +1378,7 @@ function setArcherMsg(text) {
 // ─── LIVE DATA ───
 // liveData = what's currently displayed (animated)
 // targetData = last value received from the server
-let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190 };
+let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190, transTemp:160 };
 let targetData = Object.assign({}, liveData);
 
 async function pollLive() {
@@ -1391,8 +1393,9 @@ async function pollLive() {
     if (d.ethanol  != null) targetData.ethanol  = d.ethanol;
     if (d.coolant  != null) targetData.coolant  = d.coolant;
     const sd = d.sensor_data || {};
-    if (sd.oil_pressure != null) targetData.oilPsi = sd.oil_pressure;
-    if (sd.gear_pos     != null) targetData.gear   = sd.gear_pos;
+    if (sd.oil_pressure != null) targetData.oilPsi    = sd.oil_pressure;
+    if (sd.gear_pos     != null) targetData.gear      = sd.gear_pos;
+    if (sd.trans_temp   != null) targetData.transTemp = sd.trans_temp;
     targetData.knock = (sd.knock_count > 0) ? 1 : 0;
     if (d.archer_msg) {
       const msgEl = document.getElementById('archer-msg');
@@ -1429,8 +1432,9 @@ function update() {
   liveData.rpm     = lerp(liveData.rpm,     targetData.rpm,     0.12);
   liveData.speed   = lerp(liveData.speed,   targetData.speed,   0.12);
   liveData.boost   = lerp(liveData.boost,   targetData.boost,   0.12);
-  liveData.oilTemp = lerp(liveData.oilTemp, targetData.oilTemp, 0.08);
-  liveData.battery = lerp(liveData.battery, targetData.battery, 0.08);
+  liveData.oilTemp  = lerp(liveData.oilTemp,  targetData.oilTemp,  0.08);
+  liveData.battery  = lerp(liveData.battery,  targetData.battery,  0.08);
+  liveData.transTemp= lerp(liveData.transTemp,targetData.transTemp,0.08);
   liveData.gear    = targetData.gear;
   liveData.knock   = targetData.knock;
   liveData.ethanol = targetData.ethanol;
