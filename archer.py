@@ -6265,9 +6265,13 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 def voice_command_endpoint():
     from flask import request as flask_request
     try:
-        data    = flask_request.get_json()
-        command = data.get('command', '').strip()
+        data     = flask_request.get_json()
+        command  = data.get('command', '').strip()
+        log_only = data.get('log_only', False)
         if not command:
+            return jsonify({'response': ''})
+        if log_only:
+            print(f"[YOU — DISPLAY MIC] {command}")
             return jsonify({'response': ''})
         response = handle_command(command)
         if response is None:

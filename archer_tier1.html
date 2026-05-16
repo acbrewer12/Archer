@@ -1298,6 +1298,11 @@ const VOICE_CMDS = {
   'show track':   () => { setTab('track'); return 'Drag strip mode.'; },
   'show build':   () => { setTab('build'); return 'Build tracker. 18% done.'; },
   'show graphs':  () => { setTab('graphs'); return 'History graphs.'; },
+  'show music':   () => { setTab('music'); return 'Music.'; },
+  'show cams':    () => { setTab('cams'); return 'Cameras.'; },
+  'show live':    () => { setTab('live'); return 'Live data.'; },
+  'show logs':    () => { setTab('show'); return 'Logs.'; },
+  'show terminal':() => { setTab('show'); return 'Terminal.'; },
   'acknowledge':  () => { dismissWarn(); return 'Warning acknowledged.'; },
   'dismiss':      () => { dismissWarn(); return 'Cleared.'; },
   'oil temp':     () => `Oil is ${Math.round(liveData.oilTemp)} degrees. ${liveData.oilTemp > 220 ? 'Running hot.' : 'Nominal.'}`,
@@ -1332,11 +1337,11 @@ async function processVoiceCmd(cmd) {
     setArcherMsg(response);
     showVoiceResponse(response);
     speakText(response);
-    // Log to server in background so it appears in the LOGS tab
+    // Log to server (log_only=true so it doesn't re-run AI or TTS)
     fetch(T1BASE + '/voice_command', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({command: cmd})
+      body: JSON.stringify({command: cmd, log_only: true})
     }).catch(() => {});
   } else {
     // Unknown command — ask Archer AI on server
