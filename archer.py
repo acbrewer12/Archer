@@ -1138,19 +1138,19 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 2 — HuggingFace Inference API
+    # Try 2 — HuggingFace Inference API (router endpoint)
     if not response:
         HF_TOKEN = os.environ.get('HF_TOKEN', '')
         if HF_TOKEN:
             try:
                 payload = json.dumps({
-                    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+                    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150,
                     "temperature": 0.7,
                 }).encode()
                 req = urllib.request.Request(
-                    "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions",
+                    "https://router.huggingface.co/hf-inference/v1/chat/completions",
                     data=payload,
                     headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
                 )
@@ -3545,6 +3545,8 @@ def smart_fallback(text):
     for key, fn in SMART_FALLBACKS.items():
         if key in t:
             return fn()
+    if any(w in t for w in ['direction', 'navigate', 'take me to', 'get me to', 'how do i get', 'route to']):
+        return "I can't navigate, but Google Maps is one tap away."
     if any(w in t for w in ['how are you', "how's it", "how you doing", "what's up", "sup", "you good"]):
         return random.choice([
             "Running smooth. All systems green.",
