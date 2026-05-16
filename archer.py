@@ -155,23 +155,24 @@ connected_clients = {}  # session_id -> {ip, agent, connected_at}
 client_lock       = threading.Lock()
 
 def log_client_connect(session_id, ip, agent):
+    already_seen = any(c['ip'] == ip for c in connected_clients.values())
     with client_lock:
         connected_clients[session_id] = {
             'ip':           ip,
             'agent':        agent,
             'connected_at': datetime.now().strftime('%I:%M %p'),
+            'last_seen':    time.time(),
         }
     count = len(connected_clients)
-    print(f"[DISPLAY] Device connected — {ip} — {count} total connected")
-    print(f"[YOU] ", end='', flush=True)
+    if not already_seen:
+        print(f"[DISPLAY] Device connected — {ip} — {count} total connected")
 
 def log_client_disconnect(session_id):
     with client_lock:
         info = connected_clients.pop(session_id, None)
     if info:
         count = len(connected_clients)
-        print(f"[DISPLAY] Device disconnected — {info.get(chr(39)+chr(105)+chr(112), chr(39)+chr(63)+chr(39))} — {count} remaining")
-        print(f"[YOU] ", end='', flush=True)
+        print(f"[DISPLAY] Device disconnected — {info.get('ip', '?')} — {count} remaining")
 
 def client_timeout_monitor():
     # Remove clients that have not polled in 10 seconds
