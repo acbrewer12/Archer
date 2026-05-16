@@ -3545,8 +3545,6 @@ def smart_fallback(text):
     for key, fn in SMART_FALLBACKS.items():
         if key in t:
             return fn()
-    if any(w in t for w in ['direction', 'navigate', 'take me to', 'get me to', 'how do i get', 'route to']):
-        return "I can't navigate, but Google Maps is one tap away."
     if any(w in t for w in ['how are you', "how's it", "how you doing", "what's up", "sup", "you good"]):
         return random.choice([
             "Running smooth. All systems green.",
@@ -6267,6 +6265,73 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 </html>'''
 
 # ── FLASK ROUTES ─────────────────────────
+
+@display_app.route('/navigate')
+def navigate_endpoint():
+    from flask import request as _req
+    dest = _req.args.get('dest', '').strip()
+    lat  = _req.args.get('lat', '').strip()
+    lon  = _req.args.get('lon', '').strip()
+    if not dest:
+        return jsonify({'error': 'No destination provided'}), 400
+    # Geocode via Nominatim (free, no key)
+    try:
+        enc = urllib.parse.quote(dest)
+        geo_req = urllib.request.Request(
+            f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=1',
+            headers={'User-Agent': 'Archer-Truck-AI/1.0'}
+        )
+        with urllib.request.urlopen(geo_req, timeout=8) as r:
+            places = json.loads(r.read())
+        if not places:
+            return jsonify({'error': f"Can't find {dest}"}), 404
+        dest_lat  = places[0]['lat']
+        dest_lon  = places[0]['lon']
+        dest_name = places[0].get('display_name', dest).split(',')[0]
+    except Exception as e:
+        print(f'[NAV] Geocode failed: {e}')
+        return jsonify({'error': 'Location lookup failed'}), 500
+    # Route via OSRM (free, no key) if GPS provided
+    steps = []
+    total_dist_m = 0
+    total_dur_s  = 0
+    if lat and lon:
+        try:
+            osrm = (f'https://router.project-osrm.org/route/v1/driving/'
+                    f'{lon},{lat};{dest_lon},{dest_lat}?overview=false&steps=true')
+            osrm_req = urllib.request.Request(osrm, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
+            with urllib.request.urlopen(osrm_req, timeout=12) as r:
+                rd = json.loads(r.read())
+            if rd.get('code') == 'Ok':
+                route = rd['routes'][0]
+                total_dist_m = route.get('distance', 0)
+                total_dur_s  = route.get('duration', 0)
+                for leg in route.get('legs', []):
+                    for step in leg.get('steps', []):
+                        mv = step.get('maneuver', {})
+                        loc = mv.get('location', [0, 0])
+                        steps.append({
+                            'maneuver':    mv.get('type', 'continue'),
+                            'modifier':    mv.get('modifier', ''),
+                            'instruction': step.get('name', ''),
+                            'distance':    round(step.get('distance', 0)),
+                            'duration':    round(step.get('duration', 0)),
+                            'lat':         loc[1],
+                            'lon':         loc[0],
+                        })
+        except Exception as e:
+            print(f'[NAV] OSRM failed: {e}')
+    print(f'[NAV] Route to {dest_name}: {round(total_dist_m*0.000621371,1)} mi, {round(total_dur_s/60)} min, {len(steps)} steps')
+    return jsonify({
+        'ok':                True,
+        'destination':       dest_name,
+        'dest_lat':          dest_lat,
+        'dest_lon':          dest_lon,
+        'steps':             steps,
+        'total_distance_mi': round(total_dist_m * 0.000621371, 1),
+        'total_duration_min':round(total_dur_s / 60),
+    })
+
 @display_app.route('/voice_command', methods=['POST'])
 def voice_command_endpoint():
     from flask import request as flask_request

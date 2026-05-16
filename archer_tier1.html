@@ -511,6 +511,20 @@ body.day{background:#0d0d0d}
   <button class="warn-dismiss" onclick="dismissWarn()">ACKNOWLEDGE</button>
 </div>
 
+<!-- NAVIGATION HUD -->
+<div id="nav-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:997;background:#0a0a0a;border-bottom:2px solid #cc0000;padding:10px 14px;display:none;align-items:center;gap:14px;font-family:'Share Tech Mono',monospace;">
+  <div id="nav-arrow" style="font-size:2.6rem;min-width:52px;text-align:center;color:#fff;">↑</div>
+  <div style="flex:1;min-width:0;">
+    <div id="nav-dist" style="font-size:1.6rem;font-weight:bold;color:#fff;line-height:1.1;">--</div>
+    <div id="nav-instruction" style="font-size:0.82rem;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
+  </div>
+  <div style="text-align:right;flex-shrink:0;">
+    <div id="nav-eta" style="font-size:1rem;color:#cc0000;font-weight:bold;">-- min</div>
+    <div id="nav-dest-label" style="font-size:0.72rem;color:#555;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">--</div>
+    <button onclick="stopNavigation()" style="margin-top:4px;font-size:0.68rem;color:#555;background:none;border:1px solid #333;padding:2px 8px;cursor:pointer;border-radius:3px;">END NAV</button>
+  </div>
+</div>
+
 <div class="phone" id="phone">
 
   <!-- HEADER -->
@@ -1287,6 +1301,117 @@ function stopListening() {
 }
 
 // ─── VOICE COMMANDS ───
+// ─── NAVIGATION ───
+let navState = { active:false, steps:[], stepIdx:0, destination:'', totalMiles:0, totalMin:0, distToNext:0, currentLat:0, currentLon:0, destLat:0, destLon:0, announced:false };
+let navWatchId = null;
+
+function navArrow(maneuver, modifier) {
+  if (maneuver === 'arrive') return '🏁';
+  if (modifier === 'uturn') return '↩';
+  if (modifier === 'sharp left') return '↩';
+  if (modifier === 'sharp right') return '↪';
+  if (modifier === 'slight left' || modifier === 'left') return '←';
+  if (modifier === 'slight right' || modifier === 'right') return '→';
+  return '↑';
+}
+
+function navFmt(meters) {
+  const ft = meters * 3.28084;
+  if (ft < 900) return Math.round(ft / 50) * 50 + ' ft';
+  return (meters * 0.000621371).toFixed(1) + ' mi';
+}
+
+function navInstruction(step) {
+  const n = step.instruction || '';
+  const m = step.maneuver, mod = step.modifier || '';
+  if (m === 'arrive') return `Arrive at ${navState.destination}.`;
+  if (m === 'depart') return `Head ${mod}${n ? ' on ' + n : ''}.`;
+  if (m === 'turn') return `Turn ${mod}${n ? ' onto ' + n : ''}.`;
+  if (m === 'continue') return `Continue${n ? ' on ' + n : ' straight'}.`;
+  if (m === 'merge') return `Merge ${mod}${n ? ' onto ' + n : ''}.`;
+  if (m === 'roundabout') return 'Enter the roundabout.';
+  if (m === 'exit roundabout') return `Exit${n ? ' onto ' + n : ''}.`;
+  return n ? `Continue to ${n}.` : 'Continue.';
+}
+
+function haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371000, dL = (lat2-lat1)*Math.PI/180, dl = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dL/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dl/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function updateNavHUD() {
+  if (!navState.active) return;
+  const step = navState.steps[navState.stepIdx];
+  if (!step) return;
+  document.getElementById('nav-arrow').textContent = navArrow(step.maneuver, step.modifier);
+  document.getElementById('nav-dist').textContent  = navFmt(navState.distToNext || step.distance);
+  document.getElementById('nav-instruction').textContent = navInstruction(step);
+  document.getElementById('nav-eta').textContent   = (navState.totalMin || '--') + ' min';
+  document.getElementById('nav-dest-label').textContent  = navState.destination;
+}
+
+function onGPSUpdate(pos) {
+  navState.currentLat = pos.coords.latitude;
+  navState.currentLon = pos.coords.longitude;
+  if (!navState.active || !navState.steps.length) return;
+  const step = navState.steps[navState.stepIdx];
+  if (!step) return;
+  const dist = haversineM(navState.currentLat, navState.currentLon, step.lat, step.lon);
+  navState.distToNext = dist;
+  if (dist < 250 && !navState.announced) {
+    navState.announced = true;
+    speakText(navInstruction(step));
+  }
+  if (dist < 35 && navState.stepIdx < navState.steps.length - 1) {
+    navState.stepIdx++;
+    navState.announced = false;
+  }
+  if (navState.stepIdx === navState.steps.length - 1 && dist < 40) {
+    speakText(`Arrived at ${navState.destination}.`);
+    setArcherMsg(`You have arrived at ${navState.destination}.`);
+    stopNavigation(); return;
+  }
+  updateNavHUD();
+}
+
+function stopNavigation() {
+  navState.active = false;
+  if (navWatchId) { navigator.geolocation.clearWatch(navWatchId); navWatchId = null; }
+  document.getElementById('nav-hud').style.display = 'none';
+  setArcherMsg('Navigation ended.');
+  speakText('Navigation ended.');
+}
+
+async function startNavigation(dest) {
+  setArcherMsg(`Looking up ${dest}...`);
+  speakText(`Getting directions to ${dest}.`);
+  let lat = '', lon = '';
+  try {
+    const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout:6000, enableHighAccuracy:true}));
+    lat = pos.coords.latitude; lon = pos.coords.longitude;
+  } catch(e) { console.warn('GPS unavailable:', e.message); }
+  try {
+    const url = `${T1BASE}/navigate?dest=${encodeURIComponent(dest)}${lat ? '&lat='+lat+'&lon='+lon : ''}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.error) { setArcherMsg(d.error); speakText(d.error); return; }
+    navState = { active:true, steps:d.steps||[], stepIdx:0, destination:d.destination,
+                 totalMiles:d.total_distance_mi||0, totalMin:d.total_duration_min||0,
+                 distToNext:d.steps&&d.steps[0]?d.steps[0].distance:0,
+                 currentLat:parseFloat(lat)||0, currentLon:parseFloat(lon)||0,
+                 destLat:parseFloat(d.dest_lat), destLon:parseFloat(d.dest_lon), announced:false };
+    const hud = document.getElementById('nav-hud');
+    hud.style.display = 'flex';
+    updateNavHUD();
+    const first = d.steps[0];
+    const intro = `Navigation started. ${d.total_distance_mi} miles to ${d.destination}.${first ? ' ' + navInstruction(first) : ''}`;
+    setArcherMsg(intro); speakText(intro);
+    fetch(T1BASE+'/voice_command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:'navigate to '+dest, log_only:true})}).catch(()=>{});
+    if (lat) navWatchId = navigator.geolocation.watchPosition(onGPSUpdate, null, {enableHighAccuracy:true, maximumAge:2000});
+  } catch(e) { setArcherMsg("Can't get directions right now."); speakText("Can't get directions right now."); }
+}
+
 const VOICE_CMDS = {
   'show drive':   () => { setTab('drive'); return 'Drive screen.'; },
   'show health':  () => { setTab('health'); return 'System health.'; },
@@ -1331,6 +1456,11 @@ function sendVoice() {
 }
 
 async function processVoiceCmd(cmd) {
+  // Navigation commands — intercept before VOICE_CMDS loop
+  const navMatch = cmd.match(/(?:directions to|navigate to|take me to|get me to|route to|go to)\s+(.+)/);
+  if (navMatch) { startNavigation(navMatch[1].trim()); return; }
+  if (/^(stop|end|cancel|exit) nav(igation)?$/.test(cmd.trim()) && navState.active) { stopNavigation(); return; }
+
   let response = null;
   for (const [key, fn] of Object.entries(VOICE_CMDS)) {
     if (cmd.includes(key)) { response = fn(); break; }
