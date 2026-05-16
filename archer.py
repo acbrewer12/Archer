@@ -1177,7 +1177,7 @@ Truck data right now:
 
     # Try 4 — Smart fallback
     if not response:
-        response = smart_fallback(user_input, mood, throttle)
+        response = smart_fallback(user_input)
         print("[AI] Fallback")
 
     if response:
