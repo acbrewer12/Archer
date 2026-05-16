@@ -6384,6 +6384,7 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 #log-output{flex:1;padding:10px 12px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
 .log-spotify{color:#1db954}.log-archer{color:#cc4444}.log-display{color:#cc8800}
 .log-auth{color:#4488ff}.log-voice{color:#44cccc}.log-arduino{color:#ff8800}
+.log-you{color:#ffffff}
 .log-err{color:#ff4444}.log-default{color:#888}
 #log-filter{background:#000;border:1px solid #222;color:#888;font-family:'Courier New',monospace;font-size:10px;padding:4px 8px;outline:none;width:160px;border-radius:3px}
 #log-filter:focus{border-color:#cc0000}
@@ -6473,6 +6474,7 @@ function logClass(line) {
     if (line.includes('[AUTH]'))    return 'log-auth';
     if (line.includes('[VOICE]'))   return 'log-voice';
     if (line.includes('[ARDUINO]')) return 'log-arduino';
+    if (line.includes('[YOU'))      return 'log-you';
     if (line.toLowerCase().includes('error') || line.includes('Traceback')) return 'log-err';
     return 'log-default';
 }

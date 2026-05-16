@@ -524,7 +524,7 @@ body.day{background:#0d0d0d}
         <button class="mode-btn" id="btn-night" onclick="setMode('night')">🌙</button>
         <button class="mode-btn" id="btn-red" onclick="setMode('red')">🔴</button>
       </div>
-      <div class="hdr-badge">T1 v35</div>
+      <div class="hdr-badge">T1 v36</div>
     </div>
   </div>
 
@@ -1323,15 +1323,38 @@ function sendVoice() {
   processVoiceCmd(cmd);
 }
 
-function processVoiceCmd(cmd) {
+async function processVoiceCmd(cmd) {
   let response = null;
   for (const [key, fn] of Object.entries(VOICE_CMDS)) {
     if (cmd.includes(key)) { response = fn(); break; }
   }
-  if (!response) response = `I heard you. Not sure what you need. Try saying status or show health.`;
-  setArcherMsg(response);
-  showVoiceResponse(response);
-  speakText(response);
+  if (response) {
+    setArcherMsg(response);
+    showVoiceResponse(response);
+    speakText(response);
+    // Log to server in background so it appears in the LOGS tab
+    fetch(T1BASE + '/voice_command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: cmd})
+    }).catch(() => {});
+  } else {
+    // Unknown command — ask Archer AI on server
+    try {
+      const r = await fetch(T1BASE + '/voice_command', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command: cmd})
+      });
+      const d = await r.json();
+      response = d.response || "Give me a second.";
+    } catch(e) {
+      response = "Can't reach the server.";
+    }
+    setArcherMsg(response);
+    showVoiceResponse(response);
+    speakText(response);
+  }
 }
 
 function showVoiceResponse(text) {
