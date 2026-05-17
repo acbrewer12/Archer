@@ -6303,9 +6303,9 @@ def navigate_endpoint():
                     'city': props.get('city') or props.get('town') or '',
                     'state': props.get('state') or '',
                 })
-        # If we have GPS, keep only results within 150 miles and sort by distance
+        # If we have GPS, keep only results within 30 miles and sort by distance
         if bias_lat and bias_lon:
-            results = [p for p in results if geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']) < 150]
+            results = [p for p in results if geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']) < 30]
             results.sort(key=lambda p: geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']))
         return results
 
@@ -6313,6 +6313,7 @@ def navigate_endpoint():
     try:
         user_lat = lat or None
         user_lon = lon or None
+        print(f'[NAV] GPS from browser: lat={user_lat} lon={user_lon}')
         places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon)
         if not places:
             city = os.environ.get('ARCHER_CITY', 'Salem Oregon')
@@ -6324,6 +6325,11 @@ def navigate_endpoint():
         dest_lat  = best['lat']
         dest_lon  = best['lon']
         dest_name = best['name'] + (f", {best['city']}" if best.get('city') else '')
+        if user_lat and user_lon:
+            d_mi = geo_dist_mi(user_lat, user_lon, dest_lat, dest_lon)
+            print(f'[NAV] Chose "{dest_name}" — {d_mi:.1f} mi from GPS')
+        else:
+            print(f'[NAV] Chose "{dest_name}" — no GPS, distance unknown')
     except Exception as e:
         print(f'[NAV] Geocode failed: {e}')
         return jsonify({'error': 'Location lookup failed'}), 500
