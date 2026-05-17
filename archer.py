@@ -6283,46 +6283,36 @@ def navigate_endpoint():
             a  = math.sin(dL/2)**2 + math.cos(math.radians(float(la1)))*math.cos(math.radians(float(la2)))*math.sin(dl/2)**2
             return 3958.8 * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-        def nominatim_style(places, label):
-            if not places: return None
-            if user_lat and user_lon:
-                places = [p for p in places if dist(user_lat,user_lon,p['lat'],p['lon']) < 100]
-                places.sort(key=lambda p: dist(user_lat,user_lon,p['lat'],p['lon']))
-            if places:
-                p = places[0]
-                print(f'[NAV] {label}: {p.get("display_name","?").split(",")[0]}')
-                return {'lat': p['lat'], 'lon': p['lon'], 'name': p.get('display_name','').split(',')[0]}
-            return None
-
-        enc = urllib.parse.quote(query)
-        vbox = ''
-        if user_lat and user_lon:
-            r = 0.8
-            vbox = f'&viewbox={float(user_lon)-r},{float(user_lat)+r},{float(user_lon)+r},{float(user_lat)-r}&bounded=1'
-
-        # 1 — geocode.maps.co (free key, not blocked by HF)
-        GEOCODE_KEY = os.environ.get('GEOCODE_API_KEY', '')
-        if GEOCODE_KEY:
-            try:
-                url = f'https://geocode.maps.co/search?q={enc}&api_key={GEOCODE_KEY}&limit=5{vbox}'
-                req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
-                with urllib.request.urlopen(req, timeout=8) as r:
-                    places = json.loads(r.read())
-                result = nominatim_style(places, 'geocode.maps.co')
-                if result: return result
-            except Exception as e:
-                print(f'[NAV] geocode.maps.co failed: {e}')
-
-        # 2 — Nominatim direct (may 429 on HF but worth one try)
-        try:
-            url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=5&countrycodes=us{vbox}'
+        def do_search(url):
             req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
             with urllib.request.urlopen(req, timeout=8) as r:
                 places = json.loads(r.read())
-            result = nominatim_style(places, 'Nominatim')
-            if result: return result
-        except Exception as e:
-            print(f'[NAV] Nominatim failed: {e}')
+            if not places: return None
+            if user_lat and user_lon:
+                places.sort(key=lambda p: dist(user_lat, user_lon, p['lat'], p['lon']))
+            p = places[0]
+            d_mi = dist(user_lat, user_lon, p['lat'], p['lon']) if user_lat else 0
+            name = p.get('display_name', query).split(',')[0]
+            print(f'[NAV] Found "{name}" — {d_mi:.1f} mi away')
+            return {'lat': p['lat'], 'lon': p['lon'], 'name': name}
+
+        enc = urllib.parse.quote(query)
+        GEOCODE_KEY = os.environ.get('GEOCODE_API_KEY', '')
+
+        # Search with progressively larger radius: ~7mi → ~21mi → ~55mi
+        for radius in [0.1, 0.3, 0.8]:
+            vbox = ''
+            if user_lat and user_lon:
+                vbox = f'&viewbox={float(user_lon)-radius},{float(user_lat)+radius},{float(user_lon)+radius},{float(user_lat)-radius}&bounded=1'
+            try:
+                if GEOCODE_KEY:
+                    result = do_search(f'https://geocode.maps.co/search?q={enc}&api_key={GEOCODE_KEY}&limit=5{vbox}')
+                else:
+                    result = do_search(f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=5&countrycodes=us{vbox}')
+                if result:
+                    return result
+            except Exception as e:
+                print(f'[NAV] Geocode radius={radius} failed: {e}')
 
         return None
 
