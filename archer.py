@@ -6274,17 +6274,44 @@ def navigate_endpoint():
     lon  = _req.args.get('lon', '').strip()
     if not dest:
         return jsonify({'error': 'No destination provided'}), 400
-    # Geocode via Nominatim (free, no key)
+
+    def nominatim_search(query):
+        enc = urllib.parse.quote(query)
+        url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=3&countrycodes=us&addressdetails=1'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.loads(r.read())
+
+    # Geocode via Nominatim — try plain query, then with city context, then with state
+    places = []
+    queries_tried = [dest]
     try:
-        enc = urllib.parse.quote(dest)
-        geo_req = urllib.request.Request(
-            f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=1',
-            headers={'User-Agent': 'Archer-Truck-AI/1.0'}
-        )
-        with urllib.request.urlopen(geo_req, timeout=8) as r:
-            places = json.loads(r.read())
+        places = nominatim_search(dest)
+        # If no results and no city/state in query, append local city from weather
         if not places:
-            return jsonify({'error': f"Can't find {dest}"}), 404
+            # Use GPS reverse geocode for city, fall back to env var or Salem
+            city = os.environ.get('ARCHER_CITY', 'Salem, Oregon')
+            if lat and lon:
+                try:
+                    rv_url = f'https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json'
+                    rv_req = urllib.request.Request(rv_url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
+                    with urllib.request.urlopen(rv_req, timeout=5) as r:
+                        rv = json.loads(r.read())
+                    addr = rv.get('address', {})
+                    city = addr.get('city') or addr.get('town') or addr.get('village') or city
+                except Exception:
+                    pass
+            q2 = f'{dest}, {city}'
+            queries_tried.append(q2)
+            places = nominatim_search(q2)
+        # Still nothing — try adding Oregon
+        if not places:
+            q3 = f'{dest}, Oregon'
+            queries_tried.append(q3)
+            places = nominatim_search(q3)
+        print(f'[NAV] Geocode queries: {queries_tried} → {len(places)} result(s)')
+        if not places:
+            return jsonify({'error': f"Can't find \"{dest}\". Try adding a city or zip code."}), 404
         dest_lat  = places[0]['lat']
         dest_lon  = places[0]['lon']
         dest_name = places[0].get('display_name', dest).split(',')[0]
