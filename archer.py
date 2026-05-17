@@ -6277,59 +6277,53 @@ def navigate_endpoint():
     dest_name = _req.args.get('dest_name', '').strip()
 
     def geocode(query, user_lat=None, user_lon=None):
-        """Try Photon first (with retry), fall back to Nominatim."""
         import math
-        def dist(la1,lo1,la2,lo2):
-            dL=math.radians(float(la2)-float(la1)); dl=math.radians(float(lo2)-float(lo1))
-            a=math.sin(dL/2)**2+math.cos(math.radians(float(la1)))*math.cos(math.radians(float(la2)))*math.sin(dl/2)**2
-            return 3958.8*2*math.atan2(math.sqrt(a),math.sqrt(1-a))
+        def dist(la1, lo1, la2, lo2):
+            dL = math.radians(float(la2)-float(la1)); dl = math.radians(float(lo2)-float(lo1))
+            a  = math.sin(dL/2)**2 + math.cos(math.radians(float(la1)))*math.cos(math.radians(float(la2)))*math.sin(dl/2)**2
+            return 3958.8 * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-        # Photon with bbox and retry
-        for attempt in range(3):
+        def nominatim_style(places, label):
+            if not places: return None
+            if user_lat and user_lon:
+                places = [p for p in places if dist(user_lat,user_lon,p['lat'],p['lon']) < 100]
+                places.sort(key=lambda p: dist(user_lat,user_lon,p['lat'],p['lon']))
+            if places:
+                p = places[0]
+                print(f'[NAV] {label}: {p.get("display_name","?").split(",")[0]}')
+                return {'lat': p['lat'], 'lon': p['lon'], 'name': p.get('display_name','').split(',')[0]}
+            return None
+
+        enc = urllib.parse.quote(query)
+        vbox = ''
+        if user_lat and user_lon:
+            r = 0.8
+            vbox = f'&viewbox={float(user_lon)-r},{float(user_lat)+r},{float(user_lon)+r},{float(user_lat)-r}&bounded=1'
+
+        # 1 — geocode.maps.co (free key, not blocked by HF)
+        GEOCODE_KEY = os.environ.get('GEOCODE_API_KEY', '')
+        if GEOCODE_KEY:
             try:
-                enc = urllib.parse.quote(query)
-                url = f'https://photon.komoot.io/api/?q={enc}&limit=10&lang=en'
-                if user_lat and user_lon:
-                    r = 0.7
-                    url += f'&bbox={float(user_lon)-r},{float(user_lat)-r},{float(user_lon)+r},{float(user_lat)+r}'
+                url = f'https://geocode.maps.co/search?q={enc}&api_key={GEOCODE_KEY}&limit=5{vbox}'
                 req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
                 with urllib.request.urlopen(req, timeout=8) as r:
-                    data = json.loads(r.read())
-                results = []
-                for f in data.get('features', []):
-                    c = f.get('geometry', {}).get('coordinates', [])
-                    p = f.get('properties', {})
-                    if len(c) >= 2:
-                        results.append({
-                            'lat': str(c[1]), 'lon': str(c[0]),
-                            'name': (p.get('name') or p.get('street') or query) + (f', {p["city"]}' if p.get('city') else ''),
-                        })
-                if user_lat and user_lon:
-                    results.sort(key=lambda x: dist(user_lat, user_lon, x['lat'], x['lon']))
-                if results:
-                    print(f'[NAV] Photon found {len(results)} result(s) for "{query}"')
-                    return results[0]
-                break
+                    places = json.loads(r.read())
+                result = nominatim_style(places, 'geocode.maps.co')
+                if result: return result
             except Exception as e:
-                print(f'[NAV] Photon attempt {attempt+1} failed: {e}')
-                if attempt < 2: time.sleep(1)
+                print(f'[NAV] geocode.maps.co failed: {e}')
 
-        # Nominatim fallback (1 request only)
+        # 2 — Nominatim direct (may 429 on HF but worth one try)
         try:
-            enc = urllib.parse.quote(query)
-            url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=5&countrycodes=us'
-            if user_lat and user_lon:
-                r = 0.7
-                url += f'&viewbox={float(user_lon)-r},{float(user_lat)+r},{float(user_lon)+r},{float(user_lat)-r}&bounded=1'
+            url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=5&countrycodes=us{vbox}'
             req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
             with urllib.request.urlopen(req, timeout=8) as r:
                 places = json.loads(r.read())
-            if places:
-                best = sorted(places, key=lambda x: dist(user_lat,user_lon,x['lat'],x['lon'])) if user_lat else places
-                print(f'[NAV] Nominatim fallback found {len(places)} result(s)')
-                return {'lat': best[0]['lat'], 'lon': best[0]['lon'], 'name': best[0].get('display_name','').split(',')[0]}
+            result = nominatim_style(places, 'Nominatim')
+            if result: return result
         except Exception as e:
-            print(f'[NAV] Nominatim fallback failed: {e}')
+            print(f'[NAV] Nominatim failed: {e}')
+
         return None
 
     # Geocode if no coords provided
