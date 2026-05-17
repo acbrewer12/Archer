@@ -13,21 +13,15 @@
     "moments": [],
     "conversations": [],
     "driver_notes": [],
-    "first_drive": "April 01 2026",
-    "total_sessions": 1,
+    "first_drive": null,
+    "total_sessions": 0,
     "favorite_road": null,
     "favorite_time": null
   },
   "legacy": {
-    "active": true,
+    "active": false,
     "locked": false,
-    "voice_notes": [
-      {
-        "date": "April 01 2026 10:28 PM",
-        "note": "first full build session",
-        "weather": "70F partly cloudy"
-      }
-    ],
+    "voice_notes": [],
     "build_log": [],
     "signature": null
   },
@@ -97,85 +91,49 @@
   "bluetooth_devices": {},
   "trip_log": [
     {
-      "date": "April 02 2026",
-      "time": "04:15 AM",
-      "duration": 2,
-      "peak_rpm": 750,
+      "date": "May 17 2026",
+      "time": "11:54 PM",
+      "duration": 0,
+      "peak_rpm": 0,
       "peak_boost": 0,
       "best_060": null,
       "hard_events": 0,
       "quality": 100,
       "road": "unknown",
       "ethanol": 82,
-      "weather": "64F partly cloudy"
+      "weather": "70F clear"
     },
     {
-      "date": "April 02 2026",
-      "time": "05:09 AM",
-      "duration": 2,
-      "peak_rpm": 750,
+      "date": "May 17 2026",
+      "time": "11:54 PM",
+      "duration": 0,
+      "peak_rpm": 0,
       "peak_boost": 0,
       "best_060": null,
       "hard_events": 0,
       "quality": 100,
       "road": "unknown",
       "ethanol": 82,
-      "weather": "63F partly cloudy"
-    },
-    {
-      "date": "April 02 2026",
-      "time": "05:16 AM",
-      "duration": 5,
-      "peak_rpm": 750,
-      "peak_boost": 0,
-      "best_060": null,
-      "hard_events": 0,
-      "quality": 100,
-      "road": "unknown",
-      "ethanol": 82,
-      "weather": "63F partly cloudy"
-    },
-    {
-      "date": "April 02 2026",
-      "time": "05:23 AM",
-      "duration": 6,
-      "peak_rpm": 750,
-      "peak_boost": 0,
-      "best_060": null,
-      "hard_events": 0,
-      "quality": 100,
-      "road": "unknown",
-      "ethanol": 82,
-      "weather": "62F partly cloudy"
-    },
-    {
-      "date": "April 02 2026",
-      "time": "05:31 AM",
-      "duration": 3,
-      "peak_rpm": 750,
-      "peak_boost": 0,
-      "best_060": null,
-      "hard_events": 0,
-      "quality": 100,
-      "road": "unknown",
-      "ethanol": 82,
-      "weather": "62F partly cloudy"
-    },
-    {
-      "date": "April 02 2026",
-      "time": "05:47 AM",
-      "duration": 1,
-      "peak_rpm": 750,
-      "peak_boost": 0,
-      "best_060": null,
-      "hard_events": 0,
-      "quality": 100,
-      "road": "unknown",
-      "ethanol": 82,
-      "weather": "63F partly cloudy"
+      "weather": "70F clear"
     }
   ],
-  "trusted_devices": {},
+  "trusted_devices": {
+    "test-fp-001": {
+      "name": "TestDevice",
+      "tier": 2,
+      "registered_at": "May 17 2026 11:54 PM"
+    },
+    "test-fp-002": {
+      "name": "Valet",
+      "tier": 4,
+      "registered_at": "May 17 2026 11:54 PM"
+    },
+    "test-fp-003": {
+      "name": "Hacker",
+      "tier": 4,
+      "registered_at": "May 17 2026 11:54 PM"
+    }
+  },
   "build_tracker": {
     "parts": [],
     "mods": [],
@@ -431,8 +389,6 @@
   "shift_light": "off",
   "heat_soak_risk": "low",
   "egt_avg": 805,
-  "fuel_range": 0,
-  "fuel_gal": 20.0,
   "remote_start": "off",
   "radar_band": null,
   "radar_strength": 0,
@@ -441,12 +397,17 @@
   "rival": "",
   "passenger_mode": false,
   "trailer_connected": false,
+  "fuel_range": 0,
+  "fuel_gal": 20.0,
   "record_best_et": null,
   "record_best_060": null,
   "weather_alert": false,
   "drive_score": 100,
   "drive_grade": "A",
   "show_running": false,
+  "openclaw_connected": false,
+  "openclaw_enabled": false,
+  "discord_enabled": false,
   "crash_events": 0,
   "auto_lights": true,
   "record_top_speed": null,
@@ -474,5 +435,17 @@
     "session_miles": 0.0,
     "last_location": "",
     "location_log": []
+  },
+  "nav_places": {
+    "test_spot": {
+      "lat": 37.64,
+      "lon": -91.54,
+      "address": "Test St"
+    },
+    "marker_test2": {
+      "lat": 10.0,
+      "lon": 20.0,
+      "address": "Marker"
+    }
   }
 }
