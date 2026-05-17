@@ -405,6 +405,7 @@ body.day{background:#0d0d0d}
   letter-spacing:2px;display:none;
 }
 .parked-badge.on{display:inline-block}
+.auto-badge{background:var(--bg3);border:1px solid var(--border2);padding:2px 8px;border-radius:3px;font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 .warn-overlay{position:fixed;inset:0;z-index:999;background:rgba(180,0,0,0.92);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;animation:warnflash 0.5s infinite}
 .warn-overlay.on{display:flex}
 @keyframes warnflash{0%,100%{background:rgba(180,0,0,0.92)}50%{background:rgba(255,0,0,0.98)}}
@@ -430,6 +431,7 @@ body.day{background:#0d0d0d}
 /* ═══════════════════════════════════════
    FOOTER
 ═══════════════════════════════════════ */
+.footer{
   background:var(--bg2);
   border-top:1px solid var(--border);
   padding:5px 12px;
@@ -512,7 +514,7 @@ body.day{background:#0d0d0d}
 </div>
 
 <!-- NAVIGATION HUD -->
-<div id="nav-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:997;background:#0a0a0a;border-bottom:2px solid #cc0000;padding:10px 14px;display:none;align-items:center;gap:14px;font-family:'Share Tech Mono',monospace;">
+<div id="nav-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:997;background:#0a0a0a;border-bottom:2px solid #cc0000;padding:10px 14px;align-items:center;gap:14px;font-family:'Share Tech Mono',monospace;">
   <div id="nav-arrow" style="font-size:2.6rem;min-width:52px;text-align:center;color:#fff;">↑</div>
   <div style="flex:1;min-width:0;">
     <div id="nav-dist" style="font-size:1.6rem;font-weight:bold;color:#fff;line-height:1.1;">--</div>
@@ -698,7 +700,7 @@ body.day{background:#0d0d0d}
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="da-oil">205°</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">BATT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--green)" id="da-bat">14.2V</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">84%</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)">SPORT</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)" id="da-mode">SPORT</div></div>
       </div>
       <div class="box" style="display:flex;align-items:center;gap:8px">
         <span style="font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;flex-shrink:0">ARCHER</span>
@@ -766,16 +768,16 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ HEALTH ══════════ -->
     <div class="screen" id="screen-health">
-      <div class="health-item"><span class="health-name">ENGINE TEMP</span><span class="health-val hok">195°F ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">OIL PRESSURE</span><span class="health-val hok">45 PSI ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">BATTERY</span><span class="health-val hok">14.2V ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok">190°F ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn">162°F !</span><span class="hdot dwarn"></span></div>
+      <div class="health-item"><span class="health-name">ENGINE TEMP</span><span class="health-val hok" id="hl-oil-val">195°F ✓</span><span class="hdot dok" id="hl-oil-dot"></span></div>
+      <div class="health-item"><span class="health-name">OIL PRESSURE</span><span class="health-val hok" id="hl-oilp-val">45 PSI ✓</span><span class="hdot dok" id="hl-oilp-dot"></span></div>
+      <div class="health-item"><span class="health-name">BATTERY</span><span class="health-val hok" id="hl-bat-val">14.2V ✓</span><span class="hdot dok" id="hl-bat-dot"></span></div>
+      <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok" id="hl-clt-val">190°F ✓</span><span class="hdot dok" id="hl-clt-dot"></span></div>
+      <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn" id="hl-trans-val">162°F !</span><span class="hdot dwarn" id="hl-trans-dot"></span></div>
       <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hwarn">LOW !</span><span class="hdot dwarn"></span></div>
       <div class="health-item"><span class="health-name">TIRE PRESSURE</span><span class="health-val hok">34/34/34/34 ✓</span><span class="hdot dok"></span></div>
       <div class="health-item"><span class="health-name">FAULT CODES</span><span class="health-val hok">NONE ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok">NONE ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok">14.7 ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok" id="hl-knock-val">NONE ✓</span><span class="hdot dok" id="hl-knock-dot"></span></div>
+      <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok" id="hl-afr-val">14.7 ✓</span><span class="hdot dok" id="hl-afr-dot"></span></div>
       <div class="health-item" style="background:#0d0000;border-color:#330000"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hbad">HEAT SOAK ✗</span><span class="hdot dbad"></span></div>
     </div>
 
@@ -848,28 +850,28 @@ body.day{background:#0d0d0d}
       <div class="graph-card">
         <div class="graph-header">
           <span class="graph-title-txt">RPM HISTORY</span>
-          <span class="graph-peak" style="color:var(--yellow)">PEAK: 5420</span>
+          <span class="graph-peak" style="color:var(--yellow)" id="g-rpm-peak">PEAK: --</span>
         </div>
         <canvas id="g-rpm" width="320" height="52"></canvas>
       </div>
       <div class="graph-card">
         <div class="graph-header">
           <span class="graph-title-txt">BOOST HISTORY</span>
-          <span class="graph-peak" style="color:var(--orange)">PEAK: 12 PSI</span>
+          <span class="graph-peak" style="color:var(--orange)" id="g-boost-peak">PEAK: --</span>
         </div>
         <canvas id="g-boost" width="320" height="52"></canvas>
       </div>
       <div class="graph-card">
         <div class="graph-header">
           <span class="graph-title-txt">OIL TEMP</span>
-          <span class="graph-peak" style="color:var(--red)">PEAK: 221°F</span>
+          <span class="graph-peak" style="color:var(--red)" id="g-oil-peak">PEAK: --</span>
         </div>
         <canvas id="g-oil" width="320" height="52"></canvas>
       </div>
       <div class="graph-card">
         <div class="graph-header">
           <span class="graph-title-txt">BATTERY</span>
-          <span class="graph-peak" style="color:var(--green)">NOW: 14.2V</span>
+          <span class="graph-peak" style="color:var(--green)" id="g-bat-peak">NOW: --</span>
         </div>
         <canvas id="g-bat" width="320" height="52"></canvas>
       </div>
@@ -1448,8 +1450,24 @@ const VOICE_CMDS = {
   'day mode':     () => { setMode('day'); return 'Day mode on.'; },
   'night mode':   () => { setMode('night'); return 'Night mode on.'; },
   'red mode':     () => { setMode('red'); return 'Night shift on. Red mode.'; },
-  'sport mode':   () => { set('dr-mode','SPORT'); set('dd-mode','SPORT'); return 'Sport mode.'; },
-  'comfort mode': () => { set('dr-mode','COMFORT'); set('dd-mode','COMFORT'); return 'Comfort mode.'; },
+  'sport mode':     () => { set('dr-mode','SPORT');   set('da-mode','SPORT');   return 'Sport mode.'; },
+  'comfort mode':   () => { set('dr-mode','COMFORT'); set('da-mode','COMFORT'); return 'Comfort mode.'; },
+  'play music':     () => { t1SpotifyToggle(); return 'Playing.'; },
+  'pause music':    () => { t1SpotifyToggle(); return 'Paused.'; },
+  'next song':      () => { t1SpotifyNext(); return 'Next track.'; },
+  'next track':     () => { t1SpotifyNext(); return 'Next track.'; },
+  'skip song':      () => { t1SpotifyNext(); return 'Skipping.'; },
+  'skip track':     () => { t1SpotifyNext(); return 'Skipping.'; },
+  'previous song':  () => { t1SpotifyPrev(); return 'Previous track.'; },
+  'previous track': () => { t1SpotifyPrev(); return 'Previous track.'; },
+  'last song':      () => { t1SpotifyPrev(); return 'Previous track.'; },
+  'volume up':      () => { const v=document.getElementById('t1-vol'); if(v){const n=Math.min(100,parseInt(v.value)+15);v.value=n;t1SpotifyVolume(n);} return 'Volume up.'; },
+  'volume down':    () => { const v=document.getElementById('t1-vol'); if(v){const n=Math.max(0,parseInt(v.value)-15);v.value=n;t1SpotifyVolume(n);} return 'Volume down.'; },
+  'mute music':     () => { const v=document.getElementById('t1-vol'); if(v){v.value=0;t1SpotifyVolume(0);} return 'Muted.'; },
+  'play':           () => { t1SpotifyToggle(); return 'Playing.'; },
+  'pause':          () => { t1SpotifyToggle(); return 'Paused.'; },
+  'skip':           () => { t1SpotifyNext(); return 'Skipping.'; },
+  'mute':           () => { const v=document.getElementById('t1-vol'); if(v){v.value=0;t1SpotifyVolume(0);} return 'Muted.'; },
 };
 
 function sendVoice() {
@@ -1528,8 +1546,9 @@ function setArcherMsg(text) {
 // ─── LIVE DATA ───
 // liveData = what's currently displayed (animated)
 // targetData = last value received from the server
-let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190, transTemp:160 };
+let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190, transTemp:160, afr:14.7 };
 let targetData = Object.assign({}, liveData);
+targetData.radarActive = false;
 
 async function pollLive() {
   try {
@@ -1546,11 +1565,10 @@ async function pollLive() {
     if (sd.oil_pressure != null) targetData.oilPsi    = sd.oil_pressure;
     if (sd.gear_pos     != null) targetData.gear      = sd.gear_pos;
     if (sd.trans_temp   != null) targetData.transTemp = sd.trans_temp;
+    if (sd.afr          != null) targetData.afr       = parseFloat(sd.afr);
     targetData.knock = (sd.knock_count > 0) ? 1 : 0;
-    if (d.archer_msg) {
-      const msgEl = document.getElementById('archer-msg');
-      if (msgEl && msgEl.textContent !== d.archer_msg) msgEl.textContent = d.archer_msg;
-    }
+    if (d.archer_msg) setArcherMsg(d.archer_msg);
+    if (d.radar_alert != null) targetData.radarActive = !!d.radar_alert;
     // PERF score
     if (d.drive_quality != null) set('pf-stat-score', d.drive_quality);
     if (d.best_060 && d.best_060 > 0) set('pf-stat-best', d.best_060 + 's');
@@ -1579,12 +1597,15 @@ function lerp(a, b, t) { return a + (b - a) * t; }
 
 function update() {
   // Smoothly animate displayed values toward server targets
-  liveData.rpm     = lerp(liveData.rpm,     targetData.rpm,     0.12);
-  liveData.speed   = lerp(liveData.speed,   targetData.speed,   0.12);
-  liveData.boost   = lerp(liveData.boost,   targetData.boost,   0.12);
+  liveData.rpm      = lerp(liveData.rpm,      targetData.rpm,      0.12);
+  liveData.speed    = lerp(liveData.speed,    targetData.speed,    0.12);
+  liveData.boost    = lerp(liveData.boost,    targetData.boost,    0.12);
   liveData.oilTemp  = lerp(liveData.oilTemp,  targetData.oilTemp,  0.08);
+  liveData.oilPsi   = lerp(liveData.oilPsi,   targetData.oilPsi,   0.08);
   liveData.battery  = lerp(liveData.battery,  targetData.battery,  0.08);
+  liveData.coolant  = lerp(liveData.coolant,  targetData.coolant,  0.08);
   liveData.transTemp= lerp(liveData.transTemp,targetData.transTemp,0.08);
+  liveData.afr      = lerp(liveData.afr,      targetData.afr,      0.08);
   liveData.gear    = targetData.gear;
   liveData.knock   = targetData.knock;
   liveData.ethanol = targetData.ethanol;
@@ -1653,8 +1674,8 @@ function update() {
   // Auto force drive
   autoForceDrive();
 
-  // Radar
-  document.getElementById('radar').classList.toggle('on', liveData.speed > 55);
+  // Radar — use server state; fall back to speed > 80 as safety net
+  document.getElementById('radar').classList.toggle('on', !!targetData.radarActive);
 
   // Clock
   document.getElementById('ft-time').textContent = new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
@@ -1664,6 +1685,35 @@ function update() {
 
   // Parked content
   updateParkedContent();
+  // Health tab live updates
+  updateHealth();
+}
+
+function updateHealth() {
+  function hs(valId, dotId, text, status) {
+    const v = document.getElementById(valId), d = document.getElementById(dotId);
+    if (v) { v.textContent = text; v.className = 'health-val ' + status; }
+    if (d) d.className = 'hdot ' + (status === 'hok' ? 'dok' : status === 'hwarn' ? 'dwarn' : 'dbad');
+  }
+  const lbl = s => s === 'hok' ? '✓' : s === 'hwarn' ? '!' : '✗';
+  const ot = Math.round(liveData.oilTemp);
+  const ots = ot > 225 ? 'hbad' : ot > 210 ? 'hwarn' : 'hok';
+  hs('hl-oil-val',  'hl-oil-dot',  ot + '°F ' + lbl(ots), ots);
+  const op = Math.round(liveData.oilPsi);
+  const ops = op < 20 ? 'hbad' : op < 30 ? 'hwarn' : 'hok';
+  hs('hl-oilp-val', 'hl-oilp-dot', op + ' PSI ' + lbl(ops), ops);
+  const bv = liveData.battery;
+  const bvs = bv < 11.5 ? 'hbad' : bv < 13.0 ? 'hwarn' : 'hok';
+  hs('hl-bat-val',  'hl-bat-dot',  bv.toFixed(1) + 'V ' + lbl(bvs), bvs);
+  const cl = Math.round(liveData.coolant);
+  const cls = cl > 220 ? 'hbad' : cl > 210 ? 'hwarn' : 'hok';
+  hs('hl-clt-val',  'hl-clt-dot',  cl + '°F ' + lbl(cls), cls);
+  const tt = Math.round(liveData.transTemp);
+  const tts = tt > 220 ? 'hbad' : tt > 190 ? 'hwarn' : 'hok';
+  hs('hl-trans-val','hl-trans-dot',tt + '°F ' + lbl(tts), tts);
+  hs('hl-knock-val','hl-knock-dot',liveData.knock > 0 ? 'DETECTED ✗' : 'NONE ✓', liveData.knock > 0 ? 'hbad' : 'hok');
+  const afr = liveData.afr; const afrs = afr >= 13.5 && afr <= 15.5 ? 'hok' : 'hbad';
+  hs('hl-afr-val',  'hl-afr-dot',  afr.toFixed(1) + ' ' + lbl(afrs), afrs);
 }
 
 function set(id, val) { const el = document.getElementById(id); if(el) el.textContent = val; }
@@ -1693,15 +1743,34 @@ function drawGraph(id, points, color, max) {
   ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
   ctx.fillStyle = color + '22'; ctx.fill();
 }
-const rpmData = [800,1200,2200,3500,4200,5100,4800,3800,2500,3200,4500,5200,4900,3600,2800,3500,4200,4800,5400,4200,3800,3200,2400,1800,1200,800,750,800,900,800];
-const bstData = [0,0,2,6,9,13,12,8,3,5,10,14,12,7,4,7,10,12,15,10,8,5,2,1,0,0,0,0,0,0];
-const oilData = [185,186,188,192,196,201,205,208,210,212,215,218,221,220,218,215,212,210,208,206,205,204,203,202,201,200,199,198,197,196];
-const batData = [2.1,2.2,2.2,2.3,2.2,2.1,2.0,1.9,2.0,2.1,2.2,2.3,2.2,2.1,2.2,2.3,2.2,2.1,2.0,2.1,2.2,2.3,2.2,2.1,2.0,1.9,2.0,2.1,2.2,2.2];
+const GRAPH_LEN = 60;
+const graphRing = {
+  rpm:   new Array(GRAPH_LEN).fill(750),
+  boost: new Array(GRAPH_LEN).fill(0),
+  oil:   new Array(GRAPH_LEN).fill(195),
+  bat:   new Array(GRAPH_LEN).fill(13.8),
+};
+const graphPeaks = { rpm:0, boost:0, oil:0 };
+function pushGraphData() {
+  const push = (arr, v) => { arr.push(v); if (arr.length > GRAPH_LEN) arr.shift(); };
+  push(graphRing.rpm,   liveData.rpm);
+  push(graphRing.boost, liveData.boost);
+  push(graphRing.oil,   liveData.oilTemp);
+  push(graphRing.bat,   liveData.battery);
+  graphPeaks.rpm   = Math.max(graphPeaks.rpm,   liveData.rpm);
+  graphPeaks.boost = Math.max(graphPeaks.boost, liveData.boost);
+  graphPeaks.oil   = Math.max(graphPeaks.oil,   liveData.oilTemp);
+}
+setInterval(pushGraphData, 2000);
 function drawAllGraphs() {
-  drawGraph('g-rpm', rpmData, '#ffaa00', 6200);
-  drawGraph('g-boost', bstData, '#ff6600', 20);
-  drawGraph('g-oil', oilData, '#cc0000', 240);
-  drawGraph('g-bat', batData, '#00cc44', 4);
+  drawGraph('g-rpm',   graphRing.rpm,   '#ffaa00', 6200);
+  drawGraph('g-boost', graphRing.boost, '#ff6600', 20);
+  drawGraph('g-oil',   graphRing.oil,   '#cc0000', 240);
+  drawGraph('g-bat',   graphRing.bat,   '#00cc44', 16);
+  const rp = document.getElementById('g-rpm-peak');   if (rp) rp.textContent = 'PEAK: ' + Math.round(graphPeaks.rpm);
+  const bp = document.getElementById('g-boost-peak'); if (bp) bp.textContent = 'PEAK: ' + Math.round(graphPeaks.boost) + ' PSI';
+  const op = document.getElementById('g-oil-peak');   if (op) op.textContent = 'PEAK: ' + Math.round(graphPeaks.oil) + '°F';
+  const vp = document.getElementById('g-bat-peak');   if (vp) vp.textContent = 'NOW: '  + liveData.battery.toFixed(1) + 'V';
 }
 setTimeout(drawAllGraphs, 300);
 
@@ -1988,7 +2057,7 @@ async function t1SpotifyToggle() {
   document.getElementById('t1-play-btn').textContent = p?'▶':'⏸';
 }
 async function t1SpotifyDisconnect() {
-  await fetch(T1BASE+'/spotify/disconnect');
+  await fetch(T1BASE+'/spotify/disconnect', {method:'POST'});
   document.getElementById('t1-spotify-disconnected').style.display = 'flex';
   document.getElementById('t1-spotify-connected').style.display = 'none';
 }
