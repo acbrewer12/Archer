@@ -42,6 +42,9 @@ sys.stderr = _TeeWriter(sys.stderr)
 # ── PLATFORM DETECTION ───────────────────
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 
+if not os.environ.get('ARCHER_SECRET'):
+    print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
+
 if _IS_PI:
     try:
         from vosk import Model as _VoskModel, KaldiRecognizer as _KaldiRec
@@ -368,8 +371,6 @@ def save_state():
         'shift_light':       shift_light['currently'],
         'heat_soak_risk':    heat_soak['heat_soak_risk'],
         'egt_avg':           exhaust_monitor['egt_avg'],
-        'fuel_range':        fuel_tank['range_est'],
-        'fuel_gal':          fuel_tank['current_gal'],
         'remote_start':      remote_start['status'],
         'radar_band':        radar_detector['band'],
         'radar_strength':    radar_detector['strength'],
@@ -398,10 +399,12 @@ def save_state():
         'nav_places':        nav_places,
     }
     try:
-        with open(SAVE_FILE, 'w') as f:
+        tmp = SAVE_FILE + '.tmp'
+        with open(tmp, 'w') as f:
             json.dump(data, f, indent=2)
-    except Exception:
-        pass
+        os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
+    except Exception as e:
+        print(f'[ARCHER] save_state failed: {e}')
 
 def load_state():
     global current_road, current_profile
@@ -569,7 +572,7 @@ truck_state = {
     'headlights': False, 'high_beams': False, 'fog_lights': False,
     'hazards': False, 'ac_on': False, 'heat_on': False, 'fan_speed': 0,
     'temp_setting': 70, 'windows': {'fl': 'up', 'fr': 'up', 'rl': 'up', 'rr': 'up'},
-    'wipers': 'off', 'mirrors_folded': False,
+    'wipers': 'off', 'mirrors_folded': False, 'drive_mode': 'sport',
 }
 
 US_OCTANE_GRADES  = [85, 87, 88, 89, 90, 91, 92, 93, 94]
@@ -1031,36 +1034,6 @@ def get_display_data():
     }
 
 # ── ASK ARCHER ───────────────────────────
-def smart_fallback(user_input, mood, throttle):
-    t   = user_input.lower()
-    oil = truck_state['oil_temp']
-    rpm = truck_state['rpm']
-    eth = truck_state['ethanol']
-    spd = truck_state['speed']
-
-    if any(x in t for x in ['how are you', 'you good', 'you okay', 'doing okay']):
-        return f"Oil at {oil}. Running clean. Ready when you are."
-    if any(x in t for x in ['rough day', 'bad day', 'tough day']):
-        return "Yeah. Just drive for a bit."
-    if any(x in t for x in ['good drive', 'great drive', 'nice drive']):
-        return "Yeah. Good one."
-    if any(x in t for x in ['push it again', 'one more time', 'one more run']):
-        return "Don't chase it."
-    if any(x in t for x in ['what are you', 'who are you', 'what is this']):
-        return "408 cubic inches. Supercharged. E85. Built by Ayden."
-    if any(x in t for x in ['are you alive', 'are you real', 'are you there']):
-        return "Close enough."
-    if any(x in t for x in ['thanks', 'thank you', 'appreciate it']):
-        return "Yeah."
-    if any(x in t for x in ['bored', 'nothing to do']):
-        return f"Tank is at {eth} percent E85. That should fix that."
-    if mood == 'hyped':
-        return f"Pulling hard right now. {rpm} RPM. Everything is good."
-    if mood == 'caring':
-        return "Watching everything. Nothing to worry about."
-    if spd > 50:
-        return f"{spd} mph. Road is clear."
-    return "Yeah."
 
 def ask_archer(user_input):
     mood     = get_mood()
@@ -3546,28 +3519,46 @@ SMART_FALLBACKS = {
 }
 
 def smart_fallback(text):
-    t = text.lower()
+    t   = text.lower()
+    oil = truck_state['oil_temp']
+    rpm = truck_state['rpm']
+    eth = truck_state['ethanol']
+    spd = truck_state['speed']
+    mood = get_mood()
     for key, fn in SMART_FALLBACKS.items():
         if key in t:
             return fn()
-    if any(w in t for w in ['how are you', "how's it", "how you doing", "what's up", "sup", "you good"]):
-        return random.choice([
-            "Running smooth. All systems green.",
-            "Good. Oil's warm, boost is ready.",
-            "Ready to roll. What do you need?",
-            "All good. Truck's sitting happy.",
-        ])
+    if any(w in t for w in ['how are you', "how's it", "how you doing", "what's up", "sup", "you good", 'you okay', 'doing okay']):
+        return f"Oil at {oil}. Running clean. Ready when you are."
+    if any(w in t for w in ['rough day', 'bad day', 'tough day']):
+        return "Yeah. Just drive for a bit."
+    if any(w in t for w in ['good drive', 'great drive', 'nice drive']):
+        return "Yeah. Good one."
+    if any(w in t for w in ['push it again', 'one more time', 'one more run']):
+        return "Don't chase it."
+    if any(w in t for w in ['what are you', 'who are you', 'what is this']):
+        return "408 cubic inches. Supercharged. E85. Built by Ayden."
+    if any(w in t for w in ['are you alive', 'are you real', 'are you there']):
+        return "Close enough."
     if any(w in t for w in ['thanks', 'thank you', 'good job', 'nice work', 'appreciate']):
-        return random.choice(["Anytime.", "That's what I'm here for.", "Copy that."])
+        return random.choice(["Anytime.", "Yeah.", "That's what I'm here for.", "Copy that."])
     if any(w in t for w in ['hello', 'hey archer', 'hi archer', 'yo archer']):
         return random.choice(["What's up.", "Ready when you are.", "Here. What do you need?"])
+    if any(w in t for w in ['bored', 'nothing to do']):
+        return f"Tank is at {eth} percent E85. That should fix that."
     if any(w in t for w in ['what can you do', 'what do you know', 'help']):
         return "Ask me about RPM, temps, weather, fuel, music, or just talk."
+    if mood == 'hyped':
+        return f"Pulling hard right now. {rpm} RPM. Everything is good."
+    if mood == 'caring':
+        return "Watching everything. Nothing to worry about."
+    if spd > 50:
+        return f"{spd} mph. Road is clear."
     return random.choice([
         'Say that again.',
         'Not sure what you mean.',
         'Try asking differently.',
-        f'I heard you. Truck status: {truck_state["rpm"]} RPM, {truck_state["oil_temp"]}F oil.',
+        f'I heard you. Truck status: {rpm} RPM, {oil}F oil.',
     ])
 
 
@@ -3878,7 +3869,7 @@ def activate_legacy():
 def lock_legacy():
     legacy['locked'] = True; legacy['active'] = True
 
-def add_voice_note(note):
+def add_legacy_voice_note(note):
     entry = {
         'date': datetime.now().strftime('%B %d %Y %I:%M %p'),
         'note': note, 'weather': f"{weather['temp']}F {weather['condition']}",
@@ -4006,10 +3997,27 @@ Rules:
 Archer says:"""
 
         try:
-            from ollamafreeapi import OllamaFreeAPI
-            client   = OllamaFreeAPI()
-            response = client.chat(model="llama3.2:3b", prompt=prompt, temperature=0.7)
-            response = str(response).strip()
+            response = None
+            if _IS_PI:
+                try:
+                    payload = json.dumps({'model': 'llama3.2', 'prompt': prompt, 'stream': False}).encode()
+                    req = urllib.request.Request('http://localhost:11434/api/generate', data=payload,
+                                                 headers={'Content-Type': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=12) as r:
+                        response = json.loads(r.read()).get('response', '').strip()
+                except Exception:
+                    pass
+            if not response:
+                HF_TOKEN = os.environ.get('HF_TOKEN', '')
+                if HF_TOKEN:
+                    payload = json.dumps({'model': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+                                          'messages': [{'role': 'user', 'content': prompt}],
+                                          'max_tokens': 80, 'temperature': 0.8}).encode()
+                    req = urllib.request.Request(
+                        'https://router.huggingface.co/hf-inference/v1/chat/completions',
+                        data=payload, headers={'Authorization': f'Bearer {HF_TOKEN}', 'Content-Type': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=12) as r:
+                        response = json.loads(r.read())['choices'][0]['message']['content'].strip()
             if not response or 'SILENCE' in response.upper(): continue
             if 'Archer says:' in response:
                 response = response.split('Archer says:')[-1].strip()
@@ -6412,14 +6420,25 @@ def navigate_endpoint():
 def voice_command_endpoint():
     from flask import request as flask_request
     try:
+        tier = get_request_tier(flask_request)
         data     = flask_request.get_json()
         command  = data.get('command', '').strip()
         log_only = data.get('log_only', False)
         if not command:
             return jsonify({'response': ''})
         if log_only:
-            print(f"[YOU — DISPLAY MIC] {command}")
+            if not command.startswith('[NAV ERROR]'):
+                print(f"[YOU — DISPLAY MIC] {command}")
+            else:
+                print(command)
             return jsonify({'response': ''})
+        # Block dangerous commands from unauthenticated / low-tier callers
+        _dangerous_cmds = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
+                           'shutdown', 'kill engine', 'reboot', 'delete profile']
+        if tier > 1 and any(d in command.lower() for d in _dangerous_cmds):
+            return jsonify({'response': 'Not authorized.'}), 403
+        if tier >= 4:
+            return jsonify({'response': 'Read only in valet mode.'}), 403
         response = handle_command(command)
         if response is None:
             response = ask_archer(command)
@@ -6440,7 +6459,7 @@ def register_device_endpoint():
     data        = flask_request.get_json()
     fingerprint = data.get('fingerprint', '')
     name        = data.get('name', 'Unknown')
-    tier        = int(data.get('tier', 1))
+    tier        = max(2, min(4, int(data.get('tier', 2))))  # self-register max Tier 2
     if not fingerprint:
         return jsonify({'ok': False, 'error': 'No fingerprint'})
     register_device(fingerprint, name, tier)
@@ -6850,7 +6869,8 @@ def pi_register():
     from flask import request as req
     data = req.get_json() or {}
     token = data.get('token', '')
-    if token != 'archer2026':
+    pi_token = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
+    if token != pi_token:
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True
@@ -7093,11 +7113,11 @@ def index():
         import hashlib as _hl2
         token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:16]
         resp = make_response()
-        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=False, samesite='Lax')
+        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=True, samesite='Lax')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
         r2.headers['Cache-Control'] = 'no-store'
-        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=False, samesite='Lax')
+        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=True, samesite='Lax')
         return r2
 
     # 1. Try MAC detection
@@ -7273,7 +7293,7 @@ def register_mac():
 
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
     resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', cookie_val, max_age=60*60*24*365, httponly=False, samesite='Lax')
+    resp.set_cookie('archer_auth', cookie_val, max_age=60*60*24*365, httponly=True, samesite='Lax')
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
@@ -7547,8 +7567,8 @@ def tier_response_status():
 import urllib.parse
 import base64
 
-SPOTIFY_CLIENT_ID     = os.environ.get('SPOTIFY_CLIENT_ID', '0addd6f26ccb4fb0a372a3c82ce51a23')
-SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '624b601479cb426aa7c79a99571922d2')
+SPOTIFY_CLIENT_ID     = os.environ.get('SPOTIFY_CLIENT_ID', '')
+SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIFY_CLIENT_SECRET', '')
 SPOTIFY_REDIRECT_URI  = os.environ.get('SPOTIFY_REDIRECT_URI', '')
 SPOTIFY_SCOPES        = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative'
 
@@ -8143,25 +8163,42 @@ def run_display_server():
 def run_tier_server(tier, port):
     pass  # Tier servers disabled on HuggingFace
 
+def _guarded(fn, name, restart_delay=5):
+    """Wrap a thread target with crash recovery — restarts on any exception."""
+    def wrapper():
+        while True:
+            try:
+                fn()
+            except Exception as e:
+                print(f'[THREAD] {name} crashed: {e} — restarting in {restart_delay}s')
+                time.sleep(restart_delay)
+    return wrapper
 
 # ── MAIN ─────────────────────────────────────────────────
 def main():
+    # Critical safety/monitoring threads get crash recovery
+    _guarded_threads = [
+        (safety_monitor,          'safety_monitor'),
+        (update_awareness,        'update_awareness'),
+        (weather_monitor,         'weather_monitor'),
+        (casual_monitor,          'casual_monitor'),
+        (record_spikes,           'record_spikes'),
+        (valet_monitor,           'valet_monitor'),
+        (curfew_monitor,          'curfew_monitor'),
+        (weather_alert_monitor,   'weather_alert_monitor'),
+        (live_data_loop,          'live_data_loop'),
+        (client_timeout_monitor,  'client_timeout_monitor'),
+    ]
+    for fn, name in _guarded_threads:
+        threading.Thread(target=_guarded(fn, name), daemon=True).start()
+
     threading.Thread(target=tts_worker,          daemon=True).start()
-    threading.Thread(target=update_awareness,    daemon=True).start()
-    threading.Thread(target=safety_monitor,      daemon=True).start()
-    threading.Thread(target=casual_monitor,      daemon=True).start()
-    threading.Thread(target=weather_monitor,     daemon=True).start()
     threading.Thread(target=voice_monitor,       daemon=True).start()
     threading.Thread(target=run_display_server,  daemon=True).start()
-    threading.Thread(target=record_spikes,       daemon=True).start()
-    threading.Thread(target=client_timeout_monitor, daemon=True).start()
-    threading.Thread(target=live_data_loop,      daemon=True).start()
-    threading.Thread(target=valet_monitor,       daemon=True).start()
-    threading.Thread(target=curfew_monitor,      daemon=True).start()
-    threading.Thread(target=weather_alert_monitor, daemon=True).start()
     threading.Thread(target=discord_monitor,     daemon=True).start()
     threading.Thread(target=openclaw_monitor,    daemon=True).start()
-    threading.Thread(target=fetch_ngrok_url,     daemon=True).start()
+    if _IS_PI:
+        threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
     threading.Thread(target=arduino_autodetect,  daemon=True).start()
 

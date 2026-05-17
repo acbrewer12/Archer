@@ -17,15 +17,17 @@ ENV PATH="/home/user/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Install Python deps
+# Install Python deps from requirements.txt
 COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir flask edge-tts SpeechRecognition requests pyserial
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app
 COPY --chown=user . .
 
 EXPOSE 7860
 
-# Start Ollama, pull model, run Archer
+# Start Ollama (Pi only — HF skips it), wait for readiness, then run Archer
 HEALTHCHECK NONE
-CMD ollama serve >/tmp/ollama.log 2>&1 & sleep 8 && PORT=7860 python3 archer.py
+CMD ollama serve >/tmp/ollama.log 2>&1 & \
+    timeout=30; until ollama list >/dev/null 2>&1 || [ $timeout -le 0 ]; do sleep 1; timeout=$((timeout-1)); done; \
+    PORT=7860 python3 archer.py
