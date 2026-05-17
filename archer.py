@@ -6275,46 +6275,41 @@ def navigate_endpoint():
     if not dest:
         return jsonify({'error': 'No destination provided'}), 400
 
-    def nominatim_search(query):
+    def photon_search(query, bias_lat=None, bias_lon=None):
+        """Photon by Komoot — OSM data, no API key, GPS-biased single request."""
         enc = urllib.parse.quote(query)
-        url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=3&countrycodes=us&addressdetails=1'
+        url = f'https://photon.komoot.io/api/?q={enc}&limit=3&lang=en'
+        if bias_lat and bias_lon:
+            url += f'&lat={bias_lat}&lon={bias_lon}'
         req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
         with urllib.request.urlopen(req, timeout=8) as r:
-            return json.loads(r.read())
+            data = json.loads(r.read())
+        features = data.get('features', [])
+        results = []
+        for f in features:
+            coords = f.get('geometry', {}).get('coordinates', [])
+            props  = f.get('properties', {})
+            if len(coords) >= 2:
+                results.append({
+                    'lat':  str(coords[1]),
+                    'lon':  str(coords[0]),
+                    'name': props.get('name') or props.get('street') or query,
+                })
+        return results
 
-    # Geocode via Nominatim — try plain query, then with city context, then with state
-    places = []
-    queries_tried = [dest]
+    # Geocode via Photon (Komoot) — GPS-biased, single request, no rate limit issues
     try:
-        places = nominatim_search(dest)
-        # If no results and no city/state in query, append local city from weather
+        places = photon_search(dest, bias_lat=lat or None, bias_lon=lon or None)
         if not places:
-            # Use GPS reverse geocode for city, fall back to env var or Salem
-            city = os.environ.get('ARCHER_CITY', 'Salem, Oregon')
-            if lat and lon:
-                try:
-                    rv_url = f'https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json'
-                    rv_req = urllib.request.Request(rv_url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
-                    with urllib.request.urlopen(rv_req, timeout=5) as r:
-                        rv = json.loads(r.read())
-                    addr = rv.get('address', {})
-                    city = addr.get('city') or addr.get('town') or addr.get('village') or city
-                except Exception:
-                    pass
-            q2 = f'{dest}, {city}'
-            queries_tried.append(q2)
-            places = nominatim_search(q2)
-        # Still nothing — try adding Oregon
-        if not places:
-            q3 = f'{dest}, Oregon'
-            queries_tried.append(q3)
-            places = nominatim_search(q3)
-        print(f'[NAV] Geocode queries: {queries_tried} → {len(places)} result(s)')
+            # Append home city as context and retry
+            city = os.environ.get('ARCHER_CITY', 'Salem Oregon')
+            places = photon_search(f'{dest} {city}', bias_lat=lat or None, bias_lon=lon or None)
+        print(f'[NAV] Photon geocode "{dest}" → {len(places)} result(s)')
         if not places:
             return jsonify({'error': f"Can't find \"{dest}\". Try adding a city or zip code."}), 404
         dest_lat  = places[0]['lat']
         dest_lon  = places[0]['lon']
-        dest_name = places[0].get('display_name', dest).split(',')[0]
+        dest_name = places[0]['name']
     except Exception as e:
         print(f'[NAV] Geocode failed: {e}')
         return jsonify({'error': 'Location lookup failed'}), 500
