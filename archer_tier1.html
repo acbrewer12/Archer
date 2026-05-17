@@ -1383,33 +1383,63 @@ function stopNavigation() {
   speakText('Navigation ended.');
 }
 
+async function geocodeDest(dest, userLat, userLon) {
+  // Runs from the browser's IP — no rate limit issues
+  const enc = encodeURIComponent(dest);
+  let url = `https://photon.komoot.io/api/?q=${enc}&limit=10&lang=en`;
+  if (userLat && userLon) {
+    const r = 0.7;
+    url += `&bbox=${userLon-r},${userLat-r},${userLon+r},${userLat+r}`;
+  }
+  const resp = await fetch(url);
+  const data = await resp.json();
+  const features = data.features || [];
+  if (!features.length) return null;
+  // Sort by distance to user if GPS available
+  let results = features.map(f => ({
+    lat: f.geometry.coordinates[1],
+    lon: f.geometry.coordinates[0],
+    name: (f.properties.name || f.properties.street || dest) + (f.properties.city ? ', ' + f.properties.city : ''),
+  }));
+  if (userLat && userLon) {
+    results.sort((a,b) => {
+      const da = Math.hypot(a.lat-userLat, a.lon-userLon);
+      const db = Math.hypot(b.lat-userLat, b.lon-userLon);
+      return da - db;
+    });
+  }
+  return results[0];
+}
+
 async function startNavigation(dest) {
   setArcherMsg(`Looking up ${dest}...`);
   speakText(`Getting directions to ${dest}.`);
-  let lat = '', lon = '';
+  let lat = null, lon = null;
   try {
     const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout:6000, enableHighAccuracy:true}));
     lat = pos.coords.latitude; lon = pos.coords.longitude;
   } catch(e) { console.warn('GPS unavailable:', e.message); }
   try {
-    const url = `${T1BASE}/navigate?dest=${encodeURIComponent(dest)}${lat ? '&lat='+lat+'&lon='+lon : ''}`;
+    // Geocode from browser (uses user's IP, not HF's)
+    const place = await geocodeDest(dest, lat, lon);
+    if (!place) { setArcherMsg(`Can't find "${dest}".`); speakText(`Can't find ${dest}.`); return; }
+    const url = `${T1BASE}/navigate?dest_lat=${place.lat}&dest_lon=${place.lon}&dest_name=${encodeURIComponent(place.name)}${lat ? '&lat='+lat+'&lon='+lon : ''}`;
     const r = await fetch(url);
     const d = await r.json();
     if (d.error) { setArcherMsg(d.error); speakText(d.error); return; }
-    navState = { active:true, steps:d.steps||[], stepIdx:0, destination:d.destination,
+    navState = { active:true, steps:d.steps||[], stepIdx:0, destination:place.name,
                  totalMiles:d.total_distance_mi||0, totalMin:d.total_duration_min||0,
                  distToNext:d.steps&&d.steps[0]?d.steps[0].distance:0,
-                 currentLat:parseFloat(lat)||0, currentLon:parseFloat(lon)||0,
-                 destLat:parseFloat(d.dest_lat), destLon:parseFloat(d.dest_lon), announced:false };
-    const hud = document.getElementById('nav-hud');
-    hud.style.display = 'flex';
+                 currentLat:lat||0, currentLon:lon||0,
+                 destLat:place.lat, destLon:place.lon, announced:false };
+    document.getElementById('nav-hud').style.display = 'flex';
     updateNavHUD();
     const first = d.steps[0];
-    const intro = `Navigation started. ${d.total_distance_mi} miles to ${d.destination}.${first ? ' ' + navInstruction(first) : ''}`;
+    const intro = `Navigation started. ${d.total_distance_mi} miles to ${place.name.split(',')[0]}.${first ? ' ' + navInstruction(first) : ''}`;
     setArcherMsg(intro); speakText(intro);
     fetch(T1BASE+'/voice_command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:'navigate to '+dest, log_only:true})}).catch(()=>{});
     if (lat) navWatchId = navigator.geolocation.watchPosition(onGPSUpdate, null, {enableHighAccuracy:true, maximumAge:2000});
-  } catch(e) { setArcherMsg("Can't get directions right now."); speakText("Can't get directions right now."); }
+  } catch(e) { setArcherMsg("Can't get directions right now."); speakText("Can't get directions right now."); console.error(e); }
 }
 
 const VOICE_CMDS = {

@@ -6269,65 +6269,18 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 @display_app.route('/navigate')
 def navigate_endpoint():
     from flask import request as _req
-    dest = _req.args.get('dest', '').strip()
-    lat  = _req.args.get('lat', '').strip()
-    lon  = _req.args.get('lon', '').strip()
-    if not dest:
-        return jsonify({'error': 'No destination provided'}), 400
+    lat       = _req.args.get('lat', '').strip()
+    lon       = _req.args.get('lon', '').strip()
+    dest_lat  = _req.args.get('dest_lat', '').strip()
+    dest_lon  = _req.args.get('dest_lon', '').strip()
+    dest_name = _req.args.get('dest_name', 'Destination').strip()
 
-    def geo_dist_mi(lat1, lon1, lat2, lon2):
-        import math
-        R = 3958.8
-        dL = math.radians(float(lat2) - float(lat1))
-        dl = math.radians(float(lon2) - float(lon1))
-        a = math.sin(dL/2)**2 + math.cos(math.radians(float(lat1))) * math.cos(math.radians(float(lat2))) * math.sin(dl/2)**2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    # Browser now handles geocoding — server just routes
+    if not dest_lat or not dest_lon:
+        return jsonify({'error': 'No destination coordinates provided'}), 400
 
-    def photon_search(query, bias_lat=None, bias_lon=None, radius_deg=0.7):
-        enc = urllib.parse.quote(query)
-        url = f'https://photon.komoot.io/api/?q={enc}&limit=10&lang=en'
-        if bias_lat and bias_lon:
-            lat_f, lon_f = float(bias_lat), float(bias_lon)
-            url += f'&bbox={lon_f-radius_deg},{lat_f-radius_deg},{lon_f+radius_deg},{lat_f+radius_deg}'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read())
-        results = []
-        for f in data.get('features', []):
-            coords = f.get('geometry', {}).get('coordinates', [])
-            props  = f.get('properties', {})
-            if len(coords) >= 2:
-                results.append({
-                    'lat':  str(coords[1]),
-                    'lon':  str(coords[0]),
-                    'name': props.get('name') or props.get('street') or query,
-                    'city': props.get('city') or props.get('town') or '',
-                    'state': props.get('state') or '',
-                })
-        if bias_lat and bias_lon:
-            results.sort(key=lambda p: geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']))
-        return results
+    print(f'[NAV] Route request: {dest_name} ({dest_lat},{dest_lon}) from ({lat},{lon})')
 
-    # Geocode via Photon with GPS bounding box — hard geo filter, not just a hint
-    try:
-        user_lat = lat or None
-        user_lon = lon or None
-        print(f'[NAV] GPS from browser: lat={user_lat} lon={user_lon}')
-        # Try within ~50 miles first, expand to ~100 miles if nothing found
-        places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon, radius_deg=0.7)
-        if not places and user_lat and user_lon:
-            places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon, radius_deg=1.4)
-        if not places:
-            return jsonify({'error': f"Can't find \"{dest}\" near your location."}), 404
-        best      = places[0]
-        dest_lat  = best['lat']
-        dest_lon  = best['lon']
-        dest_name = best['name'] + (f", {best['city']}" if best.get('city') else '')
-        d_mi = geo_dist_mi(user_lat, user_lon, dest_lat, dest_lon) if user_lat else None
-        print(f'[NAV] {len(places)} results — chose "{dest_name}" {f"— {d_mi:.1f} mi away" if d_mi is not None else "(no GPS)"}')
-    except Exception as e:
-        print(f'[NAV] Geocode failed: {e}')
-        return jsonify({'error': 'Location lookup failed'}), 500
     # Route via OSRM (free, no key) if GPS provided
     steps = []
     total_dist_m = 0
