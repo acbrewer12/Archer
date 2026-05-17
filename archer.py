@@ -6271,15 +6271,79 @@ def navigate_endpoint():
     from flask import request as _req
     lat       = _req.args.get('lat', '').strip()
     lon       = _req.args.get('lon', '').strip()
+    dest_text = _req.args.get('dest', '').strip()
     dest_lat  = _req.args.get('dest_lat', '').strip()
     dest_lon  = _req.args.get('dest_lon', '').strip()
-    dest_name = _req.args.get('dest_name', 'Destination').strip()
+    dest_name = _req.args.get('dest_name', '').strip()
 
-    # Browser now handles geocoding — server just routes
+    def geocode(query, user_lat=None, user_lon=None):
+        """Try Photon first (with retry), fall back to Nominatim."""
+        import math
+        def dist(la1,lo1,la2,lo2):
+            dL=math.radians(float(la2)-float(la1)); dl=math.radians(float(lo2)-float(lo1))
+            a=math.sin(dL/2)**2+math.cos(math.radians(float(la1)))*math.cos(math.radians(float(la2)))*math.sin(dl/2)**2
+            return 3958.8*2*math.atan2(math.sqrt(a),math.sqrt(1-a))
+
+        # Photon with bbox and retry
+        for attempt in range(3):
+            try:
+                enc = urllib.parse.quote(query)
+                url = f'https://photon.komoot.io/api/?q={enc}&limit=10&lang=en'
+                if user_lat and user_lon:
+                    r = 0.7
+                    url += f'&bbox={float(user_lon)-r},{float(user_lat)-r},{float(user_lon)+r},{float(user_lat)+r}'
+                req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    data = json.loads(r.read())
+                results = []
+                for f in data.get('features', []):
+                    c = f.get('geometry', {}).get('coordinates', [])
+                    p = f.get('properties', {})
+                    if len(c) >= 2:
+                        results.append({
+                            'lat': str(c[1]), 'lon': str(c[0]),
+                            'name': (p.get('name') or p.get('street') or query) + (f', {p["city"]}' if p.get('city') else ''),
+                        })
+                if user_lat and user_lon:
+                    results.sort(key=lambda x: dist(user_lat, user_lon, x['lat'], x['lon']))
+                if results:
+                    print(f'[NAV] Photon found {len(results)} result(s) for "{query}"')
+                    return results[0]
+                break
+            except Exception as e:
+                print(f'[NAV] Photon attempt {attempt+1} failed: {e}')
+                if attempt < 2: time.sleep(1)
+
+        # Nominatim fallback (1 request only)
+        try:
+            enc = urllib.parse.quote(query)
+            url = f'https://nominatim.openstreetmap.org/search?q={enc}&format=json&limit=5&countrycodes=us'
+            if user_lat and user_lon:
+                r = 0.7
+                url += f'&viewbox={float(user_lon)-r},{float(user_lat)+r},{float(user_lon)+r},{float(user_lat)-r}&bounded=1'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                places = json.loads(r.read())
+            if places:
+                best = sorted(places, key=lambda x: dist(user_lat,user_lon,x['lat'],x['lon'])) if user_lat else places
+                print(f'[NAV] Nominatim fallback found {len(places)} result(s)')
+                return {'lat': best[0]['lat'], 'lon': best[0]['lon'], 'name': best[0].get('display_name','').split(',')[0]}
+        except Exception as e:
+            print(f'[NAV] Nominatim fallback failed: {e}')
+        return None
+
+    # Geocode if no coords provided
     if not dest_lat or not dest_lon:
-        return jsonify({'error': 'No destination coordinates provided'}), 400
+        if not dest_text:
+            return jsonify({'error': 'No destination provided'}), 400
+        place = geocode(dest_text, user_lat=lat or None, user_lon=lon or None)
+        if not place:
+            return jsonify({'error': f"Can't find \"{dest_text}\". Try adding city and state."}), 404
+        dest_lat  = place['lat']
+        dest_lon  = place['lon']
+        dest_name = place['name']
 
-    print(f'[NAV] Route request: {dest_name} ({dest_lat},{dest_lon}) from ({lat},{lon})')
+    print(f'[NAV] Routing to {dest_name} ({dest_lat},{dest_lon}) from ({lat},{lon})')
 
     # Route via OSRM (free, no key) if GPS provided
     steps = []
