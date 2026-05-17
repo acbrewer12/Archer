@@ -395,6 +395,7 @@ def save_state():
         'parking_mode':      parking_mode,
         'audio_system':      audio_system,
         'location_data':     location_data,
+        'nav_places':        nav_places,
     }
     try:
         with open(SAVE_FILE, 'w') as f:
@@ -415,6 +416,7 @@ def load_state():
         current_road = data.get('last_road', None)
         tier_state['current'] = data.get('tier', 1)
         archer_memory.update(data.get('archer_memory', {}))
+        nav_places.update(data.get('nav_places', {}))
         legacy.update(data.get('legacy', {}))
         if 'driver_profiles' in data:
             driver_profiles.update(data['driver_profiles'])
@@ -585,6 +587,9 @@ archer_memory = {
     'first_drive': None, 'total_sessions': 0,
     'favorite_road': None, 'favorite_time': None,
 }
+
+# Saved navigation places — persisted to archer_memory.json
+nav_places = {}  # name → {'lat': float, 'lon': float, 'address': str}
 
 # ── LEGACY MODE ──────────────────────────
 legacy = {
@@ -6266,6 +6271,25 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 
 # ── FLASK ROUTES ─────────────────────────
 
+@display_app.route('/nav/save_place', methods=['POST'])
+def nav_save_place():
+    from flask import request as _req
+    data    = _req.get_json()
+    name    = data.get('name', '').strip().lower()
+    lat     = data.get('lat')
+    lon     = data.get('lon')
+    address = data.get('address', '')
+    if not name or lat is None or lon is None:
+        return jsonify({'error': 'Need name, lat, lon'}), 400
+    nav_places[name] = {'lat': float(lat), 'lon': float(lon), 'address': address}
+    save_state()
+    print(f'[NAV] Saved place "{name}" → {lat},{lon}')
+    return jsonify({'ok': True, 'name': name})
+
+@display_app.route('/nav/places')
+def nav_list_places():
+    return jsonify({k: v for k, v in nav_places.items()})
+
 @display_app.route('/navigate')
 def navigate_endpoint():
     from flask import request as _req
@@ -6320,12 +6344,26 @@ def navigate_endpoint():
     if not dest_lat or not dest_lon:
         if not dest_text:
             return jsonify({'error': 'No destination provided'}), 400
-        place = geocode(dest_text, user_lat=lat or None, user_lon=lon or None)
-        if not place:
-            return jsonify({'error': f"Can't find \"{dest_text}\". Try adding city and state."}), 404
-        dest_lat  = place['lat']
-        dest_lon  = place['lon']
-        dest_name = place['name']
+        # Check saved places first
+        key = dest_text.lower().strip()
+        if key in nav_places:
+            p = nav_places[key]
+            dest_lat, dest_lon = str(p['lat']), str(p['lon'])
+            dest_name = p.get('address') or key.title()
+            print(f'[NAV] Using saved place "{key}"')
+        else:
+            place = geocode(dest_text, user_lat=lat or None, user_lon=lon or None)
+            # If full address fails, retry with just the street name (strip leading number)
+            if not place:
+                import re as _re
+                street_only = _re.sub(r'^\d+\s+', '', dest_text).strip()
+                if street_only != dest_text:
+                    print(f'[NAV] Retrying without house number: "{street_only}"')
+                    place = geocode(street_only, user_lat=lat or None, user_lon=lon or None)
+            if not place:
+                return jsonify({'error': f"Can't find \"{dest_text}\". Say \"save this as [name]\" at your destination to save it."}), 404
+            dest_lat, dest_lon = place['lat'], place['lon']
+            dest_name = place['name']
 
     print(f'[NAV] Routing to {dest_name} ({dest_lat},{dest_lon}) from ({lat},{lon})')
 

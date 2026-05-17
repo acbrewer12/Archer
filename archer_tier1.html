@@ -1461,6 +1461,21 @@ function sendVoice() {
 }
 
 async function processVoiceCmd(cmd) {
+  // Save location command — "save this as home" / "save location as work"
+  const saveMatch = cmd.match(/save (?:this|location|here|this place)? ?as (.+)/);
+  if (saveMatch) {
+    const name = saveMatch[1].trim();
+    try {
+      const pos = await new Promise((res,rej) => navigator.geolocation.getCurrentPosition(res,rej,{timeout:6000,enableHighAccuracy:true}));
+      const r = await fetch(T1BASE+'/nav/save_place', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name, lat: pos.coords.latitude, lon: pos.coords.longitude, address: name})});
+      const d = await r.json();
+      const msg = d.ok ? `Saved. Say "navigate to ${name}" to come back here.` : 'Could not save.';
+      setArcherMsg(msg); speakText(msg);
+    } catch(e) { setArcherMsg('Need GPS to save location.'); speakText('Need GPS to save location.'); }
+    return;
+  }
+
   // Navigation commands — intercept before VOICE_CMDS loop
   const navMatch = cmd.match(/(?:directions to|navigate to|take me to|get me to|route to|go to)\s+(.+)/);
   if (navMatch) { startNavigation(navMatch[1].trim()); return; }
