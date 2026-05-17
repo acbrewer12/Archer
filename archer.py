@@ -6283,11 +6283,12 @@ def navigate_endpoint():
         a = math.sin(dL/2)**2 + math.cos(math.radians(float(lat1))) * math.cos(math.radians(float(lat2))) * math.sin(dl/2)**2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-    def photon_search(query, bias_lat=None, bias_lon=None):
+    def photon_search(query, bias_lat=None, bias_lon=None, radius_deg=0.7):
         enc = urllib.parse.quote(query)
         url = f'https://photon.komoot.io/api/?q={enc}&limit=10&lang=en'
         if bias_lat and bias_lon:
-            url += f'&lat={bias_lat}&lon={bias_lon}'
+            lat_f, lon_f = float(bias_lat), float(bias_lon)
+            url += f'&bbox={lon_f-radius_deg},{lat_f-radius_deg},{lon_f+radius_deg},{lat_f+radius_deg}'
         req = urllib.request.Request(url, headers={'User-Agent': 'Archer-Truck-AI/1.0'})
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read())
@@ -6303,33 +6304,27 @@ def navigate_endpoint():
                     'city': props.get('city') or props.get('town') or '',
                     'state': props.get('state') or '',
                 })
-        # If we have GPS, keep only results within 30 miles and sort by distance
         if bias_lat and bias_lon:
-            results = [p for p in results if geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']) < 30]
             results.sort(key=lambda p: geo_dist_mi(bias_lat, bias_lon, p['lat'], p['lon']))
         return results
 
-    # Geocode via Photon — GPS-filtered so nearby results win
+    # Geocode via Photon with GPS bounding box — hard geo filter, not just a hint
     try:
         user_lat = lat or None
         user_lon = lon or None
         print(f'[NAV] GPS from browser: lat={user_lat} lon={user_lon}')
-        places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon)
+        # Try within ~50 miles first, expand to ~100 miles if nothing found
+        places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon, radius_deg=0.7)
+        if not places and user_lat and user_lon:
+            places = photon_search(dest, bias_lat=user_lat, bias_lon=user_lon, radius_deg=1.4)
         if not places:
-            city = os.environ.get('ARCHER_CITY', 'Salem Oregon')
-            places = photon_search(f'{dest} {city}', bias_lat=user_lat, bias_lon=user_lon)
-        print(f'[NAV] Photon geocode "{dest}" → {len(places)} nearby result(s)')
-        if not places:
-            return jsonify({'error': f"Can't find \"{dest}\" near your location. Try adding a city or zip code."}), 404
-        best = places[0]
+            return jsonify({'error': f"Can't find \"{dest}\" near your location."}), 404
+        best      = places[0]
         dest_lat  = best['lat']
         dest_lon  = best['lon']
         dest_name = best['name'] + (f", {best['city']}" if best.get('city') else '')
-        if user_lat and user_lon:
-            d_mi = geo_dist_mi(user_lat, user_lon, dest_lat, dest_lon)
-            print(f'[NAV] Chose "{dest_name}" — {d_mi:.1f} mi from GPS')
-        else:
-            print(f'[NAV] Chose "{dest_name}" — no GPS, distance unknown')
+        d_mi = geo_dist_mi(user_lat, user_lon, dest_lat, dest_lon) if user_lat else None
+        print(f'[NAV] {len(places)} results — chose "{dest_name}" {f"— {d_mi:.1f} mi away" if d_mi is not None else "(no GPS)"}')
     except Exception as e:
         print(f'[NAV] Geocode failed: {e}')
         return jsonify({'error': 'Location lookup failed'}), 500
