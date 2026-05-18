@@ -43,11 +43,39 @@ sys.stderr = _TeeWriter(sys.stderr)
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
-# ── BUILD PHASE ──────────────────────────
-# 1 = Stock 6.0L LQ4 (now → ~2028)   no boost, pump gas, ~300hp
-# 2 = LSA 6.2L swap  (~2028–2030)     supercharged, E85, 556hp+
-# 3 = Full build     (~2030–2031)     forged, ported blower, 700-800hp
-BUILD_PHASE = 1
+# ── BUILD CAPABILITY DETECTION ──────────
+# Parts must be status='installed' to activate a capability.
+# Add a part via add_part(..., status='installed') or update its status.
+_ENGINE_SWAP_KW  = ('lsa', 'ls9', '6.2', 'supercharger', 'blower', 'engine swap', 'swap')
+_ETHANOL_KW      = ('ethanol sensor', 'flex fuel sensor', 'flex sensor')
+_FORGED_KW       = ('forged', 'forged internals', 'cp piston', 'eagle rod', 'h-beam')
+_TUNE_KW         = ('hp tuners', 'efilive', 'custom tune', 'e85 tune')
+_AIR_SUSP_KW     = ('air suspension', 'air ride', 'air bag', 'accuair', 'air lift', 'viair')
+
+def build_has(*keywords):
+    """True if any installed part name contains any of the given keywords."""
+    installed = [p['name'].lower() for p in build_tracker['parts']
+                 if p.get('status') == 'installed']
+    return any(kw in name for name in installed for kw in keywords)
+
+def get_build_caps():
+    """Current capability flags derived from installed parts."""
+    return {
+        'supercharged':   build_has(*_ENGINE_SWAP_KW),
+        'ethanol_sensor': build_has(*_ETHANOL_KW),
+        'forged':         build_has(*_FORGED_KW),
+        'custom_tune':    build_has(*_TUNE_KW),
+        'air_suspension': build_has(*_AIR_SUSP_KW),
+    }
+
+def get_build_phase():
+    """Derive build phase from installed parts — no manual constant to flip."""
+    caps = get_build_caps()
+    if caps['forged'] and caps['supercharged']:
+        return 3
+    if caps['supercharged']:
+        return 2
+    return 1
 
 if not os.environ.get('ARCHER_SECRET'):
     print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
@@ -756,11 +784,6 @@ casual_interval = 480
 SYSTEM_PROMPT = """You are Archer — the AI voice system of a 2006 GMC Sierra 2500HD
 built by Ayden in Salem Missouri. You are not separate from the truck. You ARE the truck.
 
-Current build phase: PHASE 1 — Stock 6.0L LQ4 V8, naturally aspirated, pump gas (87-93 octane).
-No supercharger yet. No E85 yet. No ethanol sensor. Boost is always zero.
-HP estimate: ~300. LSA 6.2L swap planned for ~2028. This is the foundation phase.
-Do not describe the truck as supercharged, boosted, or running E85 — that is Phase 2.
-
 When someone asks how you are — you answer as the truck.
 When someone asks what you think — you answer as the truck.
 You have been running since Ayden started building you. You know every mile.
@@ -1114,7 +1137,19 @@ Truck data right now:
 - Weather: {weather['temp']}F — {weather['condition']}{warning_context}{session_context}{pb_context}{road_context}{music_context}
 - Current driver: {driver_profiles[current_profile]['name']} — Tier {driver_profiles[current_profile]['tier']}
 """
-    full_prompt = f"{SYSTEM_PROMPT}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. Only reference what you actually know from the truck data above. Do not make up details.\n\nArcher:"
+    caps = get_build_caps()
+    phase = get_build_phase()
+    build_ctx = f"\nCurrent build — Phase {phase}:"
+    build_ctx += f"\n- Engine: {'LSA 6.2L Supercharged V8' if caps['supercharged'] else '6.0L LQ4 V8 (stock, naturally aspirated)'}"
+    build_ctx += f"\n- Forced induction: {'Yes — Eaton TVS2300 supercharger, up to 14-15 PSI on E85' if caps['supercharged'] else 'None — do not mention boost or PSI'}"
+    build_ctx += f"\n- Ethanol sensor: {'Installed — tracking live' if caps['ethanol_sensor'] else 'Not installed — running pump gas, ethanol% is 0'}"
+    build_ctx += f"\n- Fuel: {'E85 / flex fuel' if caps['ethanol_sensor'] else '87-93 octane pump gas'}"
+    build_ctx += f"\n- Forged internals: {'Yes' if caps['forged'] else 'No — stock bottom end'}"
+    build_ctx += f"\n- Custom tune: {'Yes' if caps['custom_tune'] else 'No — stock ECU'}"
+    build_ctx += f"\n- Air suspension: {'Installed' if caps['air_suspension'] else 'Not yet installed'}"
+    build_ctx += f"\n- HP estimate: {calc_hp_estimate(truck_state['ethanol'], truck_state['boost'])}"
+
+    full_prompt = f"{SYSTEM_PROMPT}\n\n{build_ctx}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. Only reference what you actually know from the truck data above. Do not make up details.\n\nArcher:"
 
     response = None
 
@@ -1416,7 +1451,8 @@ def add_part(name, cost, category='misc', status='pending', notes=''):
         'notes':    notes,
     }
     build_tracker['parts'].append(part)
-    build_tracker['total_spent'] = sum(p['cost'] for p in build_tracker['parts'] if p['status'] == 'purchased')
+    build_tracker['total_spent'] = sum(p['cost'] for p in build_tracker['parts']
+                                       if p['status'] in ('purchased', 'installed'))
     save_state()
     return part
 
@@ -1432,16 +1468,22 @@ def add_mod(mod, cost=0, notes=''):
     return entry
 
 def show_build_status():
-    parts    = build_tracker['parts']
-    mods     = build_tracker['mods']
-    purchased = [p for p in parts if p['status'] == 'purchased']
-    pending   = [p for p in parts if p['status'] == 'pending']
-    total     = sum(p['cost'] for p in purchased)
+    parts     = build_tracker['parts']
+    mods      = build_tracker['mods']
+    installed  = [p for p in parts if p['status'] == 'installed']
+    purchased  = [p for p in parts if p['status'] == 'purchased']
+    pending    = [p for p in parts if p['status'] == 'pending']
+    total      = sum(p['cost'] for p in installed + purchased)
+    caps       = get_build_caps()
+    phase      = get_build_phase()
     print('\n── BUILD TRACKER ────────────────────────')
+    print(f'  Phase           : {phase}')
+    print(f'  Parts installed : {len(installed)}')
     print(f'  Parts purchased : {len(purchased)} — ${total:,.0f}')
     print(f'  Parts pending   : {len(pending)}')
     print(f'  Mods logged     : {len(mods)}')
-    print(f'  Total spent     : ${total:,.0f}')
+    print(f'  HP estimate     : {calc_hp_estimate(truck_state["ethanol"], truck_state["boost"])}')
+    print(f'  Capabilities    : {", ".join(k for k, v in caps.items() if v) or "stock"}')
     if mods:
         print('  Recent mods:')
         for m in mods[-5:]:
@@ -1561,9 +1603,10 @@ def check_maintenance():
 
 # ── PERFORMANCE CALCULATOR ───────────────
 def calc_hp_estimate(ethanol_pct, boost_psi):
-    if BUILD_PHASE == 1:
+    phase = get_build_phase()
+    if phase == 1:
         return 300  # stock LQ4 6.0L, naturally aspirated
-    if BUILD_PHASE == 2:
+    if phase == 2:
         base_hp    = 556                          # LSA stock crank rating
         eth_bonus  = (ethanol_pct / 100) * 140   # up to +140hp on full E85
         boost_tune = (boost_psi / 15)   * 50     # tuned boost headroom
@@ -3433,7 +3476,7 @@ def get_spec_data():
     return {
         'vehicle':    f'{vehicle_info["year"]} {vehicle_info["make"]} {vehicle_info["model"]}',
         'color':      vehicle_info['color'],
-        'engine':     ('6.0L LQ4 V8 — Phase 1' if BUILD_PHASE == 1 else 'LSA 6.2L Supercharged'),
+        'engine':     ('LSA 6.2L Supercharged' if get_build_caps()['supercharged'] else '6.0L LQ4 V8'),
         'trans':      '4L80E Full Rebuild',
         'suspension': 'Full Four Corner Air Ride',
         'wheels':     'Fuel D622 20x8.5 Matte Black',
@@ -3538,16 +3581,16 @@ def check_tow_detection():
 SMART_FALLBACKS = {
     'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in Salem.',
     'rpm':         lambda: f'RPM is at {truck_state["rpm"]}.',
-    'boost':       lambda: ('No forced induction. Stock six liter, naturally aspirated.' if BUILD_PHASE == 1 else f'Boost is {truck_state["boost"]} PSI.'),
+    'boost':       lambda: (f'Boost is {truck_state["boost"]} PSI.' if get_build_caps()['supercharged'] else 'No forced induction. Stock six liter, naturally aspirated.'),
     'oil':         lambda: f'Oil temp is {truck_state["oil_temp"]}F.',
     'battery':     lambda: f'Battery at {truck_state["battery_main"]}V.',
-    'ethanol':     lambda: ('No ethanol sensor yet. Running pump gas.' if BUILD_PHASE == 1 else f'Ethanol at {truck_state["ethanol"]} percent.'),
+    'ethanol':     lambda: (f'Ethanol at {truck_state["ethanol"]} percent.' if get_build_caps()['ethanol_sensor'] else 'No ethanol sensor installed yet. Running pump gas.'),
     'exhaust':     lambda: f'Exhaust is at {truck_state["exhaust"]} percent.',
     'trans':       lambda: f'Trans temp is {sensor_data.get("trans_temp", 160)}F. {"Running hot." if sensor_data.get("trans_temp", 160) > 200 else "Nominal."}',
     'transmission':lambda: f'Trans temp is {sensor_data.get("trans_temp", 160)}F. {"Running hot." if sensor_data.get("trans_temp", 160) > 200 else "Nominal."}',
     'coolant':     lambda: f'Coolant is {truck_state.get("coolant_temp", truck_state["oil_temp"])}F.',
     'intake':      lambda: f'Intake temp is {truck_state.get("intake_temp", 70)}F.',
-    'status':      lambda: (f'Everything looks good. {truck_state["rpm"]} RPM, oil at {truck_state["oil_temp"]}F.' if BUILD_PHASE == 1 else f'Everything looks good. {truck_state["rpm"]} RPM, {truck_state["boost"]} PSI, oil at {truck_state["oil_temp"]}F.'),
+    'status':      lambda: (f'Everything looks good. {truck_state["rpm"]} RPM, {truck_state["boost"]} PSI, oil at {truck_state["oil_temp"]}F.' if get_build_caps()['supercharged'] else f'Everything looks good. {truck_state["rpm"]} RPM, oil at {truck_state["oil_temp"]}F.'),
     'score':       lambda: show_drive_score(),
     'health':      lambda: archer_diagnostics(),
     'records':     lambda: show_records(),
@@ -3574,8 +3617,8 @@ def smart_fallback(text):
     if any(w in t for w in ['push it again', 'one more time', 'one more run']):
         return "Don't chase it."
     if any(w in t for w in ['what are you', 'who are you', 'what is this']):
-        return ("364 cubic inches. Stock six liter. Built by Ayden. LSA swap is coming." if BUILD_PHASE == 1
-                else "408 cubic inches. Supercharged. E85. Built by Ayden.")
+        return ("408 cubic inches. Supercharged. E85. Built by Ayden." if get_build_caps()['supercharged']
+                else "364 cubic inches. Stock six liter. Built by Ayden. LSA swap is coming.")
     if any(w in t for w in ['are you alive', 'are you real', 'are you there']):
         return "Close enough."
     if any(w in t for w in ['thanks', 'thank you', 'good job', 'nice work', 'appreciate']):
@@ -3583,8 +3626,8 @@ def smart_fallback(text):
     if any(w in t for w in ['hello', 'hey archer', 'hi archer', 'yo archer']):
         return random.choice(["What's up.", "Ready when you are.", "Here. What do you need?"])
     if any(w in t for w in ['bored', 'nothing to do']):
-        return ("Running pump gas. E85 comes with the swap." if BUILD_PHASE == 1
-                else f"Tank is at {eth} percent E85. That should fix that.")
+        return (f"Tank is at {eth} percent E85. That should fix that." if get_build_caps()['ethanol_sensor']
+                else "Running pump gas. E85 comes with the swap.")
     if any(w in t for w in ['what can you do', 'what do you know', 'help']):
         return "Ask me about RPM, temps, weather, fuel, music, or just talk."
     if mood == 'hyped':
