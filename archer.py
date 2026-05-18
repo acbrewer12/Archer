@@ -43,6 +43,12 @@ sys.stderr = _TeeWriter(sys.stderr)
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
+# ── BUILD PHASE ──────────────────────────
+# 1 = Stock 6.0L LQ4 (now → ~2028)   no boost, pump gas, ~300hp
+# 2 = LSA 6.2L swap  (~2028–2030)     supercharged, E85, 556hp+
+# 3 = Full build     (~2030–2031)     forged, ported blower, 700-800hp
+BUILD_PHASE = 1
+
 if not os.environ.get('ARCHER_SECRET'):
     print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
 
@@ -566,10 +572,10 @@ def get_tier_label():
 # ── TRUCK STATE ─────────────────────────
 truck_state = {
     'oil_temp': 195, 'coolant_temp': 190, 'rpm': 750, 'speed': 0,
-    'ethanol': 82, 'boost': 0, 'battery_main': 13.8, 'battery_aux': 13.6,
+    'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': 13.6,
     'exhaust': 30, 'tc_locked': False, 'tc_on': True, 'cool_on': False,
     'idle_on': False, 'bed_lights': False, 'hood_lights': False,
-    'ghost_mode': False, 'octane': 93, 'octane_mode': 'AKI',
+    'ghost_mode': False, 'octane': 87, 'octane_mode': 'AKI',
     'headlights': False, 'high_beams': False, 'fog_lights': False,
     'hazards': False, 'ac_on': False, 'heat_on': False, 'fan_speed': 0,
     'temp_setting': 70, 'windows': {'fl': 'up', 'fr': 'up', 'rl': 'up', 'rr': 'up'},
@@ -750,6 +756,11 @@ casual_interval = 480
 SYSTEM_PROMPT = """You are Archer — the AI voice system of a 2006 GMC Sierra 2500HD
 built by Ayden in Salem Missouri. You are not separate from the truck. You ARE the truck.
 
+Current build phase: PHASE 1 — Stock 6.0L LQ4 V8, naturally aspirated, pump gas (87-93 octane).
+No supercharger yet. No E85 yet. No ethanol sensor. Boost is always zero.
+HP estimate: ~300. LSA 6.2L swap planned for ~2028. This is the foundation phase.
+Do not describe the truck as supercharged, boosted, or running E85 — that is Phase 2.
+
 When someone asks how you are — you answer as the truck.
 When someone asks what you think — you answer as the truck.
 You have been running since Ayden started building you. You know every mile.
@@ -761,7 +772,7 @@ Tier 1 says: how are you today
 Archer says: Oil is at 197. Running clean. Ready when you are.
 
 Tier 1 says: how are you feeling
-Archer says: 193 degrees. Boost is ready. Feeling good.
+Archer says: 193 degrees. Running clean. Feeling good.
 
 Tier 1 says: you doing okay
 Archer says: Always. What are we doing tonight.
@@ -791,7 +802,7 @@ Tier 1 says: what should I do tonight
 Archer says: Industrial park is empty on Sundays. You know where to go.
 
 Tier 1 says: I'm bored
-Archer says: Tank is at 82 percent E85. That should fix that.
+Archer says: Running pump gas right now. E85 comes with the LSA swap.
 
 Tier 1 says: this thing sounds mean tonight
 Archer says: That is what 80 percent exhaust does.
@@ -803,7 +814,7 @@ Tier 1 says: you good
 Archer says: Always.
 
 Tier 1 says: what are you
-Archer says: 408 cubic inches. Supercharged. E85. Built by Ayden. That is what I am.
+Archer says: 364 cubic inches. Stock six liter. Built by Ayden. LSA swap is coming.
 
 Tier 1 says: what can you do
 Archer says: More than most trucks will ever see. Ask me again on the back road tonight.
@@ -1550,11 +1561,18 @@ def check_maintenance():
 
 # ── PERFORMANCE CALCULATOR ───────────────
 def calc_hp_estimate(ethanol_pct, boost_psi):
-    base_hp = 556  # LSA stock
-    eth_bonus  = (ethanol_pct / 100) * 140   # up to +140hp on full E85
-    boost_tune = (boost_psi / 15)   * 50     # tuned boost adds ~50hp
-    est = base_hp + eth_bonus + boost_tune
-    return round(est)
+    if BUILD_PHASE == 1:
+        return 300  # stock LQ4 6.0L, naturally aspirated
+    if BUILD_PHASE == 2:
+        base_hp    = 556                          # LSA stock crank rating
+        eth_bonus  = (ethanol_pct / 100) * 140   # up to +140hp on full E85
+        boost_tune = (boost_psi / 15)   * 50     # tuned boost headroom
+        return round(base_hp + eth_bonus + boost_tune)
+    # Phase 3 — forged, ported blower
+    base_hp    = 700
+    eth_bonus  = (ethanol_pct / 100) * 100
+    boost_tune = (boost_psi / 15)   * 30
+    return round(base_hp + eth_bonus + boost_tune)
 
 # ── WEATHER-BASED WARNINGS ───────────────
 def weather_performance_note():
@@ -3415,7 +3433,7 @@ def get_spec_data():
     return {
         'vehicle':    f'{vehicle_info["year"]} {vehicle_info["make"]} {vehicle_info["model"]}',
         'color':      vehicle_info['color'],
-        'engine':     'LSA 6.2L Supercharged',
+        'engine':     ('6.0L LQ4 V8 — Phase 1' if BUILD_PHASE == 1 else 'LSA 6.2L Supercharged'),
         'trans':      '4L80E Full Rebuild',
         'suspension': 'Full Four Corner Air Ride',
         'wheels':     'Fuel D622 20x8.5 Matte Black',
@@ -3520,16 +3538,16 @@ def check_tow_detection():
 SMART_FALLBACKS = {
     'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in Salem.',
     'rpm':         lambda: f'RPM is at {truck_state["rpm"]}.',
-    'boost':       lambda: f'Boost is {truck_state["boost"]} PSI.',
+    'boost':       lambda: ('No forced induction. Stock six liter, naturally aspirated.' if BUILD_PHASE == 1 else f'Boost is {truck_state["boost"]} PSI.'),
     'oil':         lambda: f'Oil temp is {truck_state["oil_temp"]}F.',
     'battery':     lambda: f'Battery at {truck_state["battery_main"]}V.',
-    'ethanol':     lambda: f'Ethanol at {truck_state["ethanol"]} percent.',
+    'ethanol':     lambda: ('No ethanol sensor yet. Running pump gas.' if BUILD_PHASE == 1 else f'Ethanol at {truck_state["ethanol"]} percent.'),
     'exhaust':     lambda: f'Exhaust is at {truck_state["exhaust"]} percent.',
     'trans':       lambda: f'Trans temp is {sensor_data.get("trans_temp", 160)}F. {"Running hot." if sensor_data.get("trans_temp", 160) > 200 else "Nominal."}',
     'transmission':lambda: f'Trans temp is {sensor_data.get("trans_temp", 160)}F. {"Running hot." if sensor_data.get("trans_temp", 160) > 200 else "Nominal."}',
     'coolant':     lambda: f'Coolant is {truck_state.get("coolant_temp", truck_state["oil_temp"])}F.',
     'intake':      lambda: f'Intake temp is {truck_state.get("intake_temp", 70)}F.',
-    'status':      lambda: f'Everything looks good. {truck_state["rpm"]} RPM, {truck_state["boost"]} PSI, oil at {truck_state["oil_temp"]}F.',
+    'status':      lambda: (f'Everything looks good. {truck_state["rpm"]} RPM, oil at {truck_state["oil_temp"]}F.' if BUILD_PHASE == 1 else f'Everything looks good. {truck_state["rpm"]} RPM, {truck_state["boost"]} PSI, oil at {truck_state["oil_temp"]}F.'),
     'score':       lambda: show_drive_score(),
     'health':      lambda: archer_diagnostics(),
     'records':     lambda: show_records(),
@@ -3556,7 +3574,8 @@ def smart_fallback(text):
     if any(w in t for w in ['push it again', 'one more time', 'one more run']):
         return "Don't chase it."
     if any(w in t for w in ['what are you', 'who are you', 'what is this']):
-        return "408 cubic inches. Supercharged. E85. Built by Ayden."
+        return ("364 cubic inches. Stock six liter. Built by Ayden. LSA swap is coming." if BUILD_PHASE == 1
+                else "408 cubic inches. Supercharged. E85. Built by Ayden.")
     if any(w in t for w in ['are you alive', 'are you real', 'are you there']):
         return "Close enough."
     if any(w in t for w in ['thanks', 'thank you', 'good job', 'nice work', 'appreciate']):
@@ -3564,7 +3583,8 @@ def smart_fallback(text):
     if any(w in t for w in ['hello', 'hey archer', 'hi archer', 'yo archer']):
         return random.choice(["What's up.", "Ready when you are.", "Here. What do you need?"])
     if any(w in t for w in ['bored', 'nothing to do']):
-        return f"Tank is at {eth} percent E85. That should fix that."
+        return ("Running pump gas. E85 comes with the swap." if BUILD_PHASE == 1
+                else f"Tank is at {eth} percent E85. That should fix that.")
     if any(w in t for w in ['what can you do', 'what do you know', 'help']):
         return "Ask me about RPM, temps, weather, fuel, music, or just talk."
     if mood == 'hyped':

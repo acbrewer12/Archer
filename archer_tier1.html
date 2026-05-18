@@ -883,7 +883,7 @@ body.day{background:#0d0d0d}
       <div class="row4">
         <div class="build-stat"><div class="build-val" style="color:var(--green)">$0</div><div class="build-lbl">SPENT</div></div>
         <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">PARTS</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--red)">556</div><div class="build-lbl">EST HP</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--red)" id="bld-hp">300</div><div class="build-lbl">EST HP</div></div>
         <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">ODO</div></div>
       </div>
       <div class="box">
@@ -1585,6 +1585,7 @@ async function pollLive() {
     // PERF score
     if (d.drive_quality != null) set('pf-stat-score', d.drive_quality);
     if (d.best_060 && d.best_060 > 0) set('pf-stat-best', d.best_060 + 's');
+    if (d.est_hp != null) set('bld-hp', d.est_hp);
     // LIVE tab — ENGINE sensors
     if (sd.afr         != null) set('lv-afr',    sd.afr);
     if (sd.timing_deg  != null) set('lv-timing', sd.timing_deg + '°');
