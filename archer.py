@@ -41,6 +41,7 @@ sys.stderr = _TeeWriter(sys.stderr)
 
 # ── PLATFORM DETECTION ───────────────────
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
+_IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
 if not os.environ.get('ARCHER_SECRET'):
     print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
@@ -6416,6 +6417,9 @@ def navigate_endpoint():
         'total_duration_min':round(total_dur_s / 60),
     })
 
+DANGEROUS_COMMANDS = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
+                      'shutdown', 'kill engine', 'reboot', 'delete profile']
+
 @display_app.route('/voice_command', methods=['POST'])
 def voice_command_endpoint():
     from flask import request as flask_request
@@ -6433,9 +6437,7 @@ def voice_command_endpoint():
                 print(command)
             return jsonify({'response': ''})
         # Block dangerous commands from unauthenticated / low-tier callers
-        _dangerous_cmds = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
-                           'shutdown', 'kill engine', 'reboot', 'delete profile']
-        if tier > 1 and any(d in command.lower() for d in _dangerous_cmds):
+        if tier > 1 and any(d in command.lower() for d in DANGEROUS_COMMANDS):
             return jsonify({'response': 'Not authorized.'}), 403
         if tier >= 4:
             return jsonify({'response': 'Read only in valet mode.'}), 403
@@ -8121,37 +8123,135 @@ def beamng_status():
     })
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────
+def _obd_cmd(ser, cmd, timeout=2.0):
+    """Send an ELM327 AT or OBD command; return the response string."""
+    ser.reset_input_buffer()
+    ser.write((cmd + '\r').encode())
+    buf = b''
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        chunk = ser.read(ser.in_waiting or 1)
+        if chunk:
+            buf += chunk
+            if b'>' in buf:
+                break
+        else:
+            time.sleep(0.02)
+    return buf.decode(errors='ignore').strip()
+
+def _obd_bytes(raw):
+    """Extract data bytes from an ELM327 response line (strips '41 XX' header)."""
+    for line in raw.splitlines():
+        parts = line.strip().split()
+        try:
+            idx = next(i for i, p in enumerate(parts) if p.upper() == '41')
+            return [int(x, 16) for x in parts[idx + 2:]]
+        except (StopIteration, IndexError, ValueError):
+            continue
+    return []
+
 def obd_autodetect():
-    """Scan serial ports every 5 s for an OBDLink MX+ (or ELM327/STN).
-    When found: disables sim noise and marks obd2_display connected.
-    When unplugged: re-enables sim noise."""
+    """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
+    Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
     global sim_random_enabled
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
+
     while True:
+        # ── Scan for adapter ──────────────────────────────────
+        port_device = None
         try:
+            import serial
             import serial.tools.list_ports
-            ports = list(serial.tools.list_ports.comports())
-            found = False
-            for p in ports:
+            for p in serial.tools.list_ports.comports():
                 desc = (p.description or '').lower()
                 mfr  = (p.manufacturer or '').lower()
                 if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
-                    found = True
-                    if not obd2_display['connected']:
-                        obd2_display['connected'] = True
-                        obd2_display['mode']      = 'live'
-                        sim_random_enabled        = False
-                        print(f'[OBD] OBDLink detected on {p.device} — live data active')
+                    port_device = p.device
                     break
-            if not found and obd2_display['connected']:
-                obd2_display['connected'] = False
-                obd2_display['mode']      = 'default'
-                sim_random_enabled        = True
-                print('[OBD] OBDLink disconnected — simulation resumed')
         except ImportError:
-            pass  # pyserial not installed — stay in sim mode
+            time.sleep(10)
+            continue
         except Exception as e:
-            print(f'[OBD] autodetect error: {e}')
+            print(f'[OBD] scan error: {e}')
+            time.sleep(5)
+            continue
+
+        if not port_device:
+            time.sleep(5)
+            continue
+
+        # ── Connect and initialize ─────────────────────────────
+        ser = None
+        try:
+            import serial
+            ser = serial.Serial(port_device, 38400, timeout=2)
+            _obd_cmd(ser, 'ATZ');   time.sleep(1.0)   # reset adapter
+            _obd_cmd(ser, 'ATE0')                      # echo off
+            _obd_cmd(ser, 'ATH0')                      # headers off
+            _obd_cmd(ser, 'ATSP0')                     # auto-select protocol
+            _obd_cmd(ser, 'ATAT1')                     # adaptive timing mode 1
+
+            obd2_display['connected'] = True
+            obd2_display['mode']      = 'live'
+            sim_random_enabled        = False
+            print(f'[OBD] Connected on {port_device} — live data active')
+
+            # ── Poll loop ──────────────────────────────────────
+            while True:
+                try:
+                    # RPM — PID 010C: ((A*256)+B)/4
+                    b = _obd_bytes(_obd_cmd(ser, '010C'))
+                    if len(b) >= 2:
+                        truck_state['rpm'] = ((b[0] * 256) + b[1]) / 4
+
+                    # Speed — PID 010D: A km/h → mph
+                    b = _obd_bytes(_obd_cmd(ser, '010D'))
+                    if b:
+                        truck_state['speed'] = round(b[0] * 0.621371)
+
+                    # Coolant temp — PID 0105: A-40 °C → °F
+                    b = _obd_bytes(_obd_cmd(ser, '0105'))
+                    if b:
+                        sensor_data['coolant_temp'] = round((b[0] - 40) * 9 / 5 + 32)
+
+                    # Throttle — PID 0111: A*100/255 %
+                    b = _obd_bytes(_obd_cmd(ser, '0111'))
+                    if b:
+                        truck_state['throttle'] = round(b[0] * 100 / 255)
+
+                    # MAP/boost — PID 010B: A kPa → psi above atmosphere
+                    b = _obd_bytes(_obd_cmd(ser, '010B'))
+                    if b:
+                        truck_state['boost'] = round((b[0] - 101.325) * 0.145038, 1)
+
+                    # Battery voltage — AT command (ELM327 internal)
+                    raw_v = _obd_cmd(ser, 'ATRV')
+                    try:
+                        truck_state['battery'] = round(float(raw_v.replace('V', '').strip()), 1)
+                    except ValueError:
+                        pass
+
+                    system_health['last_obd_update'] = time.time()
+
+                except Exception as e:
+                    print(f'[OBD] read error: {e}')
+                    break
+
+                time.sleep(0.2)
+
+        except Exception as e:
+            print(f'[OBD] connection error on {port_device}: {e}')
+        finally:
+            try:
+                if ser:
+                    ser.close()
+            except Exception:
+                pass
+            obd2_display['connected'] = False
+            obd2_display['mode']      = 'default'
+            sim_random_enabled        = True
+            print('[OBD] Disconnected — simulation resumed')
+
         time.sleep(5)
 
 def run_display_server():
