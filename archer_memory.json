@@ -92,7 +92,7 @@
   "trip_log": [
     {
       "date": "May 18 2026",
-      "time": "12:37 AM",
+      "time": "12:53 AM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -100,12 +100,12 @@
       "hard_events": 0,
       "quality": 100,
       "road": "unknown",
-      "ethanol": 82,
+      "ethanol": 0,
       "weather": "70F clear"
     },
     {
       "date": "May 18 2026",
-      "time": "12:37 AM",
+      "time": "12:53 AM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -113,7 +113,7 @@
       "hard_events": 0,
       "quality": 100,
       "road": "unknown",
-      "ethanol": 82,
+      "ethanol": 0,
       "weather": "70F clear"
     }
   ],
@@ -121,17 +121,17 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "May 18 2026 12:37 AM"
+      "registered_at": "May 18 2026 12:53 AM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "May 18 2026 12:37 AM"
+      "registered_at": "May 18 2026 12:53 AM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "May 18 2026 12:37 AM"
+      "registered_at": "May 18 2026 12:53 AM"
     }
   },
   "build_tracker": {
