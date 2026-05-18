@@ -1032,6 +1032,10 @@ def get_display_data():
         'hazards':       truck_state.get('hazards', False),
         'windows':       truck_state['windows'],
         'archer_msg':    last_archer_msg['text'],
+        'drive_mode':    truck_state['drive_mode'],
+        'radar_alert':   truck_state.get('radar_alert', False),
+        'beamng_active': beamng_state['connected'],
+        'beamng_car':    beamng_state['car'],
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -1715,18 +1719,32 @@ def set_camera_url(camera, url):
 
 # ── VALET MONITOR — logs events when tier 4 is driving ──
 def valet_monitor():
-    last_rpm  = 0
-    last_tier = 1
+    last_rpm       = 0
+    last_tier      = 1
+    speed_warned   = False
+    rpm_warned     = False
     while True:
-        current_tier = tier_state['current']
-        current_rpm  = truck_state['rpm']
+        current_tier  = tier_state['current']
+        current_rpm   = truck_state['rpm']
+        current_speed = truck_state.get('speed', 0)
         if current_tier >= 4:
             if current_rpm > 2500 and last_rpm <= 2500:
                 log_valet_event(f'RPM exceeded 2500 — hit {current_rpm}')
-            if current_rpm > 3500:
+            if current_rpm > 3500 and not rpm_warned:
                 log_valet_event(f'High RPM warning — {current_rpm}')
-            if sensor_data.get('speed_mph', 0) > 45:
-                log_valet_event(f'Speed over 45 MPH — {sensor_data["speed_mph"]} MPH')
+                speak('Easy on the RPMs.')
+                rpm_warned = True
+            elif current_rpm <= 3500:
+                rpm_warned = False
+            if current_speed > 35 and not speed_warned:
+                log_valet_event(f'[VALET SPEED LIMIT] Speed over 35 MPH — {current_speed} MPH')
+                speak('Speed limit is 35. Slow down.')
+                awareness['warnings_active'].append('valet_speed')
+                speed_warned = True
+            elif current_speed <= 30:
+                speed_warned = False
+                if 'valet_speed' in awareness['warnings_active']:
+                    awareness['warnings_active'].remove('valet_speed')
         last_rpm  = current_rpm
         last_tier = current_tier
         time.sleep(3)

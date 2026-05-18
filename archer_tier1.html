@@ -534,6 +534,7 @@ body.day{background:#0d0d0d}
     <div class="hdr-title">ARCHER</div>
     <div class="hdr-right">
       <span class="auto-badge" id="auto-badge">AUTO</span>
+      <span class="auto-badge" id="beamng-badge" style="display:none;color:#00e5ff;border-color:#00e5ff">BEAMNG</span>
       <div class="mode-switcher">
         <button class="mode-btn" id="btn-day" onclick="setMode('day')">☀</button>
         <button class="mode-btn active" id="btn-auto" onclick="setMode('auto')">A</button>
@@ -1569,6 +1570,18 @@ async function pollLive() {
     targetData.knock = (sd.knock_count > 0) ? 1 : 0;
     if (d.archer_msg) setArcherMsg(d.archer_msg);
     if (d.radar_alert != null) targetData.radarActive = !!d.radar_alert;
+    // Drive mode from live data
+    if (d.drive_mode) {
+      const dm = d.drive_mode.toUpperCase();
+      set('da-mode', dm);
+      set('dr-mode', dm);
+    }
+    // BeamNG connection badge
+    const beamngBadge = document.getElementById('beamng-badge');
+    if (beamngBadge) {
+      beamngBadge.style.display = d.beamng_active ? 'inline' : 'none';
+      if (d.beamng_active && d.beamng_car) beamngBadge.title = d.beamng_car;
+    }
     // PERF score
     if (d.drive_quality != null) set('pf-stat-score', d.drive_quality);
     if (d.best_060 && d.best_060 > 0) set('pf-stat-best', d.best_060 + 's');
