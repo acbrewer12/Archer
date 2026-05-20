@@ -838,7 +838,7 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ TRACK ══════════ -->
     <div class="screen" id="screen-track">
-      <div class="track-et" id="tk-et">—.—</div>
+      <div class="track-et" id="tk-et" style="color:var(--label)">0.000</div>
       <div class="track-status" id="tk-status" style="color:var(--text3)">NO RUN YET</div>
       <div style="display:flex;flex-direction:column;gap:3px">
         <div class="split"><span class="split-name">60 FT</span><span class="split-time" id="tk-time-60ft" style="color:var(--text)">--</span><span class="split-pb" id="tk-pb-60ft"></span><span class="split-delta" id="tk-delta-60ft"></span></div>
@@ -1712,12 +1712,13 @@ async function pollLive() {
         const dl = document.getElementById('tk-delta-' + k); if (dl) { dl.textContent = ''; dl.className = 'split-delta'; }
       });
       set('tk-mph', '--');
-      if (tkEtEl) { tkEtEl.textContent = '—.—'; tkEtEl.style.color = 'var(--text)'; }
+      if (tkEtEl) { tkEtEl.textContent = '0.000'; tkEtEl.style.color = 'var(--label)'; }
     }
     lastDragStage = dStage;
 
     if (dStage === 'staged') {
       if (tkSt) { tkSt.textContent = 'STAGED — READY'; tkSt.style.color = 'var(--yellow)'; }
+      if (tkEtEl) tkEtEl.style.color = 'var(--label)';
       dragRunStart = null;
 
     } else if (dStage === 'running') {
@@ -1743,7 +1744,7 @@ async function pollLive() {
 
     } else {
       if (tkSt)  { tkSt.textContent = 'NO RUN YET'; tkSt.style.color = 'var(--text3)'; }
-      if (tkEtEl) { tkEtEl.textContent = '—.—'; tkEtEl.style.color = 'var(--text3)'; }
+      if (tkEtEl) { tkEtEl.textContent = '0.000'; tkEtEl.style.color = 'var(--label)'; }
     }
 
     // LIVE tab — ENGINE sensors
@@ -1846,7 +1847,7 @@ function update() {
   if (dragRunStart) {
     const elapsed = ((Date.now() - dragRunStart) / 1000).toFixed(2);
     const tkEtEl = document.getElementById('tk-et');
-    if (tkEtEl) tkEtEl.textContent = elapsed;
+    if (tkEtEl) { tkEtEl.textContent = elapsed; tkEtEl.style.color = 'var(--green)'; }
   }
 
   // SHOW tab live stats
