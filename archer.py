@@ -1076,6 +1076,8 @@ def get_display_data():
         'drag_best_et':  drag_timer['best_et'],
         'drag_best_mph': drag_timer['best_mph'],
         'drag_stage':    drag_timer['stage'],
+        'drag_splits':   dict(drag_timer['splits']),
+        'drag_last_run': drag_timer['runs'][-1] if drag_timer['runs'] else None,
         'surveillance':  surveillance['armed'],
         'valet_events':  len(surveillance['valet_log']),
         'cameras':       surveillance['cameras'],

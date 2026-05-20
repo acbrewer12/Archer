@@ -838,17 +838,17 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ TRACK ══════════ -->
     <div class="screen" id="screen-track">
-      <div class="track-et">11.842</div>
-      <div class="track-status" style="color:var(--green)">RUN COMPLETE</div>
+      <div class="track-et" id="tk-et">--</div>
+      <div class="track-status" id="tk-status" style="color:var(--text3)">NO RUN YET</div>
       <div style="display:flex;flex-direction:column;gap:3px">
-        <div class="split"><span class="split-name">60 FT</span><span class="split-time" style="color:var(--text)">1.524</span><span class="split-pb">PB 1.48</span><span class="split-delta worse">+0.044</span></div>
-        <div class="split"><span class="split-name">330 FT</span><span class="split-time" style="color:var(--text)">4.312</span><span class="split-pb">PB 4.28</span><span class="split-delta worse">+0.032</span></div>
-        <div class="split"><span class="split-name">1/8 MILE</span><span class="split-time" style="color:var(--yellow)">7.618</span><span class="split-pb">PB 7.64</span><span class="split-delta better">-0.022</span></div>
-        <div class="split"><span class="split-name">1000 FT</span><span class="split-time" style="color:var(--text)">9.944</span><span class="split-pb">PB 9.91</span><span class="split-delta worse">+0.034</span></div>
-        <div class="split" style="background:#0d0000;border-color:#330000"><span class="split-name" style="color:var(--red)">1/4 MILE</span><span class="split-time" style="color:var(--red)">11.842</span><span class="split-pb">PB 11.42</span><span class="split-delta worse">+0.422</span></div>
+        <div class="split"><span class="split-name">60 FT</span><span class="split-time" id="tk-time-60ft" style="color:var(--text)">--</span><span class="split-pb" id="tk-pb-60ft"></span><span class="split-delta" id="tk-delta-60ft"></span></div>
+        <div class="split"><span class="split-name">330 FT</span><span class="split-time" id="tk-time-330ft" style="color:var(--text)">--</span><span class="split-pb" id="tk-pb-330ft"></span><span class="split-delta" id="tk-delta-330ft"></span></div>
+        <div class="split"><span class="split-name">1/8 MILE</span><span class="split-time" id="tk-time-660ft" style="color:var(--yellow)">--</span><span class="split-pb" id="tk-pb-660ft"></span><span class="split-delta" id="tk-delta-660ft"></span></div>
+        <div class="split"><span class="split-name">1000 FT</span><span class="split-time" id="tk-time-1000ft" style="color:var(--text)">--</span><span class="split-pb" id="tk-pb-1000ft"></span><span class="split-delta" id="tk-delta-1000ft"></span></div>
+        <div class="split" style="background:#0d0000;border-color:#330000"><span class="split-name" style="color:var(--red)">1/4 MILE</span><span class="split-time" id="tk-time-1320ft" style="color:var(--red)">--</span><span class="split-pb" id="tk-pb-1320ft"></span><span class="split-delta" id="tk-delta-1320ft"></span></div>
       </div>
       <div class="track-sum">
-        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)">112</div><div class="track-sum-lbl">TRAP MPH</div></div>
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)" id="tk-mph">--</div><div class="track-sum-lbl">TRAP MPH</div></div>
         <div class="track-sum-box" id="tk-boost-box" style="display:none"><div class="track-sum-val" style="color:var(--orange)" id="tk-boost">0</div><div class="track-sum-lbl">BOOST PSI</div></div>
         <div class="track-sum-box" id="tk-coolant-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-coolant">190°F</div><div class="track-sum-lbl">COOLANT</div></div>
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-eth">87</div><div class="track-sum-lbl">OCT</div></div>
@@ -1695,6 +1695,56 @@ async function pollLive() {
     // ── LAUNCH coolant value ──────────────────────────────────
     if (!sc && d.coolant != null) set('lc-coolant-launch', Math.round(d.coolant) + '°F');
 
+    // ── TRACK tab — live drag splits ──────────────────────────
+    const dStage  = d.drag_stage  || 'idle';
+    const dSplits = d.drag_splits || {};
+    const dLast   = d.drag_last_run;
+    const dBestEt = d.drag_best_et;
+    const tkSt    = document.getElementById('tk-status');
+    const tkEtEl  = document.getElementById('tk-et');
+    const splitKeys = ['60ft','330ft','660ft','1000ft','1320ft'];
+
+    // On transition to staged — clear splits ready for new run
+    if (dStage === 'staged' && lastDragStage !== 'staged') {
+      splitKeys.forEach(k => {
+        set('tk-time-' + k, '--');
+        const pb = document.getElementById('tk-pb-' + k);    if (pb) pb.textContent = '';
+        const dl = document.getElementById('tk-delta-' + k); if (dl) { dl.textContent = ''; dl.className = 'split-delta'; }
+      });
+      set('tk-mph', '--');
+      if (tkEtEl) { tkEtEl.textContent = '--'; tkEtEl.style.color = 'var(--text)'; }
+    }
+    lastDragStage = dStage;
+
+    if (dStage === 'staged') {
+      if (tkSt) { tkSt.textContent = 'STAGED — READY'; tkSt.style.color = 'var(--yellow)'; }
+      dragRunStart = null;
+
+    } else if (dStage === 'running') {
+      if (tkSt) { tkSt.textContent = 'RUNNING...'; tkSt.style.color = 'var(--green)'; }
+      if (!dragRunStart) dragRunStart = Date.now();
+      // Show splits as they come in from the server
+      splitKeys.forEach(k => { if (dSplits[k]) set('tk-time-' + k, dSplits[k].toFixed(3)); });
+
+    } else if (dStage === 'done' && dSplits.et) {
+      const isPB = dBestEt != null && dSplits.et <= dBestEt;
+      if (tkSt) { tkSt.textContent = isPB ? 'NEW PERSONAL BEST' : 'RUN COMPLETE'; tkSt.style.color = 'var(--green)'; }
+      if (tkEtEl) { tkEtEl.textContent = dSplits.et.toFixed(3); tkEtEl.style.color = isPB ? 'var(--green)' : 'var(--text)'; }
+      dragRunStart = null;
+      splitKeys.forEach(k => { if (dSplits[k]) set('tk-time-' + k, dSplits[k].toFixed(3)); });
+      if (dSplits.mph) set('tk-mph', dSplits.mph);
+
+    } else if (dLast) {
+      const ls = dLast.splits || {};
+      if (tkSt) { tkSt.textContent = 'RUN COMPLETE'; tkSt.style.color = 'var(--green)'; }
+      if (tkEtEl) { tkEtEl.textContent = dLast.et.toFixed(3); tkEtEl.style.color = 'var(--text)'; }
+      splitKeys.forEach(k => { if (ls[k]) set('tk-time-' + k, ls[k].toFixed(3)); });
+      if (dLast.mph) set('tk-mph', dLast.mph);
+
+    } else {
+      if (tkSt) { tkSt.textContent = 'NO RUN YET'; tkSt.style.color = 'var(--text3)'; }
+    }
+
     // LIVE tab — ENGINE sensors
     if (sd.afr         != null) set('lv-afr',    sd.afr);
     if (sd.timing_deg  != null) set('lv-timing', sd.timing_deg + '°');
@@ -1790,6 +1840,13 @@ function update() {
   set('pf-stat-speed', Math.round(liveData.speed));
   set('pf-stat-boost', Math.round(liveData.boost));
   set('pf-stat-gear', liveData.gear);
+
+  // TRACK live ET counter during run
+  if (dragRunStart) {
+    const elapsed = ((Date.now() - dragRunStart) / 1000).toFixed(2);
+    const tkEtEl = document.getElementById('tk-et');
+    if (tkEtEl) tkEtEl.textContent = elapsed;
+  }
 
   // SHOW tab live stats
   set('sh-rpm', r);
@@ -2248,7 +2305,9 @@ async function setShow(btn, mode) {
   } catch(e) {}
 }
 
-let dragStaged = false;
+let dragStaged    = false;
+let dragRunStart  = null;   // Date.now() when running starts, for live ET counter
+let lastDragStage = 'idle'; // track transitions to clear splits on re-stage
 async function launchControl() {
   const btn = document.getElementById('launch-btn');
   if (!dragStaged) {
