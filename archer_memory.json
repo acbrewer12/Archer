@@ -91,8 +91,8 @@
   "bluetooth_devices": {},
   "trip_log": [
     {
-      "date": "May 18 2026",
-      "time": "01:08 AM",
+      "date": "May 20 2026",
+      "time": "07:03 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -104,8 +104,8 @@
       "weather": "70F clear"
     },
     {
-      "date": "May 18 2026",
-      "time": "01:08 AM",
+      "date": "May 20 2026",
+      "time": "07:03 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,17 +121,17 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "May 18 2026 01:08 AM"
+      "registered_at": "May 20 2026 07:03 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "May 18 2026 01:08 AM"
+      "registered_at": "May 20 2026 07:03 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "May 18 2026 01:08 AM"
+      "registered_at": "May 20 2026 07:03 PM"
     }
   },
   "build_tracker": {
@@ -280,8 +280,8 @@
   "fuel_tank": {
     "capacity_gal": 26.0,
     "current_gal": 20.0,
-    "e85_gal": 16.4,
-    "regular_gal": 3.6,
+    "e85_gal": 0.0,
+    "regular_gal": 20.0,
     "mpg_current": 12.5,
     "mpg_session": 0.0,
     "range_est": 0,
