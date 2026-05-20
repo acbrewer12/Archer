@@ -589,13 +589,13 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ DRIVE (safety) ══════════ -->
     <div class="screen active" id="screen-drive">
-      <div class="drive-speed" id="dr-speed">42</div>
+      <div class="drive-speed" id="dr-speed">0</div>
       <div class="drive-speed-unit">MPH</div>
 
       <div class="drive-rpm-row">
         <div>
           <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">RPM</div>
-          <div class="drive-rpm-num" id="dr-rpm">3842</div>
+          <div class="drive-rpm-num" id="dr-rpm">750</div>
         </div>
         <div class="drive-rpm-wrap">
           <div class="drive-rpm-bar">
@@ -615,7 +615,7 @@ body.day{background:#0d0d0d}
       <div class="drive-boost-row">
         <div>
           <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">BOOST</div>
-          <div class="drive-boost-num" id="dr-boost">9 <span style="font-size:14px;color:var(--label)">PSI</span></div>
+          <div class="drive-boost-num" id="dr-boost">0 <span style="font-size:14px;color:var(--label)">PSI</span></div>
         </div>
         <div style="flex:1;margin:0 10px">
           <div class="drive-boost-bar">
@@ -637,7 +637,7 @@ body.day{background:#0d0d0d}
           <div class="drive-stat-lbl">BATT</div>
         </div>
         <div class="drive-stat">
-          <div class="drive-stat-val" style="color:var(--blue)" id="dr-eth">84%</div>
+          <div class="drive-stat-val" style="color:var(--blue)" id="dr-eth">0%</div>
           <div class="drive-stat-lbl">E85</div>
         </div>
         <div class="drive-stat">
@@ -658,7 +658,7 @@ body.day{background:#0d0d0d}
         </div>
         <div class="drive-cond">
           <div class="drive-cond-lbl">CONDITIONS</div>
-          <div class="drive-cond-val">Salem MO — 68°F — Clear</div>
+          <div class="drive-cond-val" id="dr-conditions">Salem MO — --°F — --</div>
         </div>
       </div>
     </div>
@@ -668,12 +668,12 @@ body.day{background:#0d0d0d}
       <div class="dash-big">
         <div class="dash-big-box">
           <div class="dash-big-lbl">SPEED</div>
-          <div class="dash-big-num" style="color:var(--text)" id="da-speed">42</div>
+          <div class="dash-big-num" style="color:var(--text)" id="da-speed">0</div>
           <div class="dash-big-unit">MPH</div>
         </div>
         <div class="dash-big-box">
           <div class="dash-big-lbl">RPM</div>
-          <div class="dash-big-num" style="color:var(--text)" id="da-rpm">3842</div>
+          <div class="dash-big-num" style="color:var(--text)" id="da-rpm">750</div>
           <div class="dash-big-unit">×1000</div>
         </div>
       </div>
@@ -685,7 +685,7 @@ body.day{background:#0d0d0d}
       <div class="box" style="display:flex;align-items:center;gap:10px">
         <div>
           <div class="lbl">BOOST</div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--orange);line-height:1" id="da-boost">9</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--orange);line-height:1" id="da-boost">0</div>
           <div style="font-size:9px;color:var(--label)">PSI</div>
         </div>
         <div style="flex:1">
@@ -700,7 +700,7 @@ body.day{background:#0d0d0d}
       <div class="row4">
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="da-oil">205°</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">BATT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--green)" id="da-bat">14.2V</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">84%</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">0%</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)" id="da-mode">SPORT</div></div>
       </div>
       <div class="box" style="display:flex;align-items:center;gap:8px">
@@ -720,8 +720,8 @@ body.day{background:#0d0d0d}
         <div class="thick-bar"><div class="thick-fill" id="pf-boost-bar" style="width:0%;background:var(--orange)"></div></div>
         <div class="metric-row"><span>THROTTLE</span><span style="color:var(--text)" id="pf-throttle">0%</span></div>
         <div class="thick-bar"><div class="thick-fill" id="pf-throttle-bar" style="width:0%;background:#888"></div></div>
-        <div class="metric-row"><span>E85</span><span style="color:var(--blue)" id="pf-eth">82%</span></div>
-        <div class="thick-bar"><div class="thick-fill" id="pf-eth-bar" style="width:82%;background:var(--blue)"></div></div>
+        <div class="metric-row"><span>E85</span><span style="color:var(--blue)" id="pf-eth">0%</span></div>
+        <div class="thick-bar"><div class="thick-fill" id="pf-eth-bar" style="width:0%;background:var(--blue)"></div></div>
       </div>
       <div class="perf-stats">
         <div class="perf-stat"><div class="perf-stat-val" style="color:var(--red)" id="pf-stat-best">—</div><div class="perf-stat-lbl">BEST 0-60</div></div>
@@ -774,12 +774,12 @@ body.day{background:#0d0d0d}
       <div class="health-item"><span class="health-name">BATTERY</span><span class="health-val hok" id="hl-bat-val">14.2V ✓</span><span class="hdot dok" id="hl-bat-dot"></span></div>
       <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok" id="hl-clt-val">190°F ✓</span><span class="hdot dok" id="hl-clt-dot"></span></div>
       <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn" id="hl-trans-val">162°F !</span><span class="hdot dwarn" id="hl-trans-dot"></span></div>
-      <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hwarn">LOW !</span><span class="hdot dwarn"></span></div>
+      <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hok" id="hl-fuel-val">-- GAL ✓</span><span class="hdot dok" id="hl-fuel-dot"></span></div>
       <div class="health-item"><span class="health-name">TIRE PRESSURE</span><span class="health-val hok">34/34/34/34 ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">FAULT CODES</span><span class="health-val hok">NONE ✓</span><span class="hdot dok"></span></div>
+      <div class="health-item"><span class="health-name">FAULT CODES</span><span class="health-val hok" id="hl-fault-val">NONE ✓</span><span class="hdot dok" id="hl-fault-dot"></span></div>
       <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok" id="hl-knock-val">NONE ✓</span><span class="hdot dok" id="hl-knock-dot"></span></div>
       <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok" id="hl-afr-val">14.7 ✓</span><span class="hdot dok" id="hl-afr-dot"></span></div>
-      <div class="health-item" style="background:#0d0000;border-color:#330000"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hbad">HEAT SOAK ✗</span><span class="hdot dbad"></span></div>
+      <div class="health-item" id="hl-intercooler-row" style="display:none"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hok" id="hl-intercooler-val">OK ✓</span><span class="hdot dok" id="hl-intercooler-dot"></span></div>
     </div>
 
     <!-- ══════════ LAUNCH ══════════ -->
@@ -797,9 +797,9 @@ body.day{background:#0d0d0d}
         <div class="launch-box"><div class="launch-val" style="color:var(--yellow)">3500</div><div class="launch-lbl">HOLD RPM</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)">ON</div><div class="launch-lbl">TC STATUS</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--blue)" id="lc-eth">84%</div><div class="launch-lbl">E85</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--text)">8.4s</div><div class="launch-lbl">BEST 0-60</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--orange)">9 PSI</div><div class="launch-lbl">BOOST</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--green)">68°F</div><div class="launch-lbl">AIR TEMP</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--text)" id="lc-best060">—</div><div class="launch-lbl">BEST 0-60</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--orange)" id="lc-boost">0 PSI</div><div class="launch-lbl">BOOST</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--green)" id="lc-airtemp">--°F</div><div class="launch-lbl">AIR TEMP</div></div>
       </div>
       <div class="launch-btn" onclick="this.style.background='#330000'" onmouseup="this.style.background='#1a0000'">⚡ LAUNCH ARMED — FLOOR IT</div>
     </div>
@@ -881,10 +881,10 @@ body.day{background:#0d0d0d}
     <!-- ══════════ BUILD ══════════ -->
     <div class="screen" id="screen-build">
       <div class="row4">
-        <div class="build-stat"><div class="build-val" style="color:var(--green)">$0</div><div class="build-lbl">SPENT</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">PARTS</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--green)" id="bld-spent">$0</div><div class="build-lbl">SPENT</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--text)" id="bld-parts">0</div><div class="build-lbl">PARTS</div></div>
         <div class="build-stat"><div class="build-val" style="color:var(--red)" id="bld-hp">300</div><div class="build-lbl">EST HP</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--text)">0</div><div class="build-lbl">ODO</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--text)" id="bld-odo">0</div><div class="build-lbl">ODO</div></div>
       </div>
       <div class="box">
         <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-bottom:4px"><span>2026 START</span><span>2031 TARGET</span></div>
@@ -904,7 +904,7 @@ body.day{background:#0d0d0d}
       </div>
       <div class="box">
         <div class="lbl">FAULT CODES</div>
-        <div style="font-size:11px;color:var(--green);font-family:'Share Tech Mono',monospace;margin-top:2px">No active codes</div>
+        <div style="font-size:11px;font-family:'Share Tech Mono',monospace;margin-top:2px" id="bld-fault-text" style="color:var(--green)">No active codes</div>
       </div>
       <div class="box">
         <div class="lbl" style="margin-bottom:6px">PASSENGER REQUEST LOG</div>
@@ -1586,6 +1586,52 @@ async function pollLive() {
     if (d.drive_quality != null) set('pf-stat-score', d.drive_quality);
     if (d.best_060 && d.best_060 > 0) set('pf-stat-best', d.best_060 + 's');
     if (d.est_hp != null) set('bld-hp', d.est_hp);
+
+    // ── DRIVE tab — CONDITIONS (weather + road) ──────────────
+    if (d.weather && d.road) {
+      set('dr-conditions', (d.road !== 'None' ? d.road + ' — ' : 'Salem MO — ') + d.weather);
+    } else if (d.weather) {
+      set('dr-conditions', 'Salem MO — ' + d.weather);
+    }
+
+    // ── LAUNCH tab ───────────────────────────────────────────
+    if (d.best_060 && d.best_060 > 0) set('lc-best060', d.best_060 + 's');
+    if (d.boost    != null) set('lc-boost', Math.round(d.boost) + ' PSI');
+    const tempMatch = d.weather ? d.weather.match(/^(\d+)F/) : null;
+    if (tempMatch) set('lc-airtemp', tempMatch[1] + '°F');
+
+    // ── BUILD tab ────────────────────────────────────────────
+    if (d.build_spent != null) set('bld-spent', '$' + Math.round(d.build_spent).toLocaleString());
+    if (d.build_parts != null) set('bld-parts', d.build_parts);
+    if (d.odometer    != null) set('bld-odo', Math.round(d.odometer).toLocaleString());
+    const faultEl = document.getElementById('bld-fault-text');
+    if (faultEl && d.fault_count != null) {
+      faultEl.textContent = d.fault_count > 0 ? d.fault_count + ' ACTIVE' : 'No active codes';
+      faultEl.style.color = d.fault_count > 0 ? 'var(--red)' : 'var(--green)';
+    }
+
+    // ── HEALTH tab — FUEL LEVEL ──────────────────────────────
+    if (d.fuel_gal != null) {
+      const fPct  = d.fuel_pct || 0;
+      const fStat = fPct < 15 ? 'hbad' : fPct < 30 ? 'hwarn' : 'hok';
+      const fDot  = fPct < 15 ? 'dbad' : fPct < 30 ? 'dwarn' : 'dok';
+      const fText = fPct < 15 ? `${d.fuel_gal} GAL ✗` : fPct < 30 ? `${d.fuel_gal} GAL !` : `${d.fuel_gal} GAL ✓`;
+      const fv = document.getElementById('hl-fuel-val'), fd = document.getElementById('hl-fuel-dot');
+      if (fv) { fv.textContent = fText; fv.className = 'health-val ' + fStat; }
+      if (fd) fd.className = 'hdot ' + fDot;
+    }
+
+    // ── HEALTH tab — FAULT CODES ─────────────────────────────
+    if (d.fault_count != null) {
+      const fc = d.fault_count, hfv = document.getElementById('hl-fault-val'), hfd = document.getElementById('hl-fault-dot');
+      if (hfv) { hfv.textContent = fc > 0 ? fc + ' CODE' + (fc > 1 ? 'S ✗' : ' ✗') : 'NONE ✓'; hfv.className = 'health-val ' + (fc > 0 ? 'hbad' : 'hok'); }
+      if (hfd) hfd.className = 'hdot ' + (fc > 0 ? 'dbad' : 'dok');
+    }
+
+    // ── HEALTH tab — INTERCOOLER (Phase 2+ only) ─────────────
+    const icRow = document.getElementById('hl-intercooler-row');
+    if (icRow) icRow.style.display = (d.build_caps && d.build_caps.supercharged) ? 'flex' : 'none';
+
     // LIVE tab — ENGINE sensors
     if (sd.afr         != null) set('lv-afr',    sd.afr);
     if (sd.timing_deg  != null) set('lv-timing', sd.timing_deg + '°');

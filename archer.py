@@ -1070,6 +1070,11 @@ def get_display_data():
         'radar_alert':   truck_state.get('radar_alert', False),
         'beamng_active': beamng_state['connected'],
         'beamng_car':    beamng_state['car'],
+        'fuel_gal':      round(fuel_tank['current_gal'], 1),
+        'fuel_pct':      round(fuel_tank['current_gal'] / fuel_tank['capacity_gal'] * 100),
+        'fuel_range':    fuel_tank['range_est'],
+        'fuel_low':      fuel_tank['current_gal'] <= fuel_tank['low_fuel_warn'],
+        'build_caps':    get_build_caps(),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -2250,8 +2255,8 @@ def check_heat_soak():
 fuel_tank = {
     'capacity_gal':   26.0,     # Sierra 2500HD tank
     'current_gal':    20.0,
-    'e85_gal':        16.4,     # 82% E85 blend
-    'regular_gal':    3.6,
+    'e85_gal':        0.0,      # Phase 1 — pump gas only
+    'regular_gal':    20.0,
     'mpg_current':    12.5,
     'mpg_session':    0.0,
     'range_est':      0,
