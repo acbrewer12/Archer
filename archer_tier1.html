@@ -1701,7 +1701,6 @@ async function pollLive() {
     if (sd.trans_temp  != null) set('lv-trans',   Math.round(sd.trans_temp) + '°');
     if (sd.alternator_v!= null) set('lv-alt',     sd.alternator_v + 'V');
     if (sd.gear_pos    != null) set('lv-gear',    sd.gear_pos);
-    if (d.ethanol      != null) set('lv-eth',     Math.round(d.ethanol) + '%');
     if (d.oil_temp     != null) set('lv-oil',     Math.round(d.oil_temp) + '°');
     if (d.coolant      != null) set('lv-coolant', Math.round(d.coolant) + '°');
     // LIVE tab — G-FORCE
