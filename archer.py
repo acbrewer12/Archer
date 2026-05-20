@@ -750,30 +750,54 @@ weather = {
     'temp': 70, 'condition': 'clear', 'raining': False,
     'freezing': False, 'snowing': False, 'wind': 5, 'last_update': 0,
 }
+_nws_station_url = None  # cached after first lookup
 
 def get_weather():
+    global _nws_station_url
     try:
-        url = "https://api.open-meteo.com/v1/forecast?latitude=37.6456&longitude=-91.5362&current=temperature_2m,precipitation,windspeed_10m,weathercode&temperature_unit=fahrenheit&windspeed_unit=mph"
-        with urllib.request.urlopen(url, timeout=5) as response:
-            data    = json.loads(response.read())
-            current = data['current']
-            temp    = current['temperature_2m']
-            precip  = current['precipitation']
-            wind    = current['windspeed_10m']
-            code    = current['weathercode']
-            if code == 0:                           condition = 'clear'
-            elif code in [1, 2, 3]:                 condition = 'partly cloudy'
-            elif code in [51,53,55,61,63,65,80,81,82]: condition = 'raining'
-            elif code in [71,73,75,77,85,86]:       condition = 'snowing'
-            elif code in [95, 96, 99]:              condition = 'thunderstorm'
-            else:                                   condition = 'cloudy'
-            return {
-                'temp': round(temp), 'precip': precip, 'wind': round(wind),
-                'condition': condition,
-                'raining': precip > 0 or condition in ['raining', 'thunderstorm'],
-                'freezing': temp < 32, 'snowing': condition == 'snowing',
-            }
+        # NWS observation API — same source as The Weather Channel for US locations
+        if not _nws_station_url:
+            pts_url = 'https://api.weather.gov/points/37.6456,-91.5362'
+            req = urllib.request.Request(pts_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                pts = json.loads(r.read())
+            stations_url = pts['properties']['observationStations']
+            req2 = urllib.request.Request(stations_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
+            with urllib.request.urlopen(req2, timeout=6) as r:
+                stations = json.loads(r.read())
+            _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
+
+        obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+        req3 = urllib.request.Request(obs_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
+        with urllib.request.urlopen(req3, timeout=6) as r:
+            obs = json.loads(r.read())
+
+        props   = obs['properties']
+        temp_c  = props['temperature']['value']
+        temp_f  = round(temp_c * 9 / 5 + 32) if temp_c is not None else weather['temp']
+        desc    = (props.get('textDescription') or '').lower()
+        wind_ms = props['windSpeed']['value'] or 0
+        wind_mph = round(wind_ms * 2.237)
+
+        if 'thunder' in desc:                              condition = 'thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:         condition = 'snowing'
+        elif any(w in desc for w in ('rain','shower','drizzle','storm')): condition = 'raining'
+        elif 'overcast' in desc:                           condition = 'cloudy'
+        elif any(w in desc for w in ('partly','mostly cloudy','increasing')): condition = 'partly cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): condition = 'clear'
+        else:                                              condition = 'cloudy'
+
+        return {
+            'temp':      temp_f,
+            'condition': condition,
+            'wind':      wind_mph,
+            'precip':    0,
+            'raining':   condition in ('raining', 'thunderstorm'),
+            'freezing':  temp_f < 32,
+            'snowing':   condition == 'snowing',
+        }
     except Exception:
+        _nws_station_url = None  # reset so next call re-discovers station
         return weather
 
 # ── CASUAL CONVERSATION ──────────────────
@@ -3105,23 +3129,12 @@ def get_weather_radar_url():
 
 def get_detailed_weather():
     try:
-        url = 'https://api.open-meteo.com/v1/forecast?latitude=37.64&longitude=-91.54&current=temperature_2m,weathercode,windspeed_10m,precipitation,visibility&hourly=temperature_2m,precipitation_probability&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=America%2FChicago&forecast_days=1'
-        with urllib.request.urlopen(url, timeout=5) as r:
-            data = json.loads(r.read())
-            curr = data['current']
-            hourly = data.get('hourly', {})
-            temp   = round(curr['temperature_2m'])
-            wind   = round(curr['windspeed_10m'])
-            precip = curr.get('precipitation', 0)
-            vis    = curr.get('visibility', 10000)
-            # Next 3 hours precip probability
-            prec_prob = hourly.get('precipitation_probability', [0,0,0])[:3]
-            avg_prob  = sum(prec_prob) // len(prec_prob) if prec_prob else 0
-            result = f'{temp}F, wind {wind} MPH'
-            if precip > 0: result += f', {precip}mm precip'
-            if avg_prob > 30: result += f', {avg_prob}% rain chance next 3hrs'
-            if vis < 5000: result += ', low visibility'
-            return result
+        # Reuse the latest NWS observation already in weather dict
+        w = weather
+        result = f'{w["temp"]}F, wind {w["wind"]} MPH, {w["condition"]}'
+        if w['raining']:  result += ', precipitation'
+        if w['freezing']: result += ', below freezing'
+        return result
     except:
         return f'{weather["temp"]}F {weather["condition"]}'
 
