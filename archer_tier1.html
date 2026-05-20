@@ -1585,6 +1585,9 @@ let targetData = Object.assign({}, liveData);
 targetData.radarActive = false;
 let isSupercharged = false;   // set by pollLive when build_caps arrives
 let octaneDisplay  = 87;      // set by pollLive from d.octane
+let dragStaged    = false;
+let dragRunStart  = null;
+let lastDragStage = 'idle';
 
 async function pollLive() {
   try {
@@ -2307,9 +2310,6 @@ async function setShow(btn, mode) {
   } catch(e) {}
 }
 
-let dragStaged    = false;
-let dragRunStart  = null;   // Date.now() when running starts, for live ET counter
-let lastDragStage = 'idle'; // track transitions to clear splits on re-stage
 async function launchControl() {
   const btn = document.getElementById('launch-btn');
   if (!dragStaged) {
