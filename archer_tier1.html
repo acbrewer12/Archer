@@ -612,17 +612,32 @@ body.day{background:#0d0d0d}
         </div>
       </div>
 
-      <div class="drive-boost-row">
+      <!-- Phase 1: coolant row. Phase 2+: boost row. Toggled by pollLive -->
+      <div class="drive-boost-row" id="dr-boost-row" style="display:none">
         <div>
           <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">BOOST</div>
           <div class="drive-boost-num" id="dr-boost">0 <span style="font-size:14px;color:var(--label)">PSI</span></div>
         </div>
         <div style="flex:1;margin:0 10px">
           <div class="drive-boost-bar">
-            <div class="drive-boost-fill" id="dr-boost-bar" style="width:47%"></div>
+            <div class="drive-boost-fill" id="dr-boost-bar" style="width:0%"></div>
           </div>
           <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace">
             <span>-10</span><span>0</span><span>+15</span><span>+30</span>
+          </div>
+        </div>
+      </div>
+      <div class="drive-boost-row" id="dr-coolant-row">
+        <div>
+          <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">COOLANT</div>
+          <div class="drive-boost-num" id="dr-coolant-big">190°F</div>
+        </div>
+        <div style="flex:1;margin:0 10px">
+          <div class="drive-boost-bar">
+            <div class="drive-boost-fill" id="dr-coolant-bar" style="width:30%;background:var(--blue)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace">
+            <span>100</span><span>180</span><span>210</span><span>240</span>
           </div>
         </div>
       </div>
@@ -637,8 +652,8 @@ body.day{background:#0d0d0d}
           <div class="drive-stat-lbl">BATT</div>
         </div>
         <div class="drive-stat">
-          <div class="drive-stat-val" style="color:var(--blue)" id="dr-eth">0%</div>
-          <div class="drive-stat-lbl">E85</div>
+          <div class="drive-stat-val" style="color:var(--blue)" id="dr-eth">87</div>
+          <div class="drive-stat-lbl">OCT</div>
         </div>
         <div class="drive-stat">
           <div class="drive-stat-val" style="color:var(--red)" id="dr-mode">SPORT</div>
@@ -682,15 +697,31 @@ body.day{background:#0d0d0d}
           <div class="bar-fill" id="da-rpm-bar" style="width:62%;background:linear-gradient(90deg,var(--green),var(--yellow),var(--red))"></div>
         </div>
       </div>
-      <div class="box" style="display:flex;align-items:center;gap:10px">
+      <!-- Phase 1: coolant row. Phase 2+: boost row. Toggled by pollLive -->
+      <div class="box" id="da-boost-row" style="display:none;align-items:center;gap:10px">
         <div>
           <div class="lbl">BOOST</div>
           <div style="font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--orange);line-height:1" id="da-boost">0</div>
           <div style="font-size:9px;color:var(--label)">PSI</div>
         </div>
         <div style="flex:1">
-          <div class="bar-bg"><div class="bar-fill" id="da-boost-bar" style="width:47%;background:var(--orange)"></div></div>
+          <div class="bar-bg"><div class="bar-fill" id="da-boost-bar" style="width:0%;background:var(--orange)"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace"><span>-10</span><span>0</span><span>+15</span><span>+30</span></div>
+        </div>
+        <div style="text-align:center">
+          <div class="lbl">GEAR</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--text);line-height:1" id="da-gear-boost">3</div>
+        </div>
+      </div>
+      <div class="box" id="da-coolant-row" style="display:flex;align-items:center;gap:10px">
+        <div>
+          <div class="lbl">COOLANT</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--blue);line-height:1" id="da-coolant">190</div>
+          <div style="font-size:9px;color:var(--label)">°F</div>
+        </div>
+        <div style="flex:1">
+          <div class="bar-bg"><div class="bar-fill" id="da-coolant-bar" style="width:30%;background:var(--blue)"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:6px;color:var(--label);margin-top:2px;font-family:'Share Tech Mono',monospace"><span>100</span><span>180</span><span>210</span><span>240</span></div>
         </div>
         <div style="text-align:center">
           <div class="lbl">GEAR</div>
@@ -700,7 +731,7 @@ body.day{background:#0d0d0d}
       <div class="row4">
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="da-oil">205°</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">BATT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--green)" id="da-bat">14.2V</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">E85</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">0%</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OCT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="da-eth">87</div></div>
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">MODE</div><div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--red)" id="da-mode">SPORT</div></div>
       </div>
       <div class="box" style="display:flex;align-items:center;gap:8px">
@@ -720,7 +751,7 @@ body.day{background:#0d0d0d}
         <div class="thick-bar"><div class="thick-fill" id="pf-boost-bar" style="width:0%;background:var(--orange)"></div></div>
         <div class="metric-row"><span>THROTTLE</span><span style="color:var(--text)" id="pf-throttle">0%</span></div>
         <div class="thick-bar"><div class="thick-fill" id="pf-throttle-bar" style="width:0%;background:#888"></div></div>
-        <div class="metric-row"><span>E85</span><span style="color:var(--blue)" id="pf-eth">0%</span></div>
+        <div class="metric-row"><span>OCT</span><span style="color:var(--blue)" id="pf-eth">87</span></div>
         <div class="thick-bar"><div class="thick-fill" id="pf-eth-bar" style="width:0%;background:var(--blue)"></div></div>
       </div>
       <div class="perf-stats">
@@ -754,7 +785,7 @@ body.day{background:#0d0d0d}
         <div class="sensor"><div class="sensor-val" style="color:var(--yellow)" id="lv-trans">160°</div><div class="sensor-lbl">TRANS</div></div>
         <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-alt">14.2V</div><div class="sensor-lbl">ALT</div></div>
         <div class="sensor"><div class="sensor-val" style="color:var(--text)" id="lv-gear">1</div><div class="sensor-lbl">GEAR</div></div>
-        <div class="sensor"><div class="sensor-val" style="color:var(--blue)" id="lv-eth">82%</div><div class="sensor-lbl">E85</div></div>
+        <div class="sensor"><div class="sensor-val" style="color:var(--blue)" id="lv-eth">87</div><div class="sensor-lbl">OCT</div></div>
         <div class="sensor"><div class="sensor-val" style="color:var(--yellow)" id="lv-oil">195°</div><div class="sensor-lbl">OIL °F</div></div>
         <div class="sensor"><div class="sensor-val" style="color:var(--green)" id="lv-coolant">190°</div><div class="sensor-lbl">COOLANT</div></div>
       </div>
@@ -796,9 +827,10 @@ body.day{background:#0d0d0d}
       <div class="launch-grid">
         <div class="launch-box"><div class="launch-val" style="color:var(--yellow)">3500</div><div class="launch-lbl">HOLD RPM</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)">ON</div><div class="launch-lbl">TC STATUS</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--blue)" id="lc-eth">84%</div><div class="launch-lbl">E85</div></div>
+        <div class="launch-box"><div class="launch-val" style="color:var(--blue)" id="lc-eth">87</div><div class="launch-lbl">OCT</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--text)" id="lc-best060">—</div><div class="launch-lbl">BEST 0-60</div></div>
-        <div class="launch-box"><div class="launch-val" style="color:var(--orange)" id="lc-boost">0 PSI</div><div class="launch-lbl">BOOST</div></div>
+        <div class="launch-box" id="lc-boost-box" style="display:none"><div class="launch-val" style="color:var(--orange)" id="lc-boost">0 PSI</div><div class="launch-lbl">BOOST</div></div>
+        <div class="launch-box" id="lc-coolant-box"><div class="launch-val" style="color:var(--blue)" id="lc-coolant-launch">190°F</div><div class="launch-lbl">COOLANT</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)" id="lc-airtemp">--°F</div><div class="launch-lbl">AIR TEMP</div></div>
       </div>
       <div class="launch-btn" onclick="this.style.background='#330000'" onmouseup="this.style.background='#1a0000'">⚡ LAUNCH ARMED — FLOOR IT</div>
@@ -818,7 +850,7 @@ body.day{background:#0d0d0d}
       <div class="track-sum">
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)">112</div><div class="track-sum-lbl">TRAP MPH</div></div>
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--orange)">9</div><div class="track-sum-lbl">BOOST PSI</div></div>
-        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-eth">84%</div><div class="track-sum-lbl">E85</div></div>
+        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-eth">87</div><div class="track-sum-lbl">OCT</div></div>
       </div>
     </div>
 
@@ -857,10 +889,10 @@ body.day{background:#0d0d0d}
       </div>
       <div class="graph-card">
         <div class="graph-header">
-          <span class="graph-title-txt">BOOST HISTORY</span>
-          <span class="graph-peak" style="color:var(--orange)" id="g-boost-peak">PEAK: --</span>
+          <span class="graph-title-txt">COOLANT HISTORY</span>
+          <span class="graph-peak" style="color:var(--blue)" id="g-coolant-peak">PEAK: --</span>
         </div>
-        <canvas id="g-boost" width="320" height="52"></canvas>
+        <canvas id="g-coolant" width="320" height="52"></canvas>
       </div>
       <div class="graph-card">
         <div class="graph-header">
@@ -1547,9 +1579,11 @@ function setArcherMsg(text) {
 // ─── LIVE DATA ───
 // liveData = what's currently displayed (animated)
 // targetData = last value received from the server
-let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:82, knock:0, coolant:190, transTemp:160, afr:14.7 };
+let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:0, knock:0, coolant:190, transTemp:160, afr:14.7 };
 let targetData = Object.assign({}, liveData);
 targetData.radarActive = false;
+let isSupercharged = false;   // set by pollLive when build_caps arrives
+let octaneDisplay  = 87;      // set by pollLive from d.octane
 
 async function pollLive() {
   try {
@@ -1632,6 +1666,30 @@ async function pollLive() {
     const icRow = document.getElementById('hl-intercooler-row');
     if (icRow) icRow.style.display = (d.build_caps && d.build_caps.supercharged) ? 'flex' : 'none';
 
+    // ── Phase toggle: boost vs coolant rows ───────────────────
+    const sc = d.build_caps && d.build_caps.supercharged;
+    isSupercharged = !!sc;
+    const drBR = document.getElementById('dr-boost-row'),   drCR = document.getElementById('dr-coolant-row');
+    const daBR = document.getElementById('da-boost-row'),   daCR = document.getElementById('da-coolant-row');
+    const lcBB = document.getElementById('lc-boost-box'),   lcCB = document.getElementById('lc-coolant-box');
+    if (drBR) drBR.style.display = sc ? 'flex' : 'none';
+    if (drCR) drCR.style.display = sc ? 'none' : 'flex';
+    if (daBR) daBR.style.display = sc ? 'flex' : 'none';
+    if (daCR) daCR.style.display = sc ? 'none' : 'flex';
+    if (lcBB) lcBB.style.display = sc ? 'flex' : 'none';
+    if (lcCB) lcCB.style.display = sc ? 'none' : 'flex';
+
+    // ── OCT / E85 display: octane in Phase 1, ethanol % in Phase 2+ ──
+    const hasEthSensor = d.build_caps && d.build_caps.ethanol_sensor;
+    // d.octane may be "87 AKI" — extract just the number
+    if (d.octane != null) octaneDisplay = parseInt(String(d.octane), 10) || 87;
+    const ethVal = d.ethanol != null ? Math.round(d.ethanol) + '%' : '0%';
+    const fuelDisplay = hasEthSensor ? ethVal : octaneDisplay;
+    ['dr-eth','da-eth','pf-eth','lv-eth','lc-eth','tk-eth'].forEach(id => set(id, fuelDisplay));
+
+    // ── LAUNCH coolant value ──────────────────────────────────
+    if (!sc && d.coolant != null) set('lc-coolant-launch', Math.round(d.coolant) + '°F');
+
     // LIVE tab — ENGINE sensors
     if (sd.afr         != null) set('lv-afr',    sd.afr);
     if (sd.timing_deg  != null) set('lv-timing', sd.timing_deg + '°');
@@ -1685,22 +1743,32 @@ function update() {
   setWidth('dr-boost-bar', bPct);
   const bfill = document.getElementById('dr-boost-bar');
   if (bfill) { if (liveData.boost > 2) bfill.classList.add('boosting'); else bfill.classList.remove('boosting'); }
+  // DRIVE coolant bar animation
+  const cPct = Math.min(100, Math.max(0, ((liveData.coolant - 100) / 140) * 100));
+  const cColor = liveData.coolant > 220 ? 'var(--red)' : liveData.coolant > 210 ? 'var(--yellow)' : 'var(--blue)';
+  const cText = Math.round(liveData.coolant);
+  set('dr-coolant-big', cText + '°F');
+  setWidth('dr-coolant-bar', cPct);
+  const cBarFill = document.getElementById('dr-coolant-bar'); if (cBarFill) cBarFill.style.background = cColor;
+  // DASH coolant
+  set('da-coolant', cText);
+  setWidth('da-coolant-bar', cPct);
+  const daBarFill = document.getElementById('da-coolant-bar'); if (daBarFill) daBarFill.style.background = cColor;
 
   // DRIVE stats row
   set('dr-oil', Math.round(liveData.oilTemp) + '°');
   set('dr-bat', liveData.battery.toFixed(1) + 'V');
-  set('dr-eth', Math.round(liveData.ethanol) + '%');
 
   // DASH tab
   setStyle('da-speed', Math.round(liveData.speed), 'color', 'var(--text)');
   setStyle('da-rpm', r, 'color', rColor);
   setWidth('da-rpm-bar', rPct);
   set('da-gear', liveData.gear);
+  set('da-gear-boost', liveData.gear);
   set('da-boost', Math.round(liveData.boost));
   setWidth('da-boost-bar', bPct);
   set('da-oil', Math.round(liveData.oilTemp) + '°');
   set('da-bat', liveData.battery.toFixed(1) + 'V');
-  set('da-eth', Math.round(liveData.ethanol) + '%');
 
   // PERF tab bars + stats
   setStyle('pf-rpm', r, 'color', rColor);
@@ -1712,10 +1780,8 @@ function update() {
   setWidth('pf-boost-bar', boostPct);
   set('pf-throttle', Math.round(throttlePct) + '%');
   setWidth('pf-throttle-bar', throttlePct);
-  set('pf-eth', Math.round(liveData.ethanol) + '%');
-  setWidth('pf-eth-bar', liveData.ethanol);
-  set('lc-eth', Math.round(liveData.ethanol) + '%');
-  set('tk-eth', Math.round(liveData.ethanol) + '%');
+  // OCT/E85 bar: Phase 1 = octane (87→87% fill), Phase 2+ = ethanol %
+  setWidth('pf-eth-bar', isSupercharged ? liveData.ethanol : octaneDisplay);
   set('pf-stat-oil', Math.round(liveData.oilTemp) + '°');
   set('pf-stat-speed', Math.round(liveData.speed));
   set('pf-stat-boost', Math.round(liveData.boost));
@@ -1805,32 +1871,32 @@ function drawGraph(id, points, color, max) {
 }
 const GRAPH_LEN = 60;
 const graphRing = {
-  rpm:   new Array(GRAPH_LEN).fill(750),
-  boost: new Array(GRAPH_LEN).fill(0),
-  oil:   new Array(GRAPH_LEN).fill(195),
-  bat:   new Array(GRAPH_LEN).fill(13.8),
+  rpm:     new Array(GRAPH_LEN).fill(750),
+  coolant: new Array(GRAPH_LEN).fill(190),
+  oil:     new Array(GRAPH_LEN).fill(195),
+  bat:     new Array(GRAPH_LEN).fill(13.8),
 };
-const graphPeaks = { rpm:0, boost:0, oil:0 };
+const graphPeaks = { rpm:0, coolant:190, oil:0 };
 function pushGraphData() {
   const push = (arr, v) => { arr.push(v); if (arr.length > GRAPH_LEN) arr.shift(); };
-  push(graphRing.rpm,   liveData.rpm);
-  push(graphRing.boost, liveData.boost);
-  push(graphRing.oil,   liveData.oilTemp);
-  push(graphRing.bat,   liveData.battery);
-  graphPeaks.rpm   = Math.max(graphPeaks.rpm,   liveData.rpm);
-  graphPeaks.boost = Math.max(graphPeaks.boost, liveData.boost);
-  graphPeaks.oil   = Math.max(graphPeaks.oil,   liveData.oilTemp);
+  push(graphRing.rpm,     liveData.rpm);
+  push(graphRing.coolant, liveData.coolant);
+  push(graphRing.oil,     liveData.oilTemp);
+  push(graphRing.bat,     liveData.battery);
+  graphPeaks.rpm     = Math.max(graphPeaks.rpm,     liveData.rpm);
+  graphPeaks.coolant = Math.max(graphPeaks.coolant, liveData.coolant);
+  graphPeaks.oil     = Math.max(graphPeaks.oil,     liveData.oilTemp);
 }
 setInterval(pushGraphData, 2000);
 function drawAllGraphs() {
-  drawGraph('g-rpm',   graphRing.rpm,   '#ffaa00', 6200);
-  drawGraph('g-boost', graphRing.boost, '#ff6600', 20);
-  drawGraph('g-oil',   graphRing.oil,   '#cc0000', 240);
-  drawGraph('g-bat',   graphRing.bat,   '#00cc44', 16);
-  const rp = document.getElementById('g-rpm-peak');   if (rp) rp.textContent = 'PEAK: ' + Math.round(graphPeaks.rpm);
-  const bp = document.getElementById('g-boost-peak'); if (bp) bp.textContent = 'PEAK: ' + Math.round(graphPeaks.boost) + ' PSI';
-  const op = document.getElementById('g-oil-peak');   if (op) op.textContent = 'PEAK: ' + Math.round(graphPeaks.oil) + '°F';
-  const vp = document.getElementById('g-bat-peak');   if (vp) vp.textContent = 'NOW: '  + liveData.battery.toFixed(1) + 'V';
+  drawGraph('g-rpm',     graphRing.rpm,     '#ffaa00', 6200);
+  drawGraph('g-coolant', graphRing.coolant, '#00bbff', 240);
+  drawGraph('g-oil',     graphRing.oil,     '#cc0000', 240);
+  drawGraph('g-bat',     graphRing.bat,     '#00cc44', 16);
+  const rp = document.getElementById('g-rpm-peak');     if (rp) rp.textContent = 'PEAK: ' + Math.round(graphPeaks.rpm);
+  const cp = document.getElementById('g-coolant-peak'); if (cp) cp.textContent = 'PEAK: ' + Math.round(graphPeaks.coolant) + '°F';
+  const op = document.getElementById('g-oil-peak');     if (op) op.textContent = 'PEAK: ' + Math.round(graphPeaks.oil) + '°F';
+  const vp = document.getElementById('g-bat-peak');     if (vp) vp.textContent = 'NOW: '  + liveData.battery.toFixed(1) + 'V';
 }
 setTimeout(drawAllGraphs, 300);
 
