@@ -833,7 +833,7 @@ body.day{background:#0d0d0d}
         <div class="launch-box" id="lc-coolant-box"><div class="launch-val" style="color:var(--blue)" id="lc-coolant-launch">190°F</div><div class="launch-lbl">COOLANT</div></div>
         <div class="launch-box"><div class="launch-val" style="color:var(--green)" id="lc-airtemp">--°F</div><div class="launch-lbl">AIR TEMP</div></div>
       </div>
-      <div class="launch-btn" onclick="this.style.background='#330000'" onmouseup="this.style.background='#1a0000'">⚡ LAUNCH ARMED — FLOOR IT</div>
+      <div class="launch-btn" id="launch-btn" onclick="launchControl()">⚡ LAUNCH ARMED — FLOOR IT</div>
     </div>
 
     <!-- ══════════ TRACK ══════════ -->
@@ -951,8 +951,8 @@ body.day{background:#0d0d0d}
       <div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:10px;font-family:'Rajdhani',sans-serif" id="show-msg">Alright. Watch this.</div>
       <div class="row3" style="width:100%;margin-bottom:8px">
         <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">RPM</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--red)" id="sh-rpm">750</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)">195°</div></div>
-        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">FUEL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)">E82</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OIL</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--yellow)" id="sh-oil">195°</div></div>
+        <div class="box" style="text-align:center;padding:6px 4px"><div class="lbl">OCT</div><div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--blue)" id="sh-oct">87</div></div>
       </div>
       <div class="show-modes" style="width:100%">
         <div class="show-btn on" onclick="setShow(this,'FLEX')">FLEX</div>
@@ -1786,6 +1786,11 @@ function update() {
   set('pf-stat-boost', Math.round(liveData.boost));
   set('pf-stat-gear', liveData.gear);
 
+  // SHOW tab live stats
+  set('sh-rpm', r);
+  set('sh-oil', Math.round(liveData.oilTemp) + '°');
+  set('sh-oct', isSupercharged ? Math.round(liveData.ethanol) + '%' : octaneDisplay);
+
   // Speed lock
   const moving = liveData.speed > 10;
   document.getElementById('speed-lock').classList.toggle('on', moving);
@@ -2221,11 +2226,41 @@ const showMsgs = {
   STALKER:'I see you looking.',KAREN:'May I speak to your manufacturer.',STADIUM:'Good evening Salem.',
   THERAPY:'And how does that make you feel.',GOODBYE:'It\'s been real. Peace.',CONCERT:'Drop the beat.',
 };
-function setShow(btn, mode) {
+async function setShow(btn, mode) {
   document.querySelectorAll('.show-btn').forEach(b => b.classList.remove('on'));
   btn.classList.add('on');
   const msg = document.getElementById('show-msg');
   if (msg) msg.textContent = showMsgs[mode] || 'Activated.';
+  try {
+    const r = await fetch(T1BASE + '/voice_command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: mode.toLowerCase()})
+    });
+    const d = await r.json();
+    if (d.response && msg) msg.textContent = d.response;
+    if (d.response) setArcherMsg(d.response);
+  } catch(e) {}
+}
+
+let dragStaged = false;
+async function launchControl() {
+  const btn = document.getElementById('launch-btn');
+  if (!dragStaged) {
+    dragStaged = true;
+    if (btn) { btn.textContent = '⚡ STAGED — TAP TO LAUNCH'; btn.style.color = 'var(--yellow)'; btn.style.borderColor = 'var(--yellow)'; }
+    try { await fetch(T1BASE + '/drag/stage', {method: 'POST'}); } catch(e) {}
+    setArcherMsg('Staged. Launch when ready.');
+  } else {
+    dragStaged = false;
+    if (btn) { btn.textContent = '🟢 TIMING — FLOOR IT'; btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)'; }
+    try { await fetch(T1BASE + '/drag/launch', {method: 'POST'}); } catch(e) {}
+    setArcherMsg('Launch.');
+    setTimeout(() => setTab('track'), 600);
+    setTimeout(() => {
+      if (btn) { btn.textContent = '⚡ LAUNCH ARMED — FLOOR IT'; btn.style.color = ''; btn.style.borderColor = ''; }
+    }, 16000);
+  }
 }
 
 // Init speech on first interaction

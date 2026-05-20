@@ -6553,6 +6553,16 @@ def voice_command_endpoint():
         return jsonify({'response': 'Give me a second.'})
 
 
+@display_app.route('/drag/stage', methods=['POST'])
+def drag_stage_route():
+    start_drag_run()
+    return jsonify({'ok': True, 'stage': drag_timer['stage']})
+
+@display_app.route('/drag/launch', methods=['POST'])
+def drag_launch_route():
+    msg = launch_drag()
+    return jsonify({'ok': msg is None, 'stage': drag_timer['stage'], 'msg': msg or 'Launched.'})
+
 
 @display_app.route('/register_device', methods=['POST'])
 def register_device_endpoint():
