@@ -849,7 +849,8 @@ body.day{background:#0d0d0d}
       </div>
       <div class="track-sum">
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--yellow)">112</div><div class="track-sum-lbl">TRAP MPH</div></div>
-        <div class="track-sum-box"><div class="track-sum-val" style="color:var(--orange)">9</div><div class="track-sum-lbl">BOOST PSI</div></div>
+        <div class="track-sum-box" id="tk-boost-box" style="display:none"><div class="track-sum-val" style="color:var(--orange)" id="tk-boost">0</div><div class="track-sum-lbl">BOOST PSI</div></div>
+        <div class="track-sum-box" id="tk-coolant-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-coolant">190°F</div><div class="track-sum-lbl">COOLANT</div></div>
         <div class="track-sum-box"><div class="track-sum-val" style="color:var(--blue)" id="tk-eth">87</div><div class="track-sum-lbl">OCT</div></div>
       </div>
     </div>
@@ -1672,12 +1673,16 @@ async function pollLive() {
     const drBR = document.getElementById('dr-boost-row'),   drCR = document.getElementById('dr-coolant-row');
     const daBR = document.getElementById('da-boost-row'),   daCR = document.getElementById('da-coolant-row');
     const lcBB = document.getElementById('lc-boost-box'),   lcCB = document.getElementById('lc-coolant-box');
+    const tkBB = document.getElementById('tk-boost-box'),   tkCB = document.getElementById('tk-coolant-box');
     if (drBR) drBR.style.display = sc ? 'flex' : 'none';
     if (drCR) drCR.style.display = sc ? 'none' : 'flex';
     if (daBR) daBR.style.display = sc ? 'flex' : 'none';
     if (daCR) daCR.style.display = sc ? 'none' : 'flex';
     if (lcBB) lcBB.style.display = sc ? 'flex' : 'none';
     if (lcCB) lcCB.style.display = sc ? 'none' : 'flex';
+    if (tkBB) tkBB.style.display = sc ? 'flex' : 'none';
+    if (tkCB) tkCB.style.display = sc ? 'none' : 'flex';
+    if (!sc && d.coolant != null) set('tk-coolant', Math.round(d.coolant) + '°F');
 
     // ── OCT / E85 display: octane in Phase 1, ethanol % in Phase 2+ ──
     const hasEthSensor = d.build_caps && d.build_caps.ethanol_sensor;
