@@ -300,6 +300,30 @@ body.day{background:#0d0d0d}
 .milestone:last-child{border-bottom:none}
 .ms-done{color:var(--green)}.ms-active{color:var(--yellow)}.ms-pending{color:var(--label)}
 .ms-year{font-size:8px;font-family:'Share Tech Mono',monospace;color:var(--label)}
+.bld-power{background:linear-gradient(135deg,#0d0000,#0d000d);border:1px solid #330000;border-radius:8px;padding:12px;text-align:center;margin-bottom:6px}
+.bld-power-nums{display:flex;justify-content:center;align-items:baseline;gap:14px;margin-bottom:3px}
+.bld-pval{font-family:'Bebas Neue',sans-serif;font-size:54px;line-height:1;color:var(--red)}
+.bld-punit{font-size:8px;font-family:'Share Tech Mono',monospace;color:var(--label);letter-spacing:2px;margin-top:2px}
+.bld-psep{font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--border);align-self:center}
+.bld-wheel{font-size:10px;font-family:'Share Tech Mono',monospace;color:var(--text3);margin-bottom:3px}
+.bld-disclaimer{font-size:7px;color:var(--text3);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.mod-row{display:flex;align-items:center;padding:7px 2px;border-bottom:1px solid var(--border);cursor:pointer;gap:8px}
+.mod-row:last-child{border-bottom:none}
+.mod-row:active{background:var(--bg3);border-radius:4px}
+.mod-chk{font-size:14px;width:16px;text-align:center;flex-shrink:0;color:var(--label)}
+.mod-chk.on{color:var(--green)}
+.mod-name{flex:1;font-family:'Rajdhani',sans-serif;font-weight:600;font-size:11px;color:var(--text)}
+.mod-gain{font-size:9px;font-family:'Share Tech Mono',monospace;color:var(--label);flex-shrink:0}
+.mod-gain.on{color:var(--green)}
+.mod-levels{display:flex;gap:5px;padding:4px 2px 6px 24px}
+.mod-lvl{font-size:8px;font-family:'Share Tech Mono',monospace;padding:4px 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg3);color:var(--label);cursor:pointer;line-height:1.3;text-align:center}
+.mod-lvl.on{border-color:var(--yellow);color:var(--yellow);background:#1a1500}
+.bld-edit-btn{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:3px;color:var(--label);cursor:pointer;margin-top:4px}
+.bld-edit-btn:active{background:var(--bg3)}
+.bld-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.96);z-index:999;display:flex;flex-direction:column;padding:16px;overflow-y:auto}
+.bld-mlbl{font-size:8px;font-family:'Share Tech Mono',monospace;color:var(--label);letter-spacing:2px;margin-bottom:3px}
+.bld-minput{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:11px;box-sizing:border-box;margin-bottom:10px}
+.bld-minput:focus{border-color:var(--red);outline:none}
 
 /* ═══════════════════════════════════════
    SCREEN: SHOW
@@ -913,36 +937,92 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ BUILD ══════════ -->
     <div class="screen" id="screen-build">
-      <div class="row4">
-        <div class="build-stat"><div class="build-val" style="color:var(--green)" id="bld-spent">$0</div><div class="build-lbl">SPENT</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--text)" id="bld-parts">0</div><div class="build-lbl">PARTS</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--red)" id="bld-hp">300</div><div class="build-lbl">EST HP</div></div>
-        <div class="build-stat"><div class="build-val" style="color:var(--text)" id="bld-odo">0</div><div class="build-lbl">ODO</div></div>
-      </div>
-      <div class="box">
-        <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-bottom:4px"><span>2026 START</span><span>2031 TARGET</span></div>
-        <div style="background:var(--bg3);border-radius:3px;height:10px;overflow:hidden;border:1px solid var(--border)">
-          <div style="height:100%;width:18%;background:linear-gradient(90deg,var(--red),var(--orange));border-radius:3px"></div>
+
+      <!-- Power Banner -->
+      <div class="bld-power">
+        <div style="font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:6px">ESTIMATED POWER — LQ4 6.0L</div>
+        <div class="bld-power-nums">
+          <div><div class="bld-pval" id="bld-crank-hp">315</div><div class="bld-punit">CRANK HP</div></div>
+          <div class="bld-psep">/</div>
+          <div><div class="bld-pval" id="bld-crank-tq">365</div><div class="bld-punit">CRANK TQ</div></div>
         </div>
-        <div style="font-size:8px;color:var(--label);text-align:center;margin-top:4px;font-family:'Share Tech Mono',monospace">YEAR 1 OF 5 — 18% COMPLETE</div>
+        <div class="bld-wheel"><span id="bld-wheel-hp">265</span> RWHP &nbsp;/&nbsp; <span id="bld-wheel-tq">307</span> RWTQ &nbsp;(EST ~16% DRIVETRAIN LOSS)</div>
+        <div class="bld-disclaimer">ESTIMATES ONLY — REAL DYNO VARIES WITH TUNE / ALTITUDE / FUEL</div>
       </div>
-      <div class="box">
-        <div class="lbl" style="margin-bottom:6px">MILESTONES</div>
-        <div class="milestone"><span class="ms-done">✓ Engine pulled</span><span class="ms-year">2026</span></div>
-        <div class="milestone"><span class="ms-active">⟶ LSA swap</span><span class="ms-year">2027</span></div>
-        <div class="milestone"><span class="ms-pending">○ Air suspension</span><span class="ms-year">2027</span></div>
-        <div class="milestone"><span class="ms-pending">○ Audio build</span><span class="ms-year">2028</span></div>
-        <div class="milestone"><span class="ms-pending">○ Paint & wrap</span><span class="ms-year">2029</span></div>
-        <div class="milestone"><span class="ms-pending">○ Final reveal</span><span class="ms-year">2031</span></div>
+
+      <!-- Quick Stats -->
+      <div class="row4" style="margin-bottom:6px">
+        <div class="build-stat"><div class="build-val" style="color:var(--green)" id="bld-best-et">--</div><div class="build-lbl">BEST ET</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--yellow)" id="bld-trap-mph">--</div><div class="build-lbl">TRAP MPH</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--red)" id="bld-phase-num">P1</div><div class="build-lbl">PHASE</div></div>
+        <div class="build-stat"><div class="build-val" style="color:var(--text)" id="bld-dyno-val">EST</div><div class="build-lbl">HP SOURCE</div></div>
       </div>
+
+      <!-- Bolt-On Mods -->
       <div class="box">
+        <div class="lbl" style="margin-bottom:4px">BOLT-ONS</div>
+        <div class="mod-row" onclick="toggleMod('cold_air_intake')"><span class="mod-chk" id="chk-cold_air_intake">○</span><span class="mod-name">Cold Air Intake</span><span class="mod-gain" id="gain-cold_air_intake">+8 HP / +6 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('long_tube_headers')"><span class="mod-chk" id="chk-long_tube_headers">○</span><span class="mod-name">Long Tube Headers</span><span class="mod-gain" id="gain-long_tube_headers">+22 HP / +18 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('full_exhaust')"><span class="mod-chk" id="chk-full_exhaust">○</span><span class="mod-name">Full Exhaust System</span><span class="mod-gain" id="gain-full_exhaust">+10 HP / +8 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('intake_manifold')"><span class="mod-chk" id="chk-intake_manifold">○</span><span class="mod-name">Intake Manifold (TBSS / LS3)</span><span class="mod-gain" id="gain-intake_manifold">+18 HP / +14 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('throttle_body_upgrade')"><span class="mod-chk" id="chk-throttle_body_upgrade">○</span><span class="mod-name">Throttle Body Upgrade (90mm+)</span><span class="mod-gain" id="gain-throttle_body_upgrade">+10 HP / +7 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('custom_tune')"><span class="mod-chk" id="chk-custom_tune">○</span><span class="mod-name">Custom Tune</span><span class="mod-gain" id="gain-custom_tune">+15 HP / +15 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('electric_fan')"><span class="mod-chk" id="chk-electric_fan">○</span><span class="mod-name">Electric Fan / Water Pump</span><span class="mod-gain" id="gain-electric_fan">+5 HP / +3 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('underdrive_pulley')"><span class="mod-chk" id="chk-underdrive_pulley">○</span><span class="mod-name">Underdrive Pulley</span><span class="mod-gain" id="gain-underdrive_pulley">+5 HP / +3 TQ</span></div>
+        <div class="mod-row" onclick="toggleMod('wideband_o2')"><span class="mod-chk" id="chk-wideband_o2">○</span><span class="mod-name">Wideband O2 Sensor</span><span class="mod-gain" id="gain-wideband_o2">DATA ONLY</span></div>
+      </div>
+
+      <!-- Power Mods -->
+      <div class="box">
+        <div class="lbl" style="margin-bottom:4px">POWER MODS</div>
+        <div class="mod-row" onclick="toggleMod('cam_swap')"><span class="mod-chk" id="chk-cam_swap">○</span><span class="mod-name">Camshaft Swap</span><span class="mod-gain" id="gain-cam_swap">+65 HP / +51 TQ</span></div>
+        <div id="cam-levels" style="display:none">
+          <div class="mod-levels">
+            <div class="mod-lvl" id="camlvl-1" onclick="setCamLevel(1)">MILD<br><span style="font-size:7px">215–225°</span></div>
+            <div class="mod-lvl" id="camlvl-2" onclick="setCamLevel(2)">MID<br><span style="font-size:7px">228–232°</span></div>
+            <div class="mod-lvl" id="camlvl-3" onclick="setCamLevel(3)">AGGRESSIVE<br><span style="font-size:7px">235°+</span></div>
+          </div>
+        </div>
+        <div class="mod-row" onclick="toggleMod('heads_upgrade')"><span class="mod-chk" id="chk-heads_upgrade">○</span><span class="mod-name">Cylinder Heads Upgrade</span><span class="mod-gain" id="gain-heads_upgrade">+35 HP / +25 TQ</span></div>
+        <div id="heads-levels" style="display:none">
+          <div class="mod-levels">
+            <div class="mod-lvl" id="headslvl-1" onclick="setHeadsLevel(1)">PORTED STOCK<br><span style="font-size:7px">243 / 799</span></div>
+            <div class="mod-lvl" id="headslvl-2" onclick="setHeadsLevel(2)">AFTERMARKET<br><span style="font-size:7px">AFR / PRC / LS3</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit Specs -->
+      <div class="bld-edit-btn" onclick="openBuildEdit()">⚙ EDIT BUILD SPECS</div>
+
+      <!-- Fault Codes -->
+      <div class="box" style="margin-top:6px">
         <div class="lbl">FAULT CODES</div>
-        <div style="font-size:11px;font-family:'Share Tech Mono',monospace;margin-top:2px" id="bld-fault-text" style="color:var(--green)">No active codes</div>
+        <div style="font-size:11px;font-family:'Share Tech Mono',monospace;margin-top:2px;color:var(--green)" id="bld-fault-text">No active codes</div>
       </div>
-      <div class="box">
-        <div class="lbl" style="margin-bottom:6px">PASSENGER REQUEST LOG</div>
-        <div id="t1-request-log"><div style="font-size:10px;color:var(--label)">No requests yet</div></div>
+
+      <!-- Edit Modal -->
+      <div id="build-edit-modal" class="bld-modal" style="display:none;flex-direction:column">
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--red);margin-bottom:12px">EDIT BUILD SPECS</div>
+        <div class="bld-mlbl">DISPLACEMENT</div><input class="bld-minput" id="bedit-displacement" type="text">
+        <div class="bld-mlbl">COMPRESSION RATIO</div><input class="bld-minput" id="bedit-compression" type="number" step="0.1">
+        <div class="bld-mlbl">CYLINDER HEADS</div><input class="bld-minput" id="bedit-heads" type="text">
+        <div class="bld-mlbl">INTAKE MANIFOLD</div><input class="bld-minput" id="bedit-intake" type="text">
+        <div class="bld-mlbl">THROTTLE BODY</div><input class="bld-minput" id="bedit-throttle-body" type="text">
+        <div class="bld-mlbl">TRANSMISSION</div><input class="bld-minput" id="bedit-transmission" type="text">
+        <div class="bld-mlbl">REAR GEAR RATIO</div><input class="bld-minput" id="bedit-rear-gear" type="text">
+        <div class="bld-mlbl">TUNE</div><input class="bld-minput" id="bedit-tune" type="text">
+        <div style="font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin:6px 0 8px">DYNO RESULTS (OVERRIDES ESTIMATE)</div>
+        <div class="bld-mlbl">DYNO RWHP</div><input class="bld-minput" id="bedit-dyno-hp" type="number" placeholder="leave blank to use estimate">
+        <div class="bld-mlbl">DYNO RWTQ</div><input class="bld-minput" id="bedit-dyno-tq" type="number" placeholder="leave blank to use estimate">
+        <div class="bld-mlbl">DYNO DATE</div><input class="bld-minput" id="bedit-dyno-date" type="text" placeholder="e.g. June 2026">
+        <div class="bld-mlbl">BUILD NOTES</div><textarea class="bld-minput" id="bedit-notes" rows="3" placeholder="Notes about your build..."></textarea>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <div class="launch-btn" style="flex:1;font-size:14px;padding:12px" onclick="saveBuildEdit()">SAVE</div>
+          <div class="bld-edit-btn" style="flex:1;margin-top:0;padding:12px" onclick="closeBuildEdit()">CANCEL</div>
+        </div>
       </div>
+
     </div>
 
     <!-- ══════════ SHOW ══════════ -->
@@ -1639,9 +1719,10 @@ async function pollLive() {
     if (tempMatch) set('lc-airtemp', tempMatch[1] + '°F');
 
     // ── BUILD tab ────────────────────────────────────────────
-    if (d.build_spent != null) set('bld-spent', '$' + Math.round(d.build_spent).toLocaleString());
-    if (d.build_parts != null) set('bld-parts', d.build_parts);
-    if (d.odometer    != null) set('bld-odo', Math.round(d.odometer).toLocaleString());
+    if (d.build_specs) updateBuildUI(d.build_specs, d.build_power);
+    if (d.build_phase != null) set('bld-phase-num', 'P' + d.build_phase);
+    if (d.drag_best_et  != null) set('bld-best-et',   d.drag_best_et.toFixed(3));
+    if (d.drag_best_mph != null) set('bld-trap-mph',  d.drag_best_mph);
     const faultEl = document.getElementById('bld-fault-text');
     if (faultEl && d.fault_count != null) {
       faultEl.textContent = d.fault_count > 0 ? d.fault_count + ' ACTIVE' : 'No active codes';
@@ -2308,6 +2389,125 @@ async function setShow(btn, mode) {
     if (d.response && msg) msg.textContent = d.response;
     if (d.response) setArcherMsg(d.response);
   } catch(e) {}
+}
+
+// ── BUILD TAB ─────────────────────────────────────────────
+let buildSpecs = {};
+
+function updateBuildUI(specs, power) {
+  buildSpecs = specs || {};
+  const s = buildSpecs;
+  if (power) {
+    set('bld-crank-hp', power.crank_hp);
+    set('bld-crank-tq', power.crank_tq);
+    set('bld-wheel-hp', power.wheel_hp);
+    set('bld-wheel-tq', power.wheel_tq);
+    set('bld-dyno-val', s.dyno_rwhp ? 'DYNO' : 'EST');
+  }
+  const boolMods = ['cold_air_intake','long_tube_headers','full_exhaust','intake_manifold',
+                    'throttle_body_upgrade','custom_tune','electric_fan','underdrive_pulley',
+                    'wideband_o2','cam_swap','heads_upgrade'];
+  boolMods.forEach(k => {
+    const chk  = document.getElementById('chk-' + k);
+    const gain = document.getElementById('gain-' + k);
+    const on   = !!s[k];
+    if (chk)  { chk.textContent  = on ? '✓' : '○'; chk.className  = 'mod-chk' + (on ? ' on' : ''); }
+    if (gain) { gain.className   = 'mod-gain' + (on ? ' on' : ''); }
+  });
+  const camEl = document.getElementById('cam-levels');
+  if (camEl) camEl.style.display = s.cam_swap ? 'block' : 'none';
+  [1,2,3].forEach(n => { const b = document.getElementById('camlvl-' + n); if (b) b.className = 'mod-lvl' + (s.cam_level == n ? ' on' : ''); });
+  const headsEl = document.getElementById('heads-levels');
+  if (headsEl) headsEl.style.display = s.heads_upgrade ? 'block' : 'none';
+  [1,2].forEach(n => { const b = document.getElementById('headslvl-' + n); if (b) b.className = 'mod-lvl' + (s.heads_level == n ? ' on' : ''); });
+  const camHp = {1:65,2:82,3:100}[s.cam_level||1];
+  const camEl2 = document.getElementById('gain-cam_swap');
+  if (camEl2) camEl2.textContent = `+${camHp} HP / +${Math.round(camHp*0.78)} TQ`;
+  const hHp = {1:35,2:50}[s.heads_level||1];
+  const hEl = document.getElementById('gain-heads_upgrade');
+  if (hEl) hEl.textContent = `+${hHp} HP / +${Math.round(hHp*0.72)} TQ`;
+}
+
+async function toggleMod(key) {
+  buildSpecs[key] = !buildSpecs[key];
+  const chk = document.getElementById('chk-' + key);
+  const on  = buildSpecs[key];
+  if (chk) { chk.textContent = on ? '✓' : '○'; chk.className = 'mod-chk' + (on ? ' on' : ''); }
+  const gain = document.getElementById('gain-' + key);
+  if (gain) gain.className = 'mod-gain' + (on ? ' on' : '');
+  if (key === 'cam_swap')     { const el = document.getElementById('cam-levels');   if (el) el.style.display = on ? 'block' : 'none'; }
+  if (key === 'heads_upgrade'){ const el = document.getElementById('heads-levels'); if (el) el.style.display = on ? 'block' : 'none'; }
+  try {
+    const r = await fetch('/build/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[key]: on})});
+    const d = await r.json();
+    if (d.power) { set('bld-crank-hp', d.power.crank_hp); set('bld-crank-tq', d.power.crank_tq); set('bld-wheel-hp', d.power.wheel_hp); set('bld-wheel-tq', d.power.wheel_tq); }
+  } catch(e) {}
+}
+
+async function setCamLevel(n) {
+  buildSpecs.cam_level = n;
+  [1,2,3].forEach(i => { const b = document.getElementById('camlvl-' + i); if (b) b.className = 'mod-lvl' + (i===n ? ' on' : ''); });
+  const hp = {1:65,2:82,3:100}[n]; const el = document.getElementById('gain-cam_swap');
+  if (el) el.textContent = `+${hp} HP / +${Math.round(hp*0.78)} TQ`;
+  try {
+    const r = await fetch('/build/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cam_level: n})});
+    const d = await r.json();
+    if (d.power) { set('bld-crank-hp', d.power.crank_hp); set('bld-crank-tq', d.power.crank_tq); set('bld-wheel-hp', d.power.wheel_hp); set('bld-wheel-tq', d.power.wheel_tq); }
+  } catch(e) {}
+}
+
+async function setHeadsLevel(n) {
+  buildSpecs.heads_level = n;
+  [1,2].forEach(i => { const b = document.getElementById('headslvl-' + i); if (b) b.className = 'mod-lvl' + (i===n ? ' on' : ''); });
+  const hp = {1:35,2:50}[n]; const el = document.getElementById('gain-heads_upgrade');
+  if (el) el.textContent = `+${hp} HP / +${Math.round(hp*0.72)} TQ`;
+  try {
+    const r = await fetch('/build/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({heads_level: n})});
+    const d = await r.json();
+    if (d.power) { set('bld-crank-hp', d.power.crank_hp); set('bld-crank-tq', d.power.crank_tq); set('bld-wheel-hp', d.power.wheel_hp); set('bld-wheel-tq', d.power.wheel_tq); }
+  } catch(e) {}
+}
+
+function openBuildEdit() {
+  const s = buildSpecs;
+  const f = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  f('bedit-displacement', s.displacement);
+  f('bedit-compression',  s.compression);
+  f('bedit-heads',        s.heads);
+  f('bedit-intake',       s.intake);
+  f('bedit-throttle-body',s.throttle_body_size);
+  f('bedit-transmission', s.transmission);
+  f('bedit-rear-gear',    s.rear_gear);
+  f('bedit-tune',         s.tune);
+  f('bedit-dyno-hp',      s.dyno_rwhp || '');
+  f('bedit-dyno-tq',      s.dyno_rwtq || '');
+  f('bedit-dyno-date',    s.dyno_date);
+  f('bedit-notes',        s.notes);
+  const modal = document.getElementById('build-edit-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeBuildEdit() {
+  const modal = document.getElementById('build-edit-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function saveBuildEdit() {
+  const g = id => document.getElementById(id)?.value || '';
+  const updates = {
+    displacement: g('bedit-displacement'), compression: parseFloat(g('bedit-compression')) || 9.4,
+    heads: g('bedit-heads'), intake: g('bedit-intake'), throttle_body_size: g('bedit-throttle-body'),
+    transmission: g('bedit-transmission'), rear_gear: g('bedit-rear-gear'), tune: g('bedit-tune'),
+    dyno_rwhp: parseFloat(g('bedit-dyno-hp')) || null, dyno_rwtq: parseFloat(g('bedit-dyno-tq')) || null,
+    dyno_date: g('bedit-dyno-date'), notes: g('bedit-notes'),
+  };
+  try {
+    await fetch('/build/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(updates)});
+    Object.assign(buildSpecs, updates);
+    set('bld-dyno-val', updates.dyno_rwhp ? 'DYNO' : 'EST');
+    setArcherMsg('Build specs saved.');
+  } catch(e) {}
+  closeBuildEdit();
 }
 
 async function launchControl() {

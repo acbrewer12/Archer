@@ -385,6 +385,7 @@ def save_state():
         'trip_log':          trip_log,
         'trusted_devices':   trusted_devices,
         'build_tracker':     build_tracker,
+        'build_specs':       build_specs,
         'maintenance_log':   maintenance_log,
         'odometer':          odometer,
         'fault_codes':       fault_codes,
@@ -465,6 +466,7 @@ def load_state():
         build_tracker.update(data.get('build_tracker', {}))
         if 'parts' not in build_tracker: build_tracker['parts'] = []
         if 'mods'  not in build_tracker: build_tracker['mods']  = []
+        build_specs.update(data.get('build_specs', {}))
         maintenance_log.update(data.get('maintenance_log', {}))
         odometer.update(data.get('odometer', {}))
         fault_codes.extend(data.get('fault_codes', []))
@@ -1075,6 +1077,9 @@ def get_display_data():
         'gforce_now':    sensor_data.get('accel_y', 0),
         'drag_best_et':  drag_timer['best_et'],
         'drag_best_mph': drag_timer['best_mph'],
+        'build_specs':   dict(build_specs),
+        'build_power':   estimate_power(),
+        'build_phase':   get_build_phase(),
         'drag_stage':    drag_timer['stage'],
         'drag_splits':   dict(drag_timer['splits']),
         'drag_last_run': drag_timer['runs'][-1] if drag_timer['runs'] else None,
@@ -1471,6 +1476,69 @@ build_tracker = {
 }
 
 CATEGORIES = ['engine','suspension','brakes','wheels','audio','electrical','body','interior','misc']
+
+# ── BUILD SPECS ───────────────────────────
+build_specs = {
+    'displacement':       '6.0L / 364 ci',
+    'block':              'Stock LQ4 Iron',
+    'compression':        9.4,
+    'heads':              'Stock 317 Castings',
+    'intake':             'Stock Truck Manifold',
+    'throttle_body_size': 'Stock 78mm',
+    'fuel_injectors':     'Stock 28 lb/hr',
+    'transmission':       '4L60E',
+    'rear_gear':          '3.73',
+    'tune':               'Stock ECM',
+    # Mod toggles
+    'cold_air_intake':       False,
+    'long_tube_headers':     False,
+    'full_exhaust':          False,
+    'intake_manifold':       False,
+    'throttle_body_upgrade': False,
+    'cam_swap':              False,
+    'cam_level':             1,
+    'heads_upgrade':         False,
+    'heads_level':           1,
+    'wideband_o2':           False,
+    'electric_fan':          False,
+    'underdrive_pulley':     False,
+    'custom_tune':           False,
+    # Dyno override
+    'dyno_rwhp':  None,
+    'dyno_rwtq':  None,
+    'dyno_date':  '',
+    'notes':      '',
+}
+
+def estimate_power():
+    base_hp, base_tq = 315, 365
+    g_hp = g_tq = 0.0
+    s = build_specs
+    if s.get('cold_air_intake'):       g_hp += 8;  g_tq += 6
+    if s.get('long_tube_headers'):     g_hp += 22; g_tq += 18
+    if s.get('full_exhaust'):          g_hp += 10; g_tq += 8
+    if s.get('intake_manifold'):       g_hp += 18; g_tq += 14
+    if s.get('throttle_body_upgrade'): g_hp += 10; g_tq += 7
+    if s.get('electric_fan'):          g_hp += 5;  g_tq += 3
+    if s.get('underdrive_pulley'):     g_hp += 5;  g_tq += 3
+    if s.get('custom_tune'):           g_hp += 15; g_tq += 15
+    if s.get('cam_swap'):
+        lvl  = int(s.get('cam_level', 1))
+        chp  = {1: 65, 2: 82, 3: 100}.get(lvl, 65)
+        if not s.get('long_tube_headers'): chp *= 0.85
+        if not s.get('intake_manifold'):   chp *= 0.90
+        g_hp += chp;  g_tq += chp * 0.78
+    if s.get('heads_upgrade'):
+        lvl  = int(s.get('heads_level', 1))
+        hhp  = {1: 35, 2: 50}.get(lvl, 35)
+        if not s.get('cam_swap'): hhp *= 0.80
+        g_hp += hhp;  g_tq += hhp * 0.72
+    if g_hp > 80:
+        g_hp *= 0.92;  g_tq *= 0.92
+    c_hp = round(base_hp + g_hp)
+    c_tq = round(base_tq + g_tq)
+    return {'crank_hp': c_hp, 'crank_tq': c_tq,
+            'wheel_hp': round(c_hp * 0.84), 'wheel_tq': round(c_tq * 0.84)}
 
 def add_part(name, cost, category='misc', status='pending', notes=''):
     part = {
@@ -6565,6 +6633,23 @@ def drag_launch_route():
     msg = launch_drag()
     return jsonify({'ok': msg is None, 'stage': drag_timer['stage'], 'msg': msg or 'Launched.'})
 
+
+@display_app.route('/build/update', methods=['POST'])
+def build_update_route():
+    data = request.get_json() or {}
+    bool_keys = {'cold_air_intake','long_tube_headers','full_exhaust','intake_manifold',
+                 'throttle_body_upgrade','cam_swap','heads_upgrade','wideband_o2',
+                 'electric_fan','underdrive_pulley','custom_tune'}
+    int_keys  = {'cam_level','heads_level'}
+    for k, v in data.items():
+        if k in bool_keys:
+            build_specs[k] = bool(v)
+        elif k in int_keys:
+            build_specs[k] = int(v)
+        elif k in build_specs:
+            build_specs[k] = v
+    save_state()
+    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
 
 @display_app.route('/register_device', methods=['POST'])
 def register_device_endpoint():
