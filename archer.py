@@ -1078,8 +1078,9 @@ def get_display_data():
         'drag_best_et':  drag_timer['best_et'],
         'drag_best_mph': drag_timer['best_mph'],
         'build_specs':   dict(build_specs),
-        'build_power':   estimate_power(),
+        'build_power':   estimate_power_from_parts(),
         'build_phase':   get_build_phase(),
+        'build_parts':   list(build_tracker['parts']),
         'drag_stage':    drag_timer['stage'],
         'drag_splits':   dict(drag_timer['splits']),
         'drag_last_run': drag_timer['runs'][-1] if drag_timer['runs'] else None,
@@ -1510,31 +1511,98 @@ build_specs = {
     'notes':      '',
 }
 
-def estimate_power():
+PARTS_DB = {
+    # ── CAMS ─────────────────────────────────────────────────────────────────
+    'tsp-cam-207-217': {'name':'Texas Speed Stage 1 Truck Cam','category':'cam','hp_gain':62,'tq_gain':50,'desc':'207/224 @ .050", .551"/.559" lift, 113° LSA — best idle quality'},
+    'tsp-cam-217-224': {'name':'Texas Speed Stage 2 Truck Cam','category':'cam','hp_gain':78,'tq_gain':62,'desc':'217/224 @ .050", .566"/.576" lift, 112° LSA — most popular NA LQ4 cam'},
+    'tsp-cam-228-235': {'name':'Texas Speed Stage 3 Truck Cam','category':'cam','hp_gain':98,'tq_gain':75,'desc':'228/235 @ .050", .595"/.601" lift, 112° LSA — needs supporting mods'},
+    '54-450-11':       {'name':'Comp Cams XFI 270HR','category':'cam','hp_gain':72,'tq_gain':58,'desc':'218/228 @ .050", .565"/.570" lift, 112° LSA — great street/strip'},
+    '54-474-11':       {'name':'Comp Cams XFI 281HR','category':'cam','hp_gain':90,'tq_gain':68,'desc':'224/235 @ .050", .595"/.601" lift, 112° LSA — aggressive'},
+    'btr-stage2':      {'name':'Brian Tooley Stage 2 Truck Cam','category':'cam','hp_gain':80,'tq_gain':65,'desc':'218/228 @ .050", .575"/.570" lift, 113° LSA — excellent torque'},
+    'btr-stage3':      {'name':'Brian Tooley Stage 3 Truck Cam','category':'cam','hp_gain':96,'tq_gain':72,'desc':'228/235 @ .050", .600"/.595" lift, 112° LSA — max NA power'},
+    # ── HEADS ────────────────────────────────────────────────────────────────
+    '12563533':        {'name':'GM LS6 243 Cylinder Heads (pair)','category':'heads','hp_gain':20,'tq_gain':15,'desc':'243cc casting, 64cc chamber, 2.00/1.55 valves — bolt-on upgrade over 317s'},
+    'ported-317':      {'name':'Ported Stock 317 Heads','category':'heads','hp_gain':28,'tq_gain':20,'desc':'Factory 317 castings professionally ported/polished — good budget option'},
+    'ported-243':      {'name':'Ported 243/799 Heads','category':'heads','hp_gain':38,'tq_gain':28,'desc':'243 or 799 castings ported — best budget heads for cam builds'},
+    'afr-210':         {'name':'AFR 210cc Aluminum Heads','category':'heads','hp_gain':55,'tq_gain':40,'desc':'210cc CNC-ported, 65cc chamber, 2.08/1.60 valves — bolt-on for LS platforms'},
+    'prc-215':         {'name':'PRC 215cc Aluminum Heads','category':'heads','hp_gain':52,'tq_gain':38,'desc':'215cc runner, 64cc chamber — excellent flow for mid-range and top-end'},
+    'ls3-heads':       {'name':'LS3 Rectangular Port Heads','category':'heads','hp_gain':35,'tq_gain':25,'desc':'LS3 castings on LQ4 — requires LS3 intake, good mid-build option'},
+    # ── INTAKES ──────────────────────────────────────────────────────────────
+    '12573572':        {'name':'TBSS Intake Manifold','category':'intake','hp_gain':15,'tq_gain':12,'desc':'TrailBlazer SS manifold — easy bolt-on, great mid-range, stock TB fits'},
+    '92198204':        {'name':'LS3 Intake Manifold','category':'intake','hp_gain':18,'tq_gain':14,'desc':'LS3 Hi-Ram, best top-end for NA builds, needs LS3 TB'},
+    '146002b':         {'name':'FAST LSX 102mm Intake','category':'intake','hp_gain':26,'tq_gain':18,'desc':'Maximum flow for high-HP NA or boosted builds, 102mm TB required'},
+    '12629063':        {'name':'LS9 Intake Manifold','category':'intake','hp_gain':22,'tq_gain':16,'desc':'LS9 manifold — excellent flow, requires adapter for LS bolt pattern'},
+    # ── HEADERS ──────────────────────────────────────────────────────────────
+    'kooks-178':       {'name':'Kooks 1-7/8" Long Tube Headers','category':'headers','hp_gain':24,'tq_gain':20,'desc':'1-7/8" primary, 3" collector, stainless — premium quality'},
+    'slp-178':         {'name':'SLP 1-7/8" Long Tube Headers','category':'headers','hp_gain':21,'tq_gain':17,'desc':'1-7/8" primary, catted or off-road options available'},
+    'hooker-158':      {'name':'Hooker 1-5/8" Long Tube Headers','category':'headers','hp_gain':18,'tq_gain':15,'desc':'1-5/8" primary — great for lower RPM torque, street friendly'},
+    'pacesetter-158':  {'name':'Pacesetter 1-5/8" Headers','category':'headers','hp_gain':16,'tq_gain':13,'desc':'Budget long tubes — solid gains at lower price point'},
+    # ── THROTTLE BODIES ──────────────────────────────────────────────────────
+    '12601813':        {'name':'GM LS2 90mm Throttle Body','category':'throttle_body','hp_gain':9,'tq_gain':7,'desc':'Factory LS2 90mm, direct swap on most LS intakes — most common upgrade'},
+    'ls3-tb-90mm':     {'name':'LS3 90mm Throttle Body','category':'throttle_body','hp_gain':9,'tq_gain':7,'desc':'LS3 90mm, pairs well with TBSS intake'},
+    'vararam-102':     {'name':'Vararam 102mm Billet Throttle Body','category':'throttle_body','hp_gain':12,'tq_gain':9,'desc':'102mm billet, requires FAST or LS3 102mm intake'},
+    # ── COLD AIR ─────────────────────────────────────────────────────────────
+    'vararam-vr421':   {'name':'Vararam VR-421 Ram Air Intake','category':'cai','hp_gain':10,'tq_gain':8,'desc':'Ram-air sealed design for GMT800/900 trucks — documented +10 HP'},
+    'cai-systems':     {'name':'Cold Air Inductions Sealed CAI','category':'cai','hp_gain':9,'tq_gain':7,'desc':'Sealed cold air intake, drops intake temps significantly'},
+    'k&n-77':          {'name':'K&N 77 Series Cold Air Intake','category':'cai','hp_gain':8,'tq_gain':6,'desc':'K&N 77-series, washable filter, slight intake temp reduction'},
+    # ── EXHAUST ──────────────────────────────────────────────────────────────
+    'corsa-14480':     {'name':'Corsa Sport Cat-Back Exhaust','category':'exhaust','hp_gain':10,'tq_gain':8,'desc':'3" stainless, Corsa acoustic technology — aggressive but no drone'},
+    'magnaflow-16511': {'name':'MagnaFlow 3" Cat-Back','category':'exhaust','hp_gain':8,'tq_gain':7,'desc':'3" stainless cat-back, deep tone'},
+    'flowmaster-817713':{'name':'Flowmaster American Thunder','category':'exhaust','hp_gain':7,'tq_gain':6,'desc':'Aggressive Flowmaster tone, 2.5" system'},
+    'borla-140377':    {'name':'Borla S-Type Cat-Back','category':'exhaust','hp_gain':10,'tq_gain':8,'desc':'304 stainless, aggressive exhaust note'},
+    # ── TUNE ─────────────────────────────────────────────────────────────────
+    'efilive':         {'name':'EFILive Custom Tune','category':'tune','hp_gain':15,'tq_gain':15,'desc':'Custom EFILive tune optimized for installed mods — required for cam/intake'},
+    'hptuners':        {'name':'HP Tuners Custom Tune','category':'tune','hp_gain':15,'tq_gain':15,'desc':'HP Tuners custom tune — industry standard, works with stock or modified'},
+    # ── SUPPORTING ───────────────────────────────────────────────────────────
+    'electric-fan':    {'name':'Electric Fan Conversion','category':'supporting','hp_gain':5,'tq_gain':3,'desc':'Removes parasitic load from belt-driven fan — frees power at WOT'},
+    'ud-pulley':       {'name':'Underdrive Pulley Kit','category':'supporting','hp_gain':5,'tq_gain':3,'desc':'Reduces accessory drive load, small consistent gain at all RPM'},
+    'wideband-o2':     {'name':'Wideband O2 / AFR Gauge','category':'supporting','hp_gain':0,'tq_gain':0,'desc':'AEM or Innovate — data logging only, required for proper tuning'},
+    'forged-pistons':  {'name':'Forged Pistons (set of 8)','category':'internals','hp_gain':0,'tq_gain':0,'desc':'Required for forced induction or high compression — no NA power gain'},
+    'forged-rods':     {'name':'Forged H-Beam Rods','category':'internals','hp_gain':0,'tq_gain':0,'desc':'Required for high HP builds — strength upgrade, no direct power gain'},
+    'comp-springs':    {'name':'Comp Cams Valve Springs','category':'valvetrain','hp_gain':0,'tq_gain':0,'desc':'Required with cam swap — prevents float at high RPM'},
+    'chromoly-pushrods':{'name':'Chromoly Pushrods','category':'valvetrain','hp_gain':0,'tq_gain':0,'desc':'Required with aggressive cam — prevents flex, allows full lift'},
+}
+
+def search_parts_db(name, pn):
+    q    = (name + ' ' + pn).lower().strip()
+    pn_c = pn.lower().replace(' ','').replace('_','-')
+    # Exact PN match
+    if pn_c in PARTS_DB:
+        return [dict(PARTS_DB[pn_c], part_number=pn_c)]
+    # Score each entry
+    scored = []
+    q_words = [w for w in q.split() if len(w) > 2]
+    for key, part in PARTS_DB.items():
+        text = (part['name'] + ' ' + part['desc'] + ' ' + key).lower()
+        if pn_c and pn_c in key:
+            scored.append((12, key, part)); continue
+        hits = sum(1 for w in q_words if w in text)
+        if hits:
+            scored.append((hits, key, part))
+    scored.sort(key=lambda x: -x[0])
+    return [dict(p, part_number=k) for _, k, p in scored[:4]]
+
+def estimate_power_from_parts():
+    installed = [p for p in build_tracker['parts']
+                 if p.get('status') in ('installed_engine', 'installed_truck')]
     base_hp, base_tq = 315, 365
     g_hp = g_tq = 0.0
-    s = build_specs
-    if s.get('cold_air_intake'):       g_hp += 8;  g_tq += 6
-    if s.get('long_tube_headers'):     g_hp += 22; g_tq += 18
-    if s.get('full_exhaust'):          g_hp += 10; g_tq += 8
-    if s.get('intake_manifold'):       g_hp += 18; g_tq += 14
-    if s.get('throttle_body_upgrade'): g_hp += 10; g_tq += 7
-    if s.get('electric_fan'):          g_hp += 5;  g_tq += 3
-    if s.get('underdrive_pulley'):     g_hp += 5;  g_tq += 3
-    if s.get('custom_tune'):           g_hp += 15; g_tq += 15
-    if s.get('cam_swap'):
-        lvl  = int(s.get('cam_level', 1))
-        chp  = {1: 65, 2: 82, 3: 100}.get(lvl, 65)
-        if not s.get('long_tube_headers'): chp *= 0.85
-        if not s.get('intake_manifold'):   chp *= 0.90
-        g_hp += chp;  g_tq += chp * 0.78
-    if s.get('heads_upgrade'):
-        lvl  = int(s.get('heads_level', 1))
-        hhp  = {1: 35, 2: 50}.get(lvl, 35)
-        if not s.get('cam_swap'): hhp *= 0.80
-        g_hp += hhp;  g_tq += hhp * 0.72
+    cats = {p.get('category') for p in installed}
+    has_headers = 'headers' in cats
+    has_intake  = 'intake'  in cats
+    has_cam     = 'cam'     in cats
+    for p in installed:
+        chp = float(p.get('hp_gain', 0))
+        ctq = float(p.get('tq_gain', 0))
+        cat = p.get('category')
+        if cat == 'cam':
+            if not has_headers: chp *= 0.85
+            if not has_intake:  chp *= 0.90
+        if cat == 'heads' and not has_cam:
+            chp *= 0.80; ctq *= 0.80
+        g_hp += chp; g_tq += ctq
     if g_hp > 80:
-        g_hp *= 0.92;  g_tq *= 0.92
+        g_hp *= 0.92; g_tq *= 0.92
     c_hp = round(base_hp + g_hp)
     c_tq = round(base_tq + g_tq)
     return {'crank_hp': c_hp, 'crank_tq': c_tq,
@@ -6650,6 +6718,56 @@ def build_update_route():
             build_specs[k] = v
     save_state()
     return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
+
+@display_app.route('/build/part/search')
+def build_part_search():
+    name = request.args.get('name', '')
+    pn   = request.args.get('pn', '')
+    results = search_parts_db(name, pn)
+    return jsonify({'results': results, 'query_name': name, 'query_pn': pn})
+
+@display_app.route('/build/part/add', methods=['POST'])
+def build_part_add():
+    data = request.get_json() or {}
+    part = {
+        'id':          str(uuid.uuid4())[:8],
+        'name':        data.get('name', 'Unknown Part'),
+        'part_number': data.get('part_number', ''),
+        'category':    data.get('category', 'other'),
+        'hp_gain':     float(data.get('hp_gain', 0)),
+        'tq_gain':     float(data.get('tq_gain', 0)),
+        'description': data.get('description', ''),
+        'status':      data.get('status', 'ordered'),
+        'cost':        float(data.get('cost', 0)),
+        'date_added':  datetime.now().strftime('%B %d %Y'),
+        'notes':       data.get('notes', ''),
+    }
+    build_tracker['parts'].append(part)
+    save_state()
+    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
+                    'parts': list(build_tracker['parts'])})
+
+@display_app.route('/build/part/update', methods=['POST'])
+def build_part_update():
+    data   = request.get_json() or {}
+    pid    = data.get('id')
+    part   = next((p for p in build_tracker['parts'] if p.get('id') == pid), None)
+    if not part:
+        return jsonify({'ok': False, 'error': 'Part not found'})
+    for k in ('status', 'hp_gain', 'tq_gain', 'cost', 'notes', 'name', 'part_number'):
+        if k in data:
+            part[k] = float(data[k]) if k in ('hp_gain','tq_gain','cost') else data[k]
+    save_state()
+    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
+                    'parts': list(build_tracker['parts'])})
+
+@display_app.route('/build/part/remove', methods=['POST'])
+def build_part_remove():
+    pid = (request.get_json() or {}).get('id')
+    build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
+    save_state()
+    return jsonify({'ok': True, 'power': estimate_power_from_parts(),
+                    'parts': list(build_tracker['parts'])})
 
 @display_app.route('/register_device', methods=['POST'])
 def register_device_endpoint():
