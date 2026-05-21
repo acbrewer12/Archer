@@ -2454,19 +2454,20 @@ async function bldSearch() {
       bldOpenAddModal({name, part_number: pn, hp_gain: 0, tq_gain: 0, description: '', category: 'other'});
       return;
     }
-    let html = '<div class="bld-section-hdr">SEARCH RESULTS — TAP TO ADD</div>';
+    let html = '<div class="bld-section-hdr">WEB RESULTS — TAP TO ADD</div>';
     d.results.forEach(p => {
-      const gain = (p.hp_gain || 0) > 0 ? `+${p.hp_gain} HP / +${p.tq_gain} TQ` : 'NO POWER GAIN';
-      html += `<div class="bld-result-card" onclick="bldOpenAddModal(${JSON.stringify(p).replace(/"/g,'&quot;')})">
-        <div class="bld-part-name" style="color:var(--yellow)">${p.name}</div>
-        ${p.part_number ? `<div class="bld-part-pn">${p.part_number}</div>` : ''}
-        <div class="bld-part-desc">${p.desc || p.description || ''}</div>
-        <div style="font-size:9px;font-family:Share Tech Mono,monospace;color:var(--green)">${gain}</div>
+      const gain = (p.hp_gain || 0) > 0 ? `+${p.hp_gain} HP detected — verify before saving` : 'HP/TQ not found — enter manually';
+      const gainColor = (p.hp_gain || 0) > 0 ? 'var(--yellow)' : 'var(--label)';
+      const safeP = JSON.stringify({name: p.title, part_number: pn, description: p.snippet, hp_gain: p.hp_gain||0, tq_gain: p.tq_gain||0, category:'other'}).replace(/"/g,'&quot;');
+      html += `<div class="bld-result-card" onclick="bldOpenAddModal(${safeP})">
+        <div class="bld-part-name" style="color:var(--yellow)">${p.title}</div>
+        <div class="bld-part-desc">${p.snippet}</div>
+        <div style="font-size:9px;font-family:Share Tech Mono,monospace;color:${gainColor}">${gain}</div>
       </div>`;
     });
-    html += `<div class="bld-result-card" style="border-color:var(--border)" onclick="bldOpenAddModal({name:'${name.replace(/'/g,"\\'")}',part_number:'${pn.replace(/'/g,"\\'")}',hp_gain:0,tq_gain:0,description:'',category:'other'})">
-      <div class="bld-part-name" style="color:var(--label)">+ ADD CUSTOM: ${name || pn}</div>
-      <div class="bld-part-desc">Not in database — fill in specs manually</div>
+    html += `<div class="bld-result-card" style="border-color:var(--border)" onclick="bldOpenAddModal({name:${JSON.stringify(name)},part_number:${JSON.stringify(pn)},hp_gain:0,tq_gain:0,description:'',category:'other'})">
+      <div class="bld-part-name" style="color:var(--label)">+ ADD MANUALLY</div>
+      <div class="bld-part-desc">None of these? Fill in specs yourself.</div>
     </div>`;
     results.innerHTML = html;
   } catch(e) { if (results) results.innerHTML = ''; }

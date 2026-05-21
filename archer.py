@@ -1511,6 +1511,54 @@ build_specs = {
     'notes':      '',
 }
 
+def web_search_parts(name, pn, max_results=5):
+    import urllib.parse, re
+    query = ' '.join(filter(None, [name, pn, 'horsepower specs performance LS'])).strip()
+    data  = urllib.parse.urlencode({'q': query}).encode()
+    req   = urllib.request.Request(
+        'https://html.duckduckgo.com/html/', data=data, method='POST',
+        headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'text/html',
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+    except Exception as e:
+        print(f'[BUILD SEARCH] web error: {e}')
+        return []
+    results = []
+    # DuckDuckGo HTML: title link then snippet span
+    titles   = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, re.DOTALL)
+    urls     = re.findall(r'class="result__a"\s+href="([^"]+)"', html)
+    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
+    for i in range(min(len(titles), max_results)):
+        title   = re.sub(r'<[^>]+>', '', titles[i]).strip()
+        snippet = re.sub(r'<[^>]+>', '', snippets[i] if i < len(snippets) else '').strip()
+        snippet = ' '.join(snippet.split())[:300]
+        url     = urls[i] if i < len(urls) else ''
+        if title:
+            hp, tq = _extract_gains(snippet + ' ' + title)
+            results.append({'title': title, 'url': url, 'snippet': snippet,
+                            'hp_gain': hp, 'tq_gain': tq})
+    return results
+
+def _extract_gains(text):
+    import re
+    t = text.lower()
+    hp = tq = 0
+    # gain patterns: "+22 hp", "22hp gain", "+22whp"
+    g = re.search(r'[+](\d+)\s*(?:rwhp|whp|hp|horsepower)', t)
+    if g: hp = int(g.group(1)); hp = hp if hp <= 150 else 0
+    g = re.search(r'[+](\d+)\s*(?:ft.?lb|lb.?ft|tq|torque)', t)
+    if g: tq = int(g.group(1)); tq = tq if tq <= 150 else 0
+    return hp, tq
+
+def search_parts_db(name, pn):
+    return web_search_parts(name, pn)
+
 PARTS_DB = {
     # ── CAMS ─────────────────────────────────────────────────────────────────
     'tsp-cam-207-217': {'name':'Texas Speed Stage 1 Truck Cam','category':'cam','hp_gain':62,'tq_gain':50,'desc':'207/224 @ .050", .551"/.559" lift, 113° LSA — best idle quality'},
@@ -6721,9 +6769,9 @@ def build_update_route():
 
 @display_app.route('/build/part/search')
 def build_part_search():
-    name = request.args.get('name', '')
-    pn   = request.args.get('pn', '')
-    results = search_parts_db(name, pn)
+    name    = request.args.get('name', '')
+    pn      = request.args.get('pn', '')
+    results = web_search_parts(name, pn)
     return jsonify({'results': results, 'query_name': name, 'query_pn': pn})
 
 @display_app.route('/build/part/add', methods=['POST'])
