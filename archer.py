@@ -108,7 +108,7 @@ os.environ['OLLAMA_DEBUG'] = '0'
 os.environ['OLLAMA_NONHISTORY'] = '1'
 
 # ── WEB DISPLAY SERVER GLOBALS ────────────
-from flask import Flask, jsonify, render_template_string, Response, stream_with_context
+from flask import Flask, jsonify, render_template_string, Response, stream_with_context, request
 import logging as _logging
 
 display_app     = Flask(__name__)
