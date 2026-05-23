@@ -226,10 +226,32 @@ def client_timeout_monitor():
 tts_queue = queue.Queue()
 tts_lock  = threading.Lock()
 
-async def _speak_async(text):
+async def _speak_async(text, alert=False):
     try:
+        # ── NWS alert path: DECtalk Paul (actual NWS voice) ──
+        if alert:
+            _dectalk_bin = '/opt/dectalk/say'
+            if os.path.exists(_dectalk_bin):
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as _wf:
+                    _wav = _wf.name
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as _mf:
+                    _mp3 = _mf.name
+                _dtenv = {**os.environ, 'LD_LIBRARY_PATH': '/opt/dectalk/lib'}
+                subprocess.run(
+                    [_dectalk_bin, '-pre', '[:np][:rate 180]', '-a', text, '-fo', _wav],
+                    capture_output=True, env=_dtenv,
+                )
+                subprocess.run(
+                    ['ffmpeg', '-y', '-i', _wav, '-q:a', '4', _mp3],
+                    capture_output=True,
+                )
+                os.unlink(_wav)
+                broadcast_audio(_mp3)
+                os.unlink(_mp3)
+                return
+
+        # ── Normal Archer voice ───────────────────────────────
         if _IS_PI and _PIPER_AVAILABLE:
-            # Offline TTS via piper — pipes raw PCM to aplay
             piper_proc = subprocess.Popen(
                 [_PIPER_BIN, '--model', _PIPER_MODEL, '--output_raw'],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -241,35 +263,13 @@ async def _speak_async(text):
             )
             return
 
-        # ── DECtalk path: actual NWS Paul voice ──────
-        _dectalk_bin = '/opt/dectalk/say'
-        if os.path.exists(_dectalk_bin):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as _wf:
-                _wav = _wf.name
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as _mf:
-                _mp3 = _mf.name
-            _dtenv = {**os.environ, 'LD_LIBRARY_PATH': '/opt/dectalk/lib'}
-            subprocess.run(
-                [_dectalk_bin, '-pre', '[:np][:rate 180]', '-a', text, '-fo', _wav],
-                capture_output=True, env=_dtenv,
-            )
-            subprocess.run(
-                ['ffmpeg', '-y', '-i', _wav, '-q:a', '4', _mp3],
-                capture_output=True,
-            )
-            os.unlink(_wav)
-            broadcast_audio(_mp3)
-            os.unlink(_mp3)
-            return
-
-        # ── Fallback: edge-tts ────────────────────
         import html as _html
-        voice     = "en-US-GuyNeural"
+        voice     = "en-US-ChristopherNeural"
         safe_text = _html.escape(text)
         ssml      = (
             '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
             'xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
-            f'<voice name="{voice}"><mstts:express-as style="newscast-formal">'
+            f'<voice name="{voice}"><mstts:express-as style="newscast">'
             f'{safe_text}'
             '</mstts:express-as></voice></speak>'
         )
@@ -292,17 +292,18 @@ async def _speak_async(text):
     except Exception as e:
         print(f"[TTS ERROR] {e}")
 
-def speak(text):
+def speak(text, alert=False):
     if isinstance(text, str) and len(text) > 0:
-        tts_queue.put(text)
+        tts_queue.put((text, alert))
 
 def tts_worker():
     while True:
         try:
-            text = tts_queue.get()
+            item = tts_queue.get()
+            text, alert = item if isinstance(item, tuple) else (item, False)
             if text:
                 with tts_lock:
-                    asyncio.run(_speak_async(text))
+                    asyncio.run(_speak_async(text, alert=alert))
             tts_queue.task_done()
         except Exception:
             try:
@@ -1079,7 +1080,7 @@ def weather_monitor():
                 _active_alert_ids.add(aid)
                 event = alert['event']
                 loc   = location_data.get('location_name') or 'your location'
-                speak(f"Weather alert. {event} near {loc}. {alert.get('headline','Stay alert.')[:80]}")
+                speak(f"Weather alert. {event} near {loc}. {alert.get('headline','Stay alert.')[:80]}", alert=True)
                 print(f"[ARCHER] WEATHER ALERT: {event}")
 
         time.sleep(60)
