@@ -2010,17 +2010,9 @@ update();
 let _lastPushedLat = null, _lastPushedLon = null;
 
 async function pushGPS(lat, lon) {
-  // Reverse-geocode city/state via nominatim (no key needed)
-  let name = '';
-  try {
-    const g = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`, {headers:{'Accept-Language':'en'}});
-    const gd = await g.json();
-    const a = gd.address || {};
-    name = (a.city || a.town || a.village || a.county || '') + (a.state ? ', ' + a.state : '');
-  } catch(e) {}
   try {
     await fetch('/location/update', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({lat, lon, name})});
+      body: JSON.stringify({lat, lon})});
   } catch(e) {}
 }
 
