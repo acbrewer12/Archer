@@ -1705,10 +1705,11 @@ async function pollLive() {
     if (d.est_hp != null) set('bld-hp', d.est_hp);
 
     // ── DRIVE tab — CONDITIONS (weather + road) ──────────────
+    const _locLabel = d.gps_name || 'Salem MO';
     if (d.weather && d.road) {
-      set('dr-conditions', (d.road !== 'None' ? d.road + ' — ' : 'Salem MO — ') + d.weather);
+      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : _locLabel + ' — ') + d.weather);
     } else if (d.weather) {
-      set('dr-conditions', 'Salem MO — ' + d.weather);
+      set('dr-conditions', _locLabel + ' — ' + d.weather);
     }
 
     // ── LAUNCH tab ───────────────────────────────────────────
@@ -2003,6 +2004,39 @@ pollLive();
 setInterval(pollLive, 1000);
 setInterval(update, 150);
 update();
+
+// ── GPS → BACKEND ─────────────────────────────────────────
+let _lastPushedLat = null, _lastPushedLon = null;
+
+async function pushGPS(lat, lon) {
+  // Reverse-geocode city/state via nominatim (no key needed)
+  let name = '';
+  try {
+    const g = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`, {headers:{'Accept-Language':'en'}});
+    const gd = await g.json();
+    const a = gd.address || {};
+    name = (a.city || a.town || a.village || a.county || '') + (a.state ? ', ' + a.state : '');
+  } catch(e) {}
+  try {
+    await fetch('/location/update', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({lat, lon, name})});
+  } catch(e) {}
+}
+
+function startGPSWatch() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(pos => {
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    // Only push if moved >~100m from last push
+    if (_lastPushedLat === null ||
+        Math.abs(lat - _lastPushedLat) > 0.001 ||
+        Math.abs(lon - _lastPushedLon) > 0.001) {
+      _lastPushedLat = lat; _lastPushedLon = lon;
+      pushGPS(lat, lon);
+    }
+  }, null, {enableHighAccuracy: true, maximumAge: 15000});
+}
+startGPSWatch();
 
 // ─── GRAPHS ───
 function drawGraph(id, points, color, max) {

@@ -432,6 +432,10 @@ def save_state():
         'parking_mode':      parking_mode,
         'audio_system':      audio_system,
         'location_data':     location_data,
+        'gps_lat':           location_data.get('lat'),
+        'gps_lon':           location_data.get('lon'),
+        'gps_name':          location_data.get('location_name',''),
+        'weather_alerts':    [a['event'] for a in (_active_alert_ids and []) or []],
         'nav_places':        nav_places,
     }
     try:
@@ -756,51 +760,70 @@ _nws_station_url = None  # cached after first lookup
 
 def get_weather():
     global _nws_station_url
+    lat = location_data.get('lat') or 37.6456
+    lon = location_data.get('lon') or -91.5362
     try:
-        # NWS observation API — same source as The Weather Channel for US locations
+        hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
         if not _nws_station_url:
-            pts_url = 'https://api.weather.gov/points/37.6456,-91.5362'
-            req = urllib.request.Request(pts_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
-            with urllib.request.urlopen(req, timeout=6) as r:
+            pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
+            with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=6) as r:
                 pts = json.loads(r.read())
             stations_url = pts['properties']['observationStations']
-            req2 = urllib.request.Request(stations_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
-            with urllib.request.urlopen(req2, timeout=6) as r:
+            with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=6) as r:
                 stations = json.loads(r.read())
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
 
         obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
-        req3 = urllib.request.Request(obs_url, headers={'User-Agent': 'Archer/1.0 archer@ayden.dev'})
-        with urllib.request.urlopen(req3, timeout=6) as r:
+        with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
             obs = json.loads(r.read())
 
-        props   = obs['properties']
-        temp_c  = props['temperature']['value']
-        temp_f  = round(temp_c * 9 / 5 + 32) if temp_c is not None else weather['temp']
-        desc    = (props.get('textDescription') or '').lower()
-        wind_ms = props['windSpeed']['value'] or 0
+        props    = obs['properties']
+        temp_c   = props['temperature']['value']
+        temp_f   = round(temp_c * 9/5 + 32) if temp_c is not None else weather['temp']
+        desc     = (props.get('textDescription') or '').lower()
+        wind_ms  = props['windSpeed']['value'] or 0
         wind_mph = round(wind_ms * 2.237)
 
-        if 'thunder' in desc:                              condition = 'thunderstorm'
-        elif 'snow' in desc or 'blizzard' in desc:         condition = 'snowing'
+        if 'thunder' in desc:                                             condition = 'thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:                        condition = 'snowing'
         elif any(w in desc for w in ('rain','shower','drizzle','storm')): condition = 'raining'
-        elif 'overcast' in desc:                           condition = 'cloudy'
-        elif any(w in desc for w in ('partly','mostly cloudy','increasing')): condition = 'partly cloudy'
-        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): condition = 'clear'
-        else:                                              condition = 'cloudy'
+        elif 'overcast' in desc:                                          condition = 'cloudy'
+        elif any(w in desc for w in ('partly','mostly cloudy')):          condition = 'partly cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')):condition = 'clear'
+        else:                                                              condition = 'cloudy'
 
-        return {
-            'temp':      temp_f,
-            'condition': condition,
-            'wind':      wind_mph,
-            'precip':    0,
-            'raining':   condition in ('raining', 'thunderstorm'),
-            'freezing':  temp_f < 32,
-            'snowing':   condition == 'snowing',
-        }
+        return {'temp': temp_f, 'condition': condition, 'wind': wind_mph, 'precip': 0,
+                'raining': condition in ('raining','thunderstorm'),
+                'freezing': temp_f < 32, 'snowing': condition == 'snowing'}
     except Exception:
-        _nws_station_url = None  # reset so next call re-discovers station
+        _nws_station_url = None
         return weather
+
+_active_alert_ids = set()
+
+def get_nws_alerts():
+    lat = location_data.get('lat')
+    lon = location_data.get('lon')
+    if not lat or not lon:
+        return []
+    try:
+        hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+        url = f'https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=6) as r:
+            data = json.loads(r.read())
+        alerts = []
+        for feat in data.get('features', []):
+            p = feat.get('properties', {})
+            if p.get('severity') in ('Extreme','Severe','Moderate'):
+                alerts.append({
+                    'id':       feat.get('id',''),
+                    'event':    p.get('event',''),
+                    'headline': p.get('headline',''),
+                    'severity': p.get('severity',''),
+                })
+        return alerts
+    except Exception:
+        return []
 
 # ── CASUAL CONVERSATION ──────────────────
 last_casual     = 0
@@ -1013,12 +1036,22 @@ def weather_monitor():
             data = get_weather()
             weather.update(data)
             weather['last_update'] = now
+            loc  = location_data.get('location_name') or 'your area'
             if weather['raining'] and tier_state['current'] == 1 and truck_state['rpm'] > 900:
-                msg = f"Rain detected in Salem. {weather['temp']} degrees. TC recommendation on."
-                print(f"\n[ARCHER] {msg}"); speak(msg)
+                speak(f"Rain at {loc}. {weather['temp']} degrees. TC recommendation on.")
             elif weather['freezing'] and tier_state['current'] == 1:
-                msg = f"{weather['temp']} degrees outside. Everything is a little tighter today."
-                print(f"\n[ARCHER] {msg}"); speak(msg)
+                speak(f"{weather['temp']} degrees at {loc}. Roads may be slick.")
+
+        # NWS active alerts — speak new ones immediately
+        for alert in get_nws_alerts():
+            aid = alert['id']
+            if aid and aid not in _active_alert_ids:
+                _active_alert_ids.add(aid)
+                event = alert['event']
+                loc   = location_data.get('location_name') or 'your location'
+                speak(f"Weather alert. {event} near {loc}. {alert.get('headline','Stay alert.')[:80]}")
+                print(f"[ARCHER] WEATHER ALERT: {event}")
+
         time.sleep(60)
 
 # ── GET DISPLAY DATA ─────────────────────
@@ -2154,6 +2187,9 @@ location_data = {
     'session_miles':  0.0,
     'last_location':  '',
     'location_log':   [],
+    'lat':            None,
+    'lon':            None,
+    'location_name':  '',
 }
 
 def set_destination(dest):
@@ -6767,6 +6803,27 @@ def build_update_route():
             build_specs[k] = v
     save_state()
     return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
+
+@display_app.route('/location/update', methods=['POST'])
+def location_update_route():
+    global _nws_station_url
+    data = request.get_json() or {}
+    lat  = data.get('lat')
+    lon  = data.get('lon')
+    name = data.get('name', '')
+    if lat is not None and lon is not None:
+        old_lat = location_data.get('lat')
+        old_lon = location_data.get('lon')
+        location_data['lat'] = float(lat)
+        location_data['lon'] = float(lon)
+        if name:
+            location_data['location_name'] = name
+        # If moved >~4 miles, reset station so weather re-discovers for new location
+        if old_lat and old_lon:
+            if abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07:
+                _nws_station_url = None
+                weather['last_update'] = 0   # force immediate weather refresh
+    return jsonify({'ok': True, 'lat': location_data['lat'], 'lon': location_data['lon']})
 
 @display_app.route('/build/part/search')
 def build_part_search():
