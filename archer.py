@@ -241,7 +241,27 @@ async def _speak_async(text):
             )
             return
 
-        # ── Online path: edge-tts ──────────────────
+        # ── espeak-ng path: NWS-style robotic voice ───
+        _espeak = subprocess.run(['which', 'espeak-ng'], capture_output=True)
+        if _espeak.returncode == 0:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as _wf:
+                _wav = _wf.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as _mf:
+                _mp3 = _mf.name
+            subprocess.run(
+                ['espeak-ng', '-v', 'en-us', '-s', '160', '-p', '45', '-w', _wav, text],
+                capture_output=True,
+            )
+            subprocess.run(
+                ['ffmpeg', '-y', '-i', _wav, '-q:a', '4', _mp3],
+                capture_output=True,
+            )
+            os.unlink(_wav)
+            broadcast_audio(_mp3)
+            os.unlink(_mp3)
+            return
+
+        # ── Fallback: edge-tts ────────────────────
         import html as _html
         voice     = "en-US-GuyNeural"
         safe_text = _html.escape(text)
