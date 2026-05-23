@@ -248,7 +248,7 @@ async def _speak_async(text):
         ssml      = (
             '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
             'xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
-            f'<voice name="{voice}"><mstts:express-as style="newscast">'
+            f'<voice name="{voice}"><mstts:express-as style="newscast-formal">'
             f'{safe_text}'
             '</mstts:express-as></voice></speak>'
         )
