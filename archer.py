@@ -241,16 +241,17 @@ async def _speak_async(text):
             )
             return
 
-        # ── espeak-ng path: NWS-style robotic voice ───
-        _espeak = subprocess.run(['which', 'espeak-ng'], capture_output=True)
-        if _espeak.returncode == 0:
+        # ── DECtalk path: actual NWS Paul voice ──────
+        _dectalk_bin = '/opt/dectalk/say'
+        if os.path.exists(_dectalk_bin):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as _wf:
                 _wav = _wf.name
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as _mf:
                 _mp3 = _mf.name
+            _dtenv = {**os.environ, 'LD_LIBRARY_PATH': '/opt/dectalk/lib'}
             subprocess.run(
-                ['espeak-ng', '-v', 'en-us', '-s', '160', '-p', '45', '-w', _wav, text],
-                capture_output=True,
+                [_dectalk_bin, '-pre', '[:np][:rate 180]', '-a', text, '-fo', _wav],
+                capture_output=True, env=_dtenv,
             )
             subprocess.run(
                 ['ffmpeg', '-y', '-i', _wav, '-q:a', '4', _mp3],

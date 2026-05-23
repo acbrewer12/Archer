@@ -2,10 +2,17 @@ FROM python:3.11-slim
 
 # Install only what we need
 RUN apt-get update && apt-get install -y \
-    curl git ffmpeg zstd espeak-ng \
+    curl git ffmpeg zstd \
     && rm -rf /var/lib/apt/lists/* \
     && curl -Lo /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 \
     && chmod +x /usr/local/bin/ttyd
+
+# Install DECtalk (actual NWS Paul voice engine)
+RUN mkdir -p /opt/dectalk \
+    && curl -sL https://github.com/dectalk/dectalk/releases/download/2023-10-30/ubuntu-latest.tar.gz \
+    | tar -xzf - -C /opt/dectalk \
+    && chmod +x /opt/dectalk/say \
+    && mkdir -p /var/tmp && chmod 777 /var/tmp
 
 # Install Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh
