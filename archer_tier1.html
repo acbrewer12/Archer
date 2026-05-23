@@ -1058,7 +1058,7 @@ body.day{background:#0d0d0d}
         <div class="map-ping" style="background:var(--blue);top:22%;left:42%;box-shadow:0 0 8px rgba(0,170,255,0.7)"></div>
         <!-- Geofence ring -->
         <div style="position:absolute;top:50%;left:50%;width:60px;height:60px;border-radius:50%;border:1px dashed var(--red);transform:translate(-50%,-50%);opacity:0.3"></div>
-        <div style="position:absolute;bottom:6px;left:8px;font-size:7px;color:var(--text2);font-family:'Share Tech Mono',monospace;letter-spacing:1px;background:rgba(0,0,0,0.7);padding:2px 5px;border-radius:2px">Salem MO — Hwy 72</div>
+        <div id="map-loc-label" style="position:absolute;bottom:6px;left:8px;font-size:7px;color:var(--text2);font-family:'Share Tech Mono',monospace;letter-spacing:1px;background:rgba(0,0,0,0.7);padding:2px 5px;border-radius:2px">--</div>
       </div>
       <div style="display:flex;gap:12px;font-size:7px;color:var(--label);font-family:'Share Tech Mono',monospace;padding:2px 2px">
         <span>🔴 YOU</span><span style="color:var(--yellow)">● TRAP</span><span style="color:var(--orange)">● HAZARD</span><span style="color:var(--blue)">● CAMERA</span>
@@ -1705,11 +1705,12 @@ async function pollLive() {
     if (d.est_hp != null) set('bld-hp', d.est_hp);
 
     // ── DRIVE tab — CONDITIONS (weather + road) ──────────────
-    const _locLabel = d.gps_name || 'Salem MO';
+    const _locLabel = d.gps_name || '';
+    if (_locLabel) set('map-loc-label', _locLabel);
     if (d.weather && d.road) {
-      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : _locLabel + ' — ') + d.weather);
+      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : (_locLabel || 'Current Location') + ' — ') + d.weather);
     } else if (d.weather) {
-      set('dr-conditions', _locLabel + ' — ' + d.weather);
+      set('dr-conditions', (_locLabel || 'Current Location') + ' — ' + d.weather);
     }
 
     // ── LAUNCH tab ───────────────────────────────────────────

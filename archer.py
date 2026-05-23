@@ -3842,7 +3842,7 @@ def check_tow_detection():
 # OFFLINE AI FALLBACK IMPROVEMENTS
 # ══════════════════════════════════════════
 SMART_FALLBACKS = {
-    'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in Salem.',
+    'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in {location_data.get("location_name") or "your area"}.',
     'rpm':         lambda: f'RPM is at {truck_state["rpm"]}.',
     'boost':       lambda: (f'Boost is {truck_state["boost"]} PSI.' if get_build_caps()['supercharged'] else 'No forced induction. Stock six liter, naturally aspirated.'),
     'oil':         lambda: f'Oil temp is {truck_state["oil_temp"]}F.',
