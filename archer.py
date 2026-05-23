@@ -242,7 +242,7 @@ async def _speak_async(text):
             return
 
         # ── Online path: edge-tts ──────────────────
-        voice       = "en-US-GuyNeural"
+        voice       = "en-US-ChristopherNeural"
         communicate = edge_tts.Communicate(text, voice)
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             tmp_path = f.name
@@ -1098,6 +1098,7 @@ def get_display_data():
         'hazards':       truck_state.get('hazards', False),
         'windows':       truck_state['windows'],
         'archer_msg':    last_archer_msg['text'],
+        'dj_enabled':    dj_state['enabled'],
         'drive_mode':    truck_state['drive_mode'],
         'radar_alert':   truck_state.get('radar_alert', False),
         'beamng_active': beamng_state['connected'],
@@ -7942,6 +7943,49 @@ spotify_tokens = {
     'expires_at':    0,
 }
 
+dj_state = {'enabled': False, 'last_track_id': None}
+
+def _dj_comment(song, artist):
+    def _bg():
+        try:
+            prompt = (f'You are Archer, the AI inside a 2006 GMC Sierra 2500HD. '
+                      f'A new song just came on: "{song}" by {artist}. '
+                      f'Say something short and natural like a radio DJ introducing it — '
+                      f'max 2 sentences, 20 words max. Be direct and confident, '
+                      f'match the truck personality. No hashtags or emojis.')
+            reply = ask_archer(prompt)
+            if reply:
+                speak(reply)
+        except Exception:
+            pass
+    import threading
+    threading.Thread(target=_bg, daemon=True).start()
+
+def _dj_poll_loop():
+    time.sleep(15)          # wait for startup before first poll
+    while True:
+        time.sleep(6)
+        try:
+            if not dj_state['enabled'] or not spotify_tokens['access_token']:
+                continue
+            data = spotify_api('GET', 'me/player')
+            if not data or not data.get('is_playing'):
+                continue
+            item     = data.get('item') or {}
+            track_id = item.get('id')
+            if not track_id or track_id == dj_state['last_track_id']:
+                continue
+            dj_state['last_track_id'] = track_id
+            song   = item.get('name', '')
+            artist = ', '.join(a['name'] for a in item.get('artists', []))
+            if song:
+                _dj_comment(song, artist)
+        except Exception:
+            pass
+
+import threading as _dj_thread
+_dj_thread.Thread(target=_dj_poll_loop, daemon=True).start()
+
 def spotify_refresh():
     """Refresh the Spotify access token using the refresh token."""
     if not spotify_tokens['refresh_token']:
@@ -7993,6 +8037,16 @@ def spotify_api(method, endpoint, data=None):
     except Exception as e:
         print(f'[SPOTIFY] API error {endpoint}: {e}')
         return None
+
+@display_app.route('/spotify/dj', methods=['POST'])
+def spotify_dj_toggle():
+    dj_state['enabled'] = not dj_state['enabled']
+    if dj_state['enabled']:
+        dj_state['last_track_id'] = None   # re-announce current song
+        speak("DJ mode on. I've got the intro.")
+    else:
+        speak("DJ mode off.")
+    return jsonify({'enabled': dj_state['enabled']})
 
 @display_app.route('/spotify/disconnect')
 def spotify_disconnect():

@@ -1156,7 +1156,8 @@ body.day{background:#0d0d0d}
             <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:100%;accent-color:#cc0000">
           </div>
         </div>
-        <div style="text-align:right;padding:0 2px 2px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:0 2px 2px">
+          <div id="t1-dj-btn" onclick="t1ToggleDJ()" style="background:#0d0000;border:1px solid var(--red);border-radius:3px;padding:4px 10px;color:var(--red);font-size:9px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:2px">🎙 ARCHER DJ: OFF</div>
           <button onclick="t1SpotifyDisconnect()" style="background:none;border:1px solid #333;border-radius:3px;padding:2px 8px;color:#555;font-size:9px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:1px">DISCONNECT</button>
         </div>
         <div class="box">
@@ -1684,6 +1685,7 @@ async function pollLive() {
     if (sd.afr          != null) targetData.afr       = parseFloat(sd.afr);
     targetData.knock = (sd.knock_count > 0) ? 1 : 0;
     if (d.archer_msg) setArcherMsg(d.archer_msg);
+    if (d.dj_enabled != null) t1UpdateDJBtn(d.dj_enabled);
     if (d.radar_alert != null) targetData.radarActive = !!d.radar_alert;
     // Drive mode from live data
     if (d.drive_mode) {
@@ -2337,6 +2339,43 @@ async function t1SpotifyDisconnect() {
   await fetch(T1BASE+'/spotify/disconnect', {method:'POST'});
   document.getElementById('t1-spotify-disconnected').style.display = 'flex';
   document.getElementById('t1-spotify-connected').style.display = 'none';
+}
+
+async function t1ToggleDJ() {
+  try {
+    const r = await fetch(T1BASE + '/spotify/dj', {method: 'POST'});
+    const d = await r.json();
+    const btn = document.getElementById('t1-dj-btn');
+    if (btn) {
+      if (d.enabled) {
+        btn.textContent = '🎙 ARCHER DJ: ON';
+        btn.style.borderColor = 'var(--green)';
+        btn.style.color = 'var(--green)';
+        btn.style.background = '#001a00';
+      } else {
+        btn.textContent = '🎙 ARCHER DJ: OFF';
+        btn.style.borderColor = 'var(--red)';
+        btn.style.color = 'var(--red)';
+        btn.style.background = '#0d0000';
+      }
+    }
+  } catch(e) {}
+}
+
+function t1UpdateDJBtn(enabled) {
+  const btn = document.getElementById('t1-dj-btn');
+  if (!btn) return;
+  if (enabled) {
+    btn.textContent = '🎙 ARCHER DJ: ON';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color = 'var(--green)';
+    btn.style.background = '#001a00';
+  } else {
+    btn.textContent = '🎙 ARCHER DJ: OFF';
+    btn.style.borderColor = 'var(--red)';
+    btn.style.color = 'var(--red)';
+    btn.style.background = '#0d0000';
+  }
 }
 async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POST'}); setTimeout(t1PollSpotify,600); setTimeout(t1LoadQueue,1200); }
 async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST'}); setTimeout(t1PollSpotify,600); }
