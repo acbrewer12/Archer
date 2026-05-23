@@ -263,17 +263,8 @@ async def _speak_async(text, alert=False):
             )
             return
 
-        import html as _html
-        voice     = "en-US-ChristopherNeural"
-        safe_text = _html.escape(text)
-        ssml      = (
-            '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
-            'xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
-            f'<voice name="{voice}"><mstts:express-as style="newscast">'
-            f'{safe_text}'
-            '</mstts:express-as></voice></speak>'
-        )
-        communicate = edge_tts.Communicate(ssml, voice)
+        voice     = "en-US-GuyNeural"
+        communicate = edge_tts.Communicate(text, voice)
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             tmp_path = f.name
         await communicate.save(tmp_path)
@@ -6850,10 +6841,9 @@ def location_update_route():
         if name:
             location_data['location_name'] = name
         # If moved >~4 miles, reset station so weather re-discovers for new location
-        if old_lat and old_lon:
-            if abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07:
-                _nws_station_url = None
-                weather['last_update'] = 0   # force immediate weather refresh
+        if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
+            _nws_station_url = None
+            weather['last_update'] = 0   # force immediate weather refresh
     return jsonify({'ok': True, 'lat': location_data['lat'], 'lon': location_data['lon']})
 
 @display_app.route('/build/part/search')
