@@ -790,6 +790,14 @@ def get_weather():
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=6) as r:
                 pts = json.loads(r.read())
+            # Pull city/state from NWS points response
+            rel = pts.get('properties', {}).get('relativeLocation', {}).get('properties', {})
+            city  = rel.get('city', '')
+            state = rel.get('state', '')
+            if city and state and not location_data.get('location_name'):
+                resolved_name = f'{city}, {state}'
+                location_data['location_name'] = resolved_name
+                threading.Thread(target=speak, args=(f'Location locked. {resolved_name}.',), daemon=True).start()
             stations_url = pts['properties']['observationStations']
             with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=6) as r:
                 stations = json.loads(r.read())
@@ -6851,20 +6859,16 @@ def location_update_route():
         old_lon = location_data.get('lon')
         location_data['lat'] = float(lat)
         location_data['lon'] = float(lon)
-        prev_name = location_data.get('location_name', '')
         if name:
             location_data['location_name'] = name
-        elif not prev_name:
-            resolved = _reverse_geocode(float(lat), float(lon))
-            if resolved:
-                location_data['location_name'] = resolved
-        new_name = location_data.get('location_name', '')
-        if new_name and new_name != prev_name:
-            threading.Thread(target=speak, args=(f'Location locked. {new_name}.',), daemon=True).start()
-        # If moved >~4 miles, reset station so weather re-discovers for new location
+        # If moved >~4 miles (or first fix), reset station — weather_monitor will re-discover
+        # and pull city/state from the NWS /points response
         if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
+            old_name = location_data.get('location_name', '')
+            if not name:
+                location_data['location_name'] = ''  # clear so NWS re-fills on next weather run
             _nws_station_url = None
-            weather['last_update'] = 0   # force immediate weather refresh
+            weather['last_update'] = 0
     return jsonify({'ok': True, 'lat': location_data['lat'], 'lon': location_data['lon']})
 
 @display_app.route('/build/part/search')
