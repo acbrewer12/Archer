@@ -6834,6 +6834,22 @@ def build_update_route():
     save_state()
     return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
 
+def _resolve_location_from_nws(lat, lon):
+    try:
+        hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+        pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
+        with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
+            pts = json.loads(r.read())
+        rel   = pts.get('properties', {}).get('relativeLocation', {}).get('properties', {})
+        city  = rel.get('city', '')
+        state = rel.get('state', '')
+        if city and state:
+            resolved = f'{city}, {state}'
+            location_data['location_name'] = resolved
+            speak(f'Location locked. {resolved}.')
+    except Exception as e:
+        print(f'[GPS] NWS location resolve failed: {e}')
+
 @display_app.route('/location/update', methods=['POST'])
 def location_update_route():
     global _nws_station_url
@@ -6848,15 +6864,12 @@ def location_update_route():
         location_data['lon'] = float(lon)
         if name:
             location_data['location_name'] = name
-        # If moved >~4 miles (or first fix), reset station — weather_monitor will re-discover
-        # and pull city/state from the NWS /points response
         if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
-            old_name = location_data.get('location_name', '')
-            if not name:
-                location_data['location_name'] = ''  # clear so NWS re-fills on next weather run
+            location_data['location_name'] = name or ''
             _nws_station_url = None
             weather['last_update'] = 0
-    return jsonify({'ok': True, 'lat': location_data['lat'], 'lon': location_data['lon']})
+            threading.Thread(target=_resolve_location_from_nws, args=(float(lat), float(lon)), daemon=True).start()
+    return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon')})
 
 @display_app.route('/build/part/search')
 def build_part_search():
@@ -7270,6 +7283,32 @@ def terminal_exec():
     cmd  = data.get('cmd', '').strip()
     if not cmd:
         return jsonify({'stdout': '', 'stderr': ''})
+    if cmd.strip() in ('/help', 'help'):
+        help_text = (
+            "ARCHER SERVER COMMANDS\n"
+            "──────────────────────────────────────────\n"
+            "System\n"
+            "  ps aux | grep archer     — check if archer.py is running\n"
+            "  cat /tmp/ollama.log      — view Ollama logs\n"
+            "  free -h                  — memory usage\n"
+            "  df -h                    — disk usage\n"
+            "  uptime                   — system load\n"
+            "\nArcher State  (read-only Python snippets)\n"
+            "  python3 -c \"import json,urllib.request; print('ok')\"\n"
+            "\nLogs\n"
+            "  /terminal/log_stream     — live log SSE feed (this panel)\n"
+            "\nNetwork\n"
+            "  curl -s http://localhost:7860/live | python3 -m json.tool\n"
+            "  curl -s http://localhost:7860/health\n"
+            "\nGPS / Location\n"
+            "  curl -X POST http://localhost:7860/location/update \\\n"
+            "    -H 'Content-Type: application/json' \\\n"
+            "    -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
+            "\nBuild\n"
+            "  curl http://localhost:7860/build/parts\n"
+            "\nType any shell command to run it on the server.\n"
+        )
+        return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
