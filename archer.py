@@ -780,13 +780,15 @@ weather = {
 }
 _nws_station_url = None  # cached after first lookup
 
+_nws_forecast_url = None   # cached hourly forecast URL for exact coordinates
+
 def get_weather():
-    global _nws_station_url
+    global _nws_station_url, _nws_forecast_url
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
     try:
         hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
-        if not _nws_station_url:
+        if not _nws_forecast_url:
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=6) as r:
                 pts = json.loads(r.read())
@@ -798,29 +800,28 @@ def get_weather():
                 resolved_name = f'{city}, {state}'
                 location_data['location_name'] = resolved_name
                 threading.Thread(target=speak, args=(f'Location locked. {resolved_name}.',), daemon=True).start()
+            _nws_forecast_url  = pts['properties']['forecastHourly']
             stations_url = pts['properties']['observationStations']
             with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=6) as r:
                 stations = json.loads(r.read())
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
 
-        obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
-        with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
-            obs = json.loads(r.read())
+        # Use hourly gridpoint forecast (interpolated to exact coordinates) for temp + condition
+        with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+            fc = json.loads(r.read())
+        period   = fc['properties']['periods'][0]
+        temp_f   = period['temperature']   # already in °F
+        desc     = (period.get('shortForecast') or '').lower()
+        wind_str = (period.get('windSpeed') or '0 mph').split()[0]
+        wind_mph = int(wind_str) if wind_str.isdigit() else 0
 
-        props    = obs['properties']
-        temp_c   = props['temperature']['value']
-        temp_f   = round(temp_c * 9/5 + 32) if temp_c is not None else weather['temp']
-        desc     = (props.get('textDescription') or '').lower()
-        wind_ms  = props['windSpeed']['value'] or 0
-        wind_mph = round(wind_ms * 2.237)
-
-        if 'thunder' in desc:                                             condition = 'thunderstorm'
-        elif 'snow' in desc or 'blizzard' in desc:                        condition = 'snowing'
-        elif any(w in desc for w in ('rain','shower','drizzle','storm')): condition = 'raining'
-        elif 'overcast' in desc:                                          condition = 'cloudy'
-        elif any(w in desc for w in ('partly','mostly cloudy')):          condition = 'partly cloudy'
-        elif any(w in desc for w in ('clear','sunny','fair','few clouds')):condition = 'clear'
-        else:                                                              condition = 'cloudy'
+        if 'thunder' in desc:                                              condition = 'thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:                         condition = 'snowing'
+        elif any(w in desc for w in ('rain','shower','drizzle','storm')):  condition = 'raining'
+        elif 'overcast' in desc or 'cloudy' in desc:                       condition = 'cloudy'
+        elif any(w in desc for w in ('partly','mostly')):                  condition = 'partly cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): condition = 'clear'
+        else:                                                               condition = desc[:20] or 'cloudy'
 
         return {'temp': temp_f, 'condition': condition, 'wind': wind_mph, 'precip': 0,
                 'raining': condition in ('raining','thunderstorm'),
@@ -6882,7 +6883,7 @@ def _resolve_location_from_nws(lat, lon):
 
 @display_app.route('/location/update', methods=['POST'])
 def location_update_route():
-    global _nws_station_url
+    global _nws_station_url, _nws_forecast_url
     data = request.get_json() or {}
     lat  = data.get('lat')
     lon  = data.get('lon')
@@ -6900,6 +6901,7 @@ def location_update_route():
             if not name:
                 location_data['location_name'] = ''
             _nws_station_url = None
+            _nws_forecast_url = None
             weather['last_update'] = 0
             threading.Thread(target=_resolve_location_from_nws, args=(float(lat), float(lon)), daemon=True).start()
     return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
