@@ -778,8 +778,13 @@ body.day{background:#0d0d0d}
         </div>
         <div class="drive-cond">
           <div class="drive-cond-lbl">CONDITIONS</div>
-          <div class="drive-cond-val" id="dr-conditions">Salem MO — --°F — --</div>
+          <div class="drive-cond-val" id="dr-conditions">--°F — --</div>
         </div>
+      </div>
+
+      <div id="gps-prompt" style="display:none;margin:0 8px;background:#0a0a00;border:1px solid var(--yellow);border-radius:6px;padding:10px 14px;cursor:pointer;text-align:center" onclick="requestGPS()">
+        <div style="font-size:9px;color:var(--yellow);letter-spacing:3px;font-family:'Share Tech Mono',monospace">⚠ TAP TO ENABLE GPS</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">Location permission required</div>
       </div>
     </div>
 
@@ -2083,13 +2088,36 @@ async function pushGPS(lat, lon) {
   } catch(e) { console.warn('[GPS] push failed:', e); }
 }
 
+let _gpsWatchId = null;
+
+function _showGPSPrompt(show) {
+  const el = document.getElementById('gps-prompt');
+  if (el) el.style.display = show ? 'block' : 'none';
+}
+
+function requestGPS() {
+  if (!navigator.geolocation) return;
+  _showGPSPrompt(false);
+  navigator.geolocation.getCurrentPosition(pos => {
+    _showGPSPrompt(false);
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    _lastPushedLat = lat; _lastPushedLon = lon;
+    pushGPS(lat, lon);
+    startGPSWatch();
+  }, err => {
+    console.warn('[GPS] requestGPS failed:', err.message);
+    _showGPSPrompt(true);
+  }, {enableHighAccuracy: true, timeout: 15000});
+}
+
 function startGPSWatch() {
   if (!navigator.geolocation) {
-    console.warn('[GPS] geolocation not available');
     set('map-loc-label', 'GPS unavailable');
     return;
   }
+  if (_gpsWatchId !== null) navigator.geolocation.clearWatch(_gpsWatchId);
   const onPos = pos => {
+    _showGPSPrompt(false);
     const lat = pos.coords.latitude, lon = pos.coords.longitude;
     if (_lastPushedLat === null ||
         Math.abs(lat - _lastPushedLat) > 0.001 ||
@@ -2099,17 +2127,12 @@ function startGPSWatch() {
     }
   };
   const onErr = err => {
-    const msgs = {1:'Location permission denied — allow in browser settings',
-                  2:'GPS signal unavailable', 3:'GPS timed out'};
-    const msg = msgs[err.code] || 'GPS error';
-    console.warn('[GPS]', msg, err.message);
-    set('map-loc-label', err.code === 1 ? 'GPS denied' : 'GPS error');
-    // If permission denied, try one getCurrentPosition to trigger browser prompt
-    if (err.code === 1) {
-      navigator.geolocation.getCurrentPosition(onPos, () => {}, {enableHighAccuracy: false});
-    }
+    console.warn('[GPS] error code', err.code, err.message);
+    if (err.code === 1) { _showGPSPrompt(true); set('map-loc-label', 'GPS denied'); }
+    else { set('map-loc-label', 'GPS error'); }
   };
-  navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy: true, maximumAge: 15000, timeout: 30000});
+  _gpsWatchId = navigator.geolocation.watchPosition(onPos, onErr,
+    {enableHighAccuracy: true, maximumAge: 15000, timeout: 30000});
 }
 startGPSWatch();
 
