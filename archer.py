@@ -6851,12 +6851,16 @@ def location_update_route():
         old_lon = location_data.get('lon')
         location_data['lat'] = float(lat)
         location_data['lon'] = float(lon)
+        prev_name = location_data.get('location_name', '')
         if name:
             location_data['location_name'] = name
-        elif not location_data.get('location_name'):
+        elif not prev_name:
             resolved = _reverse_geocode(float(lat), float(lon))
             if resolved:
                 location_data['location_name'] = resolved
+        new_name = location_data.get('location_name', '')
+        if new_name and new_name != prev_name:
+            threading.Thread(target=speak, args=(f'Location locked. {new_name}.',), daemon=True).start()
         # If moved >~4 miles, reset station so weather re-discovers for new location
         if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
             _nws_station_url = None

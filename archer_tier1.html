@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Archer</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Rajdhani:wght@400;600;700&display=swap');
@@ -65,7 +65,7 @@ body{background:#000;color:var(--text);font-family:'Rajdhani',sans-serif;min-hei
 body.day{background:#0d0d0d}
 
 .phone{
-  width:360px;
+  width:min(360px,100%);
   background:var(--bg);
   border:1px solid #1e0000;
   border-radius:14px;
@@ -530,11 +530,83 @@ body.day{background:#0d0d0d}
   .health-item { font-size: 13px; }
 }
 
-/* Desktop / widescreen (≥ 1024 px) */
-@media (min-width: 1024px) {
-  .tab { padding: 11px 22px; font-size: 11px; letter-spacing: 3px; }
-  .screen { padding: 16px; }
+/* ─── DESKTOP / WIDESCREEN ─── */
+@media (min-width: 768px) {
+  body { padding: 0; align-items: stretch; }
+  .phone {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .screens { flex: 1; }
+  .screen { padding: 16px; gap: 10px; }
+  .hdr { padding: 10px 20px; }
+  .hdr-title { font-size: 26px; letter-spacing: 8px; }
+  .hdr-badge { font-size: 11px; padding: 3px 12px; }
+  .day-toggle { font-size: 11px; padding: 4px 12px; }
+  .tabs { justify-content: flex-start; }
+  .tab { padding: 10px 20px; font-size: 11px; letter-spacing: 3px; }
+  /* bigger text elements */
+  .lbl { font-size: 9px; letter-spacing: 4px; }
+  .section-title { font-size: 10px; letter-spacing: 4px; }
+  .box { padding: 12px 16px; }
+  /* drive screen */
+  .drive-speed { font-size: clamp(100px, 20vw, 200px); }
+  .drive-rpm-row { padding: 0 16px; }
+  .drive-rpm-num { font-size: clamp(36px, 5vw, 64px); }
+  .drive-gear-num { font-size: clamp(48px, 7vw, 80px); }
+  .drive-boost-row { padding: 0 16px; }
+  .drive-boost-num { font-size: clamp(32px, 4vw, 52px); }
+  .drive-stats { grid-template-columns: repeat(8, 1fr); padding: 0 16px; }
+  .drive-stat-val { font-size: 18px; }
+  .drive-msg { margin: 0 16px 6px; padding: 10px 14px; }
+  .drive-msg-text { font-size: 13px; }
+  .drive-score-row { padding: 0 16px 10px; }
+  .drive-score-val { font-size: 36px; }
+  /* dash */
+  .dash-big { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .dash-big-num { font-size: clamp(44px, 7vw, 80px); }
+  /* perf */
+  .perf-rpm { font-size: clamp(80px, 14vw, 160px); }
+  .perf-stats { grid-template-columns: repeat(6, 1fr); }
+  .perf-stat-val { font-size: 32px; }
+  /* sensors */
   .sensor-grid { grid-template-columns: repeat(6, 1fr); }
+  .sensor-val { font-size: 22px; }
+  /* launch */
+  .launch-big { font-size: clamp(76px, 13vw, 130px); }
+  .launch-grid { grid-template-columns: repeat(6, 1fr); }
+  .launch-val { font-size: 36px; }
+  .launch-btn { font-size: 28px; letter-spacing: 6px; padding: 20px; }
+  .ll { width: 44px; height: 44px; }
+  /* track */
+  .track-et { font-size: clamp(72px, 12vw, 140px); }
+  .track-sum { grid-template-columns: repeat(6, 1fr); }
+  .track-sum-val { font-size: 34px; }
+  .split-time { font-size: 30px; }
+  /* health */
+  .health-name { font-size: 13px; }
+  .health-val { font-size: 13px; }
+  /* race */
+  .race-dial { font-size: clamp(68px, 11vw, 120px); }
+  .race-timers { grid-template-columns: repeat(4, 1fr); }
+  .race-timer-val { font-size: 48px; }
+  .race-records { grid-template-columns: repeat(6, 1fr); }
+  /* shared grids */
+  .row2 { grid-template-columns: repeat(4, 1fr); }
+  .row3 { grid-template-columns: repeat(6, 1fr); }
+  .row4 { grid-template-columns: repeat(8, 1fr); }
+}
+@media (min-width: 1200px) {
+  .screen { padding: 24px; gap: 14px; }
+  .drive-stats { grid-template-columns: repeat(8, 1fr); }
+  .sensor-grid { grid-template-columns: repeat(8, 1fr); }
+  .row2 { grid-template-columns: repeat(6, 1fr); }
 }
 </style>
 </head>
