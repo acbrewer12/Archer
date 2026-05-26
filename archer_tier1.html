@@ -135,9 +135,9 @@ body.day{background:#0d0d0d}
 .tab.drive-tab.active{color:var(--green);border-bottom-color:var(--green);text-shadow:0 0 8px rgba(0,255,85,0.6)}
 
 /* ─── SCREEN CONTAINER ─── */
-.screens{position:relative;flex:1;overflow-y:auto}
-.screen{display:none;flex-direction:column;gap:4px;padding:8px;background:var(--bg);min-height:100%}
-.screen.active{display:flex}
+.screens{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0}
+.screen{display:none;flex-direction:column;gap:4px;padding:8px;background:var(--bg)}
+.screen.active{display:flex;flex:1}
 
 /* ─── SHARED ─── */
 .box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;transition:background 0.3s,border 0.3s}
