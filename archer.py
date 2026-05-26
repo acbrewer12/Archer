@@ -1171,6 +1171,9 @@ def get_display_data():
         'fuel_range':    fuel_tank['range_est'],
         'fuel_low':      fuel_tank['current_gal'] <= fuel_tank['low_fuel_warn'],
         'build_caps':    get_build_caps(),
+        'gps_lat':       location_data.get('lat'),
+        'gps_lon':       location_data.get('lon'),
+        'gps_name':      location_data.get('location_name', ''),
     }
 
 # ── ASK ARCHER ───────────────────────────
