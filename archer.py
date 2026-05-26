@@ -2210,6 +2210,22 @@ def deactivate_parking_mode():
 # ROUTE / LOCATION TRACKER  
 # ══════════════════════════════════════════
 
+_LOC_CACHE = '/tmp/archer_location.json'
+def _load_location_cache():
+    try:
+        with open(_LOC_CACHE) as f:
+            c = json.load(f)
+        return c.get('lat'), c.get('lon'), c.get('name', '')
+    except Exception:
+        return None, None, ''
+def _save_location_cache(lat, lon, name):
+    try:
+        with open(_LOC_CACHE, 'w') as f:
+            json.dump({'lat': lat, 'lon': lon, 'name': name}, f)
+    except Exception:
+        pass
+
+_cached_lat, _cached_lon, _cached_name = _load_location_cache()
 location_data = {
     'current_road':   '',
     'destination':    '',
@@ -2217,9 +2233,9 @@ location_data = {
     'session_miles':  0.0,
     'last_location':  '',
     'location_log':   [],
-    'lat':            None,
-    'lon':            None,
-    'location_name':  '',
+    'lat':            _cached_lat,
+    'lon':            _cached_lon,
+    'location_name':  _cached_name,
 }
 
 def set_destination(dest):
@@ -6848,14 +6864,18 @@ def _resolve_location_from_nws(lat, lon):
         if city and state:
             resolved = f'{city}, {state}'
             location_data['location_name'] = resolved
+            _save_location_cache(lat, lon, resolved)
             speak(f'Location locked. {resolved}.')
             print(f'[GPS] location set to {resolved}')
         else:
-            # NWS gave no city — show coordinates as fallback
-            location_data['location_name'] = f'{lat:.3f}°, {lon:.3f}°'
+            fallback = f'{lat:.3f}°, {lon:.3f}°'
+            location_data['location_name'] = fallback
+            _save_location_cache(lat, lon, fallback)
     except Exception as e:
         print(f'[GPS] NWS location resolve failed: {e}')
-        location_data['location_name'] = f'{lat:.3f}°, {lon:.3f}°'
+        fallback = f'{lat:.3f}°, {lon:.3f}°'
+        location_data['location_name'] = fallback
+        _save_location_cache(lat, lon, fallback)
 
 @display_app.route('/location/update', methods=['POST'])
 def location_update_route():
