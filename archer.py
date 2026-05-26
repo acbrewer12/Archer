@@ -6835,20 +6835,27 @@ def build_update_route():
     return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
 
 def _resolve_location_from_nws(lat, lon):
+    print(f'[GPS] resolving location for {lat:.4f},{lon:.4f}')
     try:
         hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
         pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
-        with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
+        with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=10) as r:
             pts = json.loads(r.read())
         rel   = pts.get('properties', {}).get('relativeLocation', {}).get('properties', {})
         city  = rel.get('city', '')
         state = rel.get('state', '')
+        print(f'[GPS] NWS returned city={city!r} state={state!r}')
         if city and state:
             resolved = f'{city}, {state}'
             location_data['location_name'] = resolved
             speak(f'Location locked. {resolved}.')
+            print(f'[GPS] location set to {resolved}')
+        else:
+            # NWS gave no city — show coordinates as fallback
+            location_data['location_name'] = f'{lat:.3f}°, {lon:.3f}°'
     except Exception as e:
         print(f'[GPS] NWS location resolve failed: {e}')
+        location_data['location_name'] = f'{lat:.3f}°, {lon:.3f}°'
 
 @display_app.route('/location/update', methods=['POST'])
 def location_update_route():
@@ -6862,14 +6869,18 @@ def location_update_route():
         old_lon = location_data.get('lon')
         location_data['lat'] = float(lat)
         location_data['lon'] = float(lon)
+        print(f'[GPS] received lat={lat}, lon={lon}  old=({old_lat},{old_lon})')
         if name:
             location_data['location_name'] = name
+            print(f'[GPS] name from browser: {name}')
         if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
-            location_data['location_name'] = name or ''
+            if not name:
+                location_data['location_name'] = ''
             _nws_station_url = None
             weather['last_update'] = 0
             threading.Thread(target=_resolve_location_from_nws, args=(float(lat), float(lon)), daemon=True).start()
-    return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon')})
+    return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
+                    'name': location_data.get('location_name', '')})
 
 @display_app.route('/build/part/search')
 def build_part_search():

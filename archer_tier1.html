@@ -1769,12 +1769,14 @@ async function pollLive() {
     if (d.est_hp != null) set('bld-hp', d.est_hp);
 
     // ── DRIVE tab — CONDITIONS (weather + road) ──────────────
-    const _locLabel = d.gps_name || '';
-    if (_locLabel) set('map-loc-label', _locLabel);
+    const _gpsAvail = d.gps_lat != null && d.gps_lon != null;
+    const _coordFallback = _gpsAvail ? `${d.gps_lat.toFixed(2)}°N ${Math.abs(d.gps_lon).toFixed(2)}°W` : '';
+    const _locLabel = d.gps_name || _coordFallback || 'No GPS';
+    set('map-loc-label', _locLabel);
     if (d.weather && d.road) {
-      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : (_locLabel || 'Current Location') + ' — ') + d.weather);
+      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : _locLabel + ' — ') + d.weather);
     } else if (d.weather) {
-      set('dr-conditions', (_locLabel || 'Current Location') + ' — ' + d.weather);
+      set('dr-conditions', _locLabel + ' — ' + d.weather);
     }
 
     // ── LAUNCH tab ───────────────────────────────────────────
