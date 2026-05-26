@@ -6835,19 +6835,6 @@ def build_update_route():
     return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
 
 @display_app.route('/location/update', methods=['POST'])
-def _reverse_geocode(lat, lon):
-    try:
-        url = f'https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Archer/1.0 aydenbrewer0622@gmail.com'})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            gd = json.loads(r.read())
-        a = gd.get('address', {})
-        city  = a.get('city') or a.get('town') or a.get('village') or a.get('municipality') or a.get('county') or ''
-        state = a.get('state', '')
-        return f'{city}, {state}' if city and state else city or state or ''
-    except Exception:
-        return ''
-
 def location_update_route():
     global _nws_station_url
     data = request.get_json() or {}
