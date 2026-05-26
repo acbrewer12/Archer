@@ -2079,21 +2079,36 @@ async function pushGPS(lat, lon) {
   try {
     await fetch('/location/update', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({lat, lon})});
-  } catch(e) {}
+  } catch(e) { console.warn('[GPS] push failed:', e); }
 }
 
 function startGPSWatch() {
-  if (!navigator.geolocation) return;
-  navigator.geolocation.watchPosition(pos => {
+  if (!navigator.geolocation) {
+    console.warn('[GPS] geolocation not available');
+    set('map-loc-label', 'GPS unavailable');
+    return;
+  }
+  const onPos = pos => {
     const lat = pos.coords.latitude, lon = pos.coords.longitude;
-    // Only push if moved >~100m from last push
     if (_lastPushedLat === null ||
         Math.abs(lat - _lastPushedLat) > 0.001 ||
         Math.abs(lon - _lastPushedLon) > 0.001) {
       _lastPushedLat = lat; _lastPushedLon = lon;
       pushGPS(lat, lon);
     }
-  }, null, {enableHighAccuracy: true, maximumAge: 15000});
+  };
+  const onErr = err => {
+    const msgs = {1:'Location permission denied — allow in browser settings',
+                  2:'GPS signal unavailable', 3:'GPS timed out'};
+    const msg = msgs[err.code] || 'GPS error';
+    console.warn('[GPS]', msg, err.message);
+    set('map-loc-label', err.code === 1 ? 'GPS denied' : 'GPS error');
+    // If permission denied, try one getCurrentPosition to trigger browser prompt
+    if (err.code === 1) {
+      navigator.geolocation.getCurrentPosition(onPos, () => {}, {enableHighAccuracy: false});
+    }
+  };
+  navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy: true, maximumAge: 15000, timeout: 30000});
 }
 startGPSWatch();
 
