@@ -806,22 +806,53 @@ def get_weather():
                 stations = json.loads(r.read())
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
 
-        # Use hourly gridpoint forecast (interpolated to exact coordinates) for temp + condition
-        with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
-            fc = json.loads(r.read())
-        period   = fc['properties']['periods'][0]
-        temp_f   = period['temperature']   # already in °F
-        desc     = (period.get('shortForecast') or '').lower()
-        wind_str = (period.get('windSpeed') or '0 mph').split()[0]
-        wind_mph = int(wind_str) if wind_str.isdigit() else 0
+        def _parse_condition(desc):
+            desc = desc.lower()
+            if 'thunder' in desc:                                              return 'thunderstorm'
+            elif 'snow' in desc or 'blizzard' in desc:                         return 'snowing'
+            elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'raining'
+            elif 'overcast' in desc or 'cloudy' in desc:                       return 'cloudy'
+            elif any(w in desc for w in ('partly','mostly')):                  return 'partly cloudy'
+            elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'clear'
+            else:                                                               return desc[:20] or 'cloudy'
 
-        if 'thunder' in desc:                                              condition = 'thunderstorm'
-        elif 'snow' in desc or 'blizzard' in desc:                         condition = 'snowing'
-        elif any(w in desc for w in ('rain','shower','drizzle','storm')):  condition = 'raining'
-        elif 'overcast' in desc or 'cloudy' in desc:                       condition = 'cloudy'
-        elif any(w in desc for w in ('partly','mostly')):                  condition = 'partly cloudy'
-        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): condition = 'clear'
-        else:                                                               condition = desc[:20] or 'cloudy'
+        # Try current observations first (actual conditions, not forecast)
+        obs_temp_f = None
+        obs_condition = None
+        obs_wind_mph  = 0
+        if _nws_station_url:
+            try:
+                obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+                with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
+                    obs = json.loads(r.read())
+                props = obs.get('properties', {})
+                raw_temp_c = props.get('temperature', {}).get('value')
+                if raw_temp_c is not None:
+                    obs_temp_f = round(raw_temp_c * 9 / 5 + 32)
+                raw_wind_ms = props.get('windSpeed', {}).get('value') or 0
+                obs_wind_mph = round(raw_wind_ms * 2.237)
+                text_desc = props.get('textDescription', '')
+                if text_desc:
+                    obs_condition = _parse_condition(text_desc)
+            except Exception:
+                pass
+
+        # Fall back to hourly forecast for anything missing
+        temp_f    = obs_temp_f
+        condition = obs_condition
+        wind_mph  = obs_wind_mph
+        if temp_f is None or condition is None:
+            with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+                fc = json.loads(r.read())
+            period   = fc['properties']['periods'][0]
+            if temp_f is None:
+                temp_f = period['temperature']
+            if condition is None:
+                desc = (period.get('shortForecast') or '').lower()
+                condition = _parse_condition(desc)
+            if wind_mph == 0:
+                wind_str = (period.get('windSpeed') or '0 mph').split()[0]
+                wind_mph = int(wind_str) if wind_str.isdigit() else 0
 
         return {'temp': temp_f, 'condition': condition, 'wind': wind_mph, 'precip': 0,
                 'raining': condition in ('raining','thunderstorm'),
