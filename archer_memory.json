@@ -92,7 +92,7 @@
   "trip_log": [
     {
       "date": "May 27 2026",
-      "time": "09:53 PM",
+      "time": "10:04 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -105,7 +105,7 @@
     },
     {
       "date": "May 27 2026",
-      "time": "09:53 PM",
+      "time": "10:04 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,21 +121,115 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "May 27 2026 09:53 PM"
+      "registered_at": "May 27 2026 10:04 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "May 27 2026 09:53 PM"
+      "registered_at": "May 27 2026 10:04 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "May 27 2026 09:53 PM"
+      "registered_at": "May 27 2026 10:04 PM"
+    },
+    "test-fp-pass": {
+      "name": "Passenger",
+      "tier": 2,
+      "registered_at": "May 27 2026 10:04 PM"
+    },
+    "test-fp-name": {
+      "name": "Alice",
+      "tier": 3,
+      "registered_at": "May 27 2026 10:04 PM"
+    },
+    "known-fp-99": {
+      "name": "Me",
+      "tier": 2,
+      "registered_at": "May 27 2026 10:04 PM"
     }
   },
   "build_tracker": {
-    "parts": [],
+    "parts": [
+      {
+        "id": "9b7347dc",
+        "name": "Cold Air Intake",
+        "part_number": "",
+        "category": "intake",
+        "hp_gain": 15.0,
+        "tq_gain": 12.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 299.99,
+        "date_added": "May 27 2026",
+        "notes": ""
+      },
+      {
+        "id": "b5bbf9d7",
+        "name": "Test Part",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 27 2026",
+        "notes": ""
+      },
+      {
+        "id": "be33e402",
+        "name": "Headers",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 27 2026",
+        "notes": ""
+      },
+      {
+        "id": "787a1619",
+        "name": "UpdateMe",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "installed",
+        "cost": 0.0,
+        "date_added": "May 27 2026",
+        "notes": ""
+      },
+      {
+        "id": "b474e41d",
+        "name": "Dummy",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 27 2026",
+        "notes": ""
+      },
+      {
+        "id": "327b8406",
+        "name": "Tune",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 30.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 27 2026",
+        "notes": ""
+      }
+    ],
     "mods": [],
     "total_spent": 0,
     "build_start": "2026",
@@ -152,7 +246,7 @@
     "transmission": "4L60E",
     "rear_gear": "3.73",
     "tune": "Stock ECM",
-    "cold_air_intake": false,
+    "cold_air_intake": true,
     "long_tube_headers": false,
     "full_exhaust": false,
     "intake_manifold": false,
@@ -482,6 +576,21 @@
       "lat": 10.0,
       "lon": 20.0,
       "address": "Marker"
+    },
+    "coords_check": {
+      "lat": 42.0,
+      "lon": -93.5,
+      "address": "Iowa"
+    },
+    "alpha": {
+      "lat": 1.0,
+      "lon": 1.0,
+      "address": "A"
+    },
+    "beta": {
+      "lat": 2.0,
+      "lon": 2.0,
+      "address": "B"
     }
   }
 }

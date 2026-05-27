@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#000000">
+<title>Archer — Initializing</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;padding:20px}
+:root{--red:#cc0000;--amber:#ffaa00;--green:#00cc44;--dim:#1a1a1a;--label:#444;--text2:#888}
+
+.wrap{width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;gap:0}
+
+/* LOGO */
+.logo-wrap{position:relative;margin-bottom:6px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.4)}
+.logo-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);animation:scan 2.4s linear infinite;top:0;opacity:0.7}
+@keyframes scan{0%{top:0;opacity:0}10%{opacity:0.7}90%{opacity:0.7}100%{top:100%;opacity:0}}
+
+.vehicle{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:28px}
+
+/* PROGRESS BAR */
+.bar-track{width:100%;height:2px;background:#0d0d0d;border:1px solid var(--dim);border-radius:1px;margin-bottom:24px;overflow:hidden}
+.bar-fill{height:100%;width:0%;background:var(--red);border-radius:1px;transition:width 0.35s ease;box-shadow:0 0 8px rgba(204,0,0,0.6)}
+
+/* CHECK LIST */
+.checks{width:100%;display:flex;flex-direction:column;gap:6px;min-height:210px}
+.check-item{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#050505;border:1px solid #0d0d0d;border-radius:4px;opacity:0;transform:translateY(6px);transition:opacity 0.3s ease,transform 0.3s ease}
+.check-item.visible{opacity:1;transform:translateY(0)}
+.check-icon{width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px}
+.check-spinner{width:12px;height:12px;border:1.5px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.check-label{font-size:11px;letter-spacing:2px;color:#555;flex:1}
+.check-label.active{color:#888}
+.check-label.done{color:#fff}
+.check-status{font-size:10px;letter-spacing:1px;color:var(--label);flex-shrink:0}
+.check-status.ok{color:var(--green)}
+.check-status.warn{color:var(--amber)}
+.check-status.fail{color:var(--red)}
+
+/* READY */
+.ready-wrap{margin-top:20px;text-align:center;opacity:0;transition:opacity 0.5s}
+.ready-wrap.show{opacity:1}
+.ready-text{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:6px;color:var(--green)}
+.ready-sub{font-size:9px;color:var(--label);letter-spacing:3px;margin-top:4px}
+
+/* VERSION */
+.ver{position:fixed;bottom:12px;font-size:8px;color:#1a1a1a;letter-spacing:2px}
+
+/* CORNER ACCENTS */
+.corner{position:fixed;width:18px;height:18px;border-color:var(--dim);border-style:solid;opacity:0.6}
+.corner.tl{top:12px;left:12px;border-width:1px 0 0 1px}
+.corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
+.corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
+.corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
+</style>
+</head>
+<body>
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<div class="wrap">
+  <div class="logo-wrap">
+    <div class="logo">ARCHER</div>
+    <div class="logo-scan"></div>
+  </div>
+  <div class="vehicle">2006 GMC SIERRA 2500HD</div>
+
+  <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+
+  <div class="checks" id="checks"></div>
+
+  <div class="ready-wrap" id="ready">
+    <div class="ready-text">ALL SYSTEMS GO</div>
+    <div class="ready-sub">LOADING INTERFACE...</div>
+  </div>
+</div>
+
+<div class="ver">ARCHER AI v2.0 — AYDEN BREWER</div>
+
+<script>
+const STEPS = [
+  { label: 'INITIALIZING ARCHER SYSTEM',    delay: 0,    dur: 520,  status: 'OK',     statusClass: 'ok'   },
+  { label: 'LOADING VEHICLE PROFILE',        delay: 480,  dur: 480,  status: 'OK',     statusClass: 'ok'   },
+  { label: 'CONNECTING TO SENSORS',          delay: 920,  dur: 600,  status: 'SIMUL',  statusClass: 'warn' },
+  { label: 'AUTHENTICATING DEVICE',          delay: 1380, dur: 550,  status: 'OK',     statusClass: 'ok'   },
+  { label: 'ESTABLISHING AI CORE',           delay: 1880, dur: 700,  status: 'OK',     statusClass: 'ok'   },
+  { label: 'CALIBRATING TELEMETRY',          delay: 2380, dur: 460,  status: 'READY',  statusClass: 'ok'   },
+  { label: 'ALL SYSTEMS NOMINAL',            delay: 2780, dur: 400,  status: 'GO',     statusClass: 'ok'   },
+];
+
+const checksEl = document.getElementById('checks');
+const barEl    = document.getElementById('bar');
+const readyEl  = document.getElementById('ready');
+
+const items = STEPS.map((s, i) => {
+  const row = document.createElement('div');
+  row.className = 'check-item';
+  row.innerHTML = `
+    <div class="check-icon" id="icon-${i}"></div>
+    <div class="check-label" id="lbl-${i}">${s.label}</div>
+    <div class="check-status" id="stat-${i}"></div>
+  `;
+  checksEl.appendChild(row);
+  return row;
+});
+
+function setProgress(pct) {
+  barEl.style.width = pct + '%';
+}
+
+STEPS.forEach((s, i) => {
+  const totalSteps = STEPS.length;
+
+  // Appear
+  setTimeout(() => {
+    items[i].classList.add('visible');
+    document.getElementById(`lbl-${i}`).classList.add('active');
+    document.getElementById(`icon-${i}`).innerHTML = '<div class="check-spinner"></div>';
+    setProgress(Math.round(((i + 0.5) / totalSteps) * 100));
+  }, s.delay);
+
+  // Complete
+  setTimeout(() => {
+    const icon  = document.getElementById(`icon-${i}`);
+    const lbl   = document.getElementById(`lbl-${i}`);
+    const stat  = document.getElementById(`stat-${i}`);
+    icon.innerHTML = '▸';
+    icon.style.color = s.statusClass === 'ok' ? 'var(--green)' : s.statusClass === 'warn' ? 'var(--amber)' : 'var(--red)';
+    lbl.className  = 'check-label done';
+    stat.textContent  = s.status;
+    stat.className    = 'check-status ' + s.statusClass;
+    items[i].style.borderColor = s.statusClass === 'ok' ? '#0d1a0d' : s.statusClass === 'warn' ? '#1a1500' : '#1a0000';
+    setProgress(Math.round(((i + 1) / totalSteps) * 100));
+  }, s.delay + s.dur);
+});
+
+const totalTime = Math.max(...STEPS.map(s => s.delay + s.dur));
+
+setTimeout(() => {
+  setProgress(100);
+  readyEl.classList.add('show');
+}, totalTime + 80);
+
+setTimeout(() => {
+  window.location.href = '/';
+}, totalTime + 900);
+</script>
+</body></html>

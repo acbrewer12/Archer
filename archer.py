@@ -6852,7 +6852,7 @@ def build_update_route():
         elif k in build_specs:
             build_specs[k] = v
     save_state()
-    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
+    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power_from_parts()})
 
 def _resolve_location_from_nws(lat, lon):
     print(f'[GPS] resolving location for {lat:.4f},{lon:.4f}')
@@ -8489,6 +8489,19 @@ def get_tier_html(tier, name=None):
     return f"""<!DOCTYPE html><html><body style="background:#000;color:#fff;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh">
     <div style="text-align:center"><div style="color:#cc0000;font-size:24px;letter-spacing:4px">ARCHER</div>
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
+
+
+@display_app.route('/boot')
+@display_app.route('/init')
+def boot_page():
+    """Boot/initialization splash — animates then redirects to /."""
+    from flask import Response as FR
+    import os
+    if os.path.exists('archer_init.html'):
+        with open('archer_init.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
 
 
 @display_app.route('/fans')
