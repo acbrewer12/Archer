@@ -8847,9 +8847,24 @@ justify-content:center;height:100vh;text-align:center}
 def weather_compare_data():
     """Fetch current conditions from multiple APIs in parallel and return comparison JSON."""
     import concurrent.futures as _cf
+    global _nws_station_url, _nws_forecast_url
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
     hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+
+    # Ensure NWS URLs are resolved (may be None if get_weather()'s init failed at startup)
+    if not _nws_forecast_url or not _nws_station_url:
+        try:
+            pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
+            with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
+                pts = json.loads(r.read())
+            _nws_forecast_url = pts['properties']['forecastHourly']
+            stations_url = pts['properties']['observationStations']
+            with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=8) as r:
+                stations = json.loads(r.read())
+            _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
+        except Exception:
+            pass
 
     def _fetch_nws_obs():
         if not _nws_station_url:
