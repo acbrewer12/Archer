@@ -7461,6 +7461,7 @@ system_health = {
     'last_obd_update': time.time(),
     'failures':        [],
     'start_time':      time.time(),
+    'boot_complete':   False,   # set True once /boot/status returns ready
 }
 
 def log_system_failure(component, reason):
@@ -8529,6 +8530,21 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/fans', '/fan', '/static'}
+
+@display_app.before_request
+def require_boot():
+    """Redirect every request to the boot page until system checks complete."""
+    from flask import request as _req, redirect as _redir
+    if display_app.testing or system_health['boot_complete']:
+        return None
+    path = _req.path
+    # Allow boot page itself and its status API through; block everything else
+    if path in _BOOT_EXEMPT or path.startswith('/static'):
+        return None
+    return _redir('/boot')
+
+
 @display_app.route('/boot/status')
 def boot_status():
     """Real system health checks for the boot page. Called by archer_init.html JS."""
@@ -8637,6 +8653,8 @@ def boot_status():
         checks.append({'id': 'spotify', 'label': 'SPOTIFY', 'status': spot_status, 'detail': spot_detail})
 
     ready = all(c['status'] != 'fail' for c in checks)
+    if ready:
+        system_health['boot_complete'] = True
     return jsonify({
         'checks': checks,
         'ready':  ready,
