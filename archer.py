@@ -7493,6 +7493,7 @@ system_health = {
     'start_time':      time.time(),
     'boot_complete':   False,   # set True once /boot/status returns ready
     'maintenance':     False,   # toggled via terminal: "maintenance on/off"
+    'boot_nonce':      str(time.time()),  # unique per server start; invalidates old sessions
 }
 
 def log_system_failure(component, reason):
@@ -8583,8 +8584,11 @@ def require_boot():
         if 'text/html' in _req.headers.get('Accept', ''):
             return _redir('/maintenance')
         return None  # AJAX/API — let it through so terminal stays usable
-    # Per-session boot: every new browser session goes through the boot sequence
-    if not _sess.get('boot_complete'):
+    # Boot required if: no session, session from a previous server instance,
+    # or session that never completed boot. This ensures every fresh connection
+    # (new browser, new tab, server restart) always runs through boot.
+    nonce = system_health['boot_nonce']
+    if not _sess.get('boot_complete') or _sess.get('boot_nonce') != nonce:
         dest = _req.path
         if _req.query_string:
             dest += '?' + _req.query_string.decode('utf-8', errors='replace')
@@ -8709,6 +8713,7 @@ def boot_status():
     if ready:
         system_health['boot_complete'] = True
         _sess['boot_complete'] = True
+        _sess['boot_nonce']    = system_health['boot_nonce']
     return jsonify({
         'checks': visible,
         'total':  total,
