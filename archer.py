@@ -8923,16 +8923,60 @@ def weather_compare_data():
                 short[:20].title() or 'Cloudy')
         return period['temperature'], cond
 
+    def _fetch_wttr():
+        url = f'https://wttr.in/{lat:.4f},{lon:.4f}?format=j1'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur = d['current_condition'][0]
+        temp_f = int(cur['temp_F'])
+        desc   = (cur['weatherDesc'][0]['value'] or '').lower()
+        cond = (_wmo_condition_from_code := None) or (
+            'Thunderstorm' if 'thunder' in desc else
+            'Snow'         if 'snow' in desc or 'blizzard' in desc else
+            'Freezing Rain' if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+            'Fog'          if 'fog' in desc or 'mist' in desc else
+            'Rain Showers' if 'shower' in desc else
+            'Rain'         if any(w in desc for w in ('rain','drizzle')) else
+            'Overcast'     if 'overcast' in desc else
+            'Cloudy'       if 'cloudy' in desc or 'cloud' in desc else
+            'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
+            'Clear'        if any(w in desc for w in ('clear','sunny','fair','bright')) else
+            desc[:20].title() or 'Cloudy')
+        return temp_f, cond
+
+    def _fetch_7timer():
+        url = f'http://www.7timer.info/bin/api.pl?lon={lon:.4f}&lat={lat:.4f}&product=civil&output=json'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        ds = d['dataseries'][0]
+        temp_f = int(ds['temp2m'] * 9 / 5 + 32)
+        wx = ds.get('weather', '').lower()
+        cond = ('Thunderstorm' if 'ts' in wx else
+                'Snow'         if 'snow' in wx else
+                'Rain'         if 'rain' in wx else
+                'Fog'          if 'fog' in wx else
+                'Cloudy'       if 'cloudy' in wx or 'overcast' in wx else
+                'Partly Cloudy' if 'pcloudy' in wx or 'mcloudy' in wx else
+                'Clear'        if 'clear' in wx or 'sunny' in wx else 'Cloudy')
+        return temp_f, cond
+
     sources = [
-        ('Open-Meteo (best match)', lambda: _fetch_open_meteo()),
-        ('Open-Meteo — GFS (NOAA)', lambda: _fetch_open_meteo('gfs_seamless')),
-        ('Open-Meteo — ECMWF',      lambda: _fetch_open_meteo('ecmwf_ifs025')),
-        ('NWS Observation (station)', lambda: _fetch_nws_obs()),
-        ('NWS Hourly Forecast',      lambda: _fetch_nws_forecast()),
+        ('Open-Meteo (best match)',        lambda: _fetch_open_meteo()),
+        ('Open-Meteo — HRRR (NOAA hi-res)',lambda: _fetch_open_meteo('hrrr')),
+        ('Open-Meteo — GFS (NOAA global)', lambda: _fetch_open_meteo('gfs_seamless')),
+        ('Open-Meteo — Natl Blend (NOAA)', lambda: _fetch_open_meteo('ncep_nbm_conus')),
+        ('Open-Meteo — GraphCast (Google)',lambda: _fetch_open_meteo('gfs_graphcast025')),
+        ('Open-Meteo — ECMWF (European)',  lambda: _fetch_open_meteo('ecmwf_ifs025')),
+        ('Open-Meteo — GEM (Canada)',      lambda: _fetch_open_meteo('gem_seamless')),
+        ('Open-Meteo — DWD ICON (Germany)',lambda: _fetch_open_meteo('dwd_icon_seamless')),
+        ('wttr.in (aggregator)',           lambda: _fetch_wttr()),
+        ('7timer.info (aggregator)',       lambda: _fetch_7timer()),
+        ('NWS Observation (station)',      lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',            lambda: _fetch_nws_forecast()),
     ]
 
     results = []
-    with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+    with _cf.ThreadPoolExecutor(max_workers=12) as ex:
         futures = {ex.submit(fn): name for name, fn in sources}
         for fut, name in futures.items():
             try:
