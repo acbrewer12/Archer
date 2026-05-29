@@ -508,6 +508,7 @@ def load_state():
         parking_mode.update(data.get('parking_mode', {}))
         audio_system.update(data.get('audio_system', {}))
         location_data.update(data.get('location_data', {}))
+        _recalc_build_spent()
         print("[ARCHER] Memory loaded.")
     except Exception:
         print("[ARCHER] Starting fresh.")
@@ -1595,6 +1596,12 @@ build_tracker = {
     'target_year': '2031',
 }
 
+def _recalc_build_spent():
+    build_tracker['total_spent'] = sum(
+        p.get('cost', 0) for p in build_tracker['parts']
+        if p.get('status') in ('purchased', 'installed', 'ordered')
+    )
+
 CATEGORIES = ['engine','suspension','brakes','wheels','audio','electrical','body','interior','misc']
 
 # ── BUILD SPECS ───────────────────────────
@@ -1785,8 +1792,7 @@ def add_part(name, cost, category='misc', status='pending', notes=''):
         'notes':    notes,
     }
     build_tracker['parts'].append(part)
-    build_tracker['total_spent'] = sum(p['cost'] for p in build_tracker['parts']
-                                       if p['status'] in ('purchased', 'installed'))
+    _recalc_build_spent()
     save_state()
     return part
 
@@ -6982,6 +6988,7 @@ def build_part_add():
         'notes':       data.get('notes', ''),
     }
     build_tracker['parts'].append(part)
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
@@ -6996,6 +7003,7 @@ def build_part_update():
     for k in ('status', 'hp_gain', 'tq_gain', 'cost', 'notes', 'name', 'part_number'):
         if k in data:
             part[k] = float(data[k]) if k in ('hp_gain','tq_gain','cost') else data[k]
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
@@ -7004,6 +7012,7 @@ def build_part_update():
 def build_part_remove():
     pid = (request.get_json() or {}).get('id')
     build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
