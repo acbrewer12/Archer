@@ -8314,9 +8314,12 @@ def spotify_callback():
     if error or not code:
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
     if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
-        return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+        import uuid as _suuid2
+        _bt2 = str(_suuid2.uuid4())
+        system_health['boot_tokens'][_bt2] = time.time() + 15
+        return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
-<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1000)</script></body></html>"""
+<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt2}'}},1000)</script></body></html>"""
     try:
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
         redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
@@ -8333,10 +8336,13 @@ def spotify_callback():
             spotify_tokens['refresh_token'] = resp.get('refresh_token')
             spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
             print(f'[SPOTIFY] Authenticated. Granted scopes: {resp.get("scope")}')
-            return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+            import uuid as _suuid
+            _bt = str(_suuid.uuid4())
+            system_health['boot_tokens'][_bt] = time.time() + 15
+            return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
 <div style="font-size:12px;color:#444">You can close this tab</div>
-<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1500)</script></body></html>"""
+<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt}'}},1500)</script></body></html>"""
     except Exception as e:
         print(f'[SPOTIFY] Token exchange failed: {e}')
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
@@ -8564,6 +8570,8 @@ def get_tier_html(tier, name=None):
 
 _BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/static'}
 
+_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/')
+
 @display_app.before_request
 def require_boot():
     """Gate every page load behind boot. One-time tokens let the post-boot
@@ -8572,7 +8580,7 @@ def require_boot():
     if display_app.testing:
         return None
     path = _req.path
-    if path in _BOOT_EXEMPT or path.startswith('/static'):
+    if path in _BOOT_EXEMPT or any(path.startswith(p) for p in _BOOT_EXEMPT_PREFIXES):
         return None
     # Maintenance — browser page loads only; AJAX passes through so terminal works
     maintenance_active = (
