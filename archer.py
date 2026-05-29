@@ -7359,10 +7359,15 @@ def terminal_exec():
     if not cmd:
         return jsonify({'stdout': '', 'stderr': ''})
     if cmd.strip() in ('/help', 'help'):
+        maint_state = 'ON' if system_health['maintenance'] else 'OFF'
         help_text = (
             "ARCHER SERVER COMMANDS\n"
             "──────────────────────────────────────────\n"
-            "System\n"
+            "Maintenance\n"
+            f"  maintenance on           — redirect all visitors to maintenance page (currently {maint_state})\n"
+            "  maintenance off          — restore normal access\n"
+            "  maintenance status       — show current state\n"
+            "\nSystem\n"
             "  ps aux | grep archer     — check if archer.py is running\n"
             "  cat /tmp/ollama.log      — view Ollama logs\n"
             "  free -h                  — memory usage\n"
@@ -7384,6 +7389,18 @@ def terminal_exec():
             "\nType any shell command to run it on the server.\n"
         )
         return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
+
+    # Built-in: maintenance mode toggle
+    cmd_lower = cmd.strip().lower()
+    if cmd_lower in ('maintenance on', 'maintenance mode on', 'maint on'):
+        system_health['maintenance'] = True
+        return jsonify({'stdout': 'MAINTENANCE MODE ON — all visitors redirected to maintenance page.', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('maintenance off', 'maintenance mode off', 'maint off'):
+        system_health['maintenance'] = False
+        return jsonify({'stdout': 'MAINTENANCE MODE OFF — normal access restored.', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('maintenance status', 'maint status', 'maintenance'):
+        state = 'ON' if system_health['maintenance'] else 'OFF'
+        return jsonify({'stdout': f'Maintenance mode: {state}', 'stderr': '', 'returncode': 0})
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
@@ -7463,6 +7480,7 @@ system_health = {
     'failures':        [],
     'start_time':      time.time(),
     'boot_complete':   False,   # set True once /boot/status returns ready
+    'maintenance':     False,   # toggled via terminal: "maintenance on/off"
 }
 
 def log_system_failure(component, reason):
@@ -8542,8 +8560,8 @@ def require_boot():
     path = _req.path
     if path in _BOOT_EXEMPT or path.startswith('/static'):
         return None
-    # Maintenance mode — set MAINTENANCE_MODE=1 in HF Space secrets during deploys
-    if os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes'):
+    # Maintenance mode — toggled via terminal or MAINTENANCE_MODE env var
+    if system_health['maintenance'] or os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes'):
         return _redir('/maintenance')
     # Per-session boot: every new browser session goes through the boot sequence
     if not _sess.get('boot_complete'):
