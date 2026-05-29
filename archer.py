@@ -9003,8 +9003,11 @@ def weather_compare_data():
         'error':     None if w.get('temp') is not None else 'no data yet',
     }
 
-    weatherapi_key  = os.environ.get('WEATHERAPI_KEY', '')
-    openweather_key = os.environ.get('OPENWEATHER_KEY', '')
+    weatherapi_key   = os.environ.get('WEATHERAPI_KEY', '')
+    openweather_key  = os.environ.get('OPENWEATHER_KEY', '')
+    tomorrow_key     = os.environ.get('TOMORROW_KEY', '')
+    accuweather_key  = os.environ.get('ACCUWEATHER_KEY', '')
+    visualcross_key  = os.environ.get('VISUALCROSSING_KEY', '')
 
     def _fetch_wunderground_pws():
         if not _wu_key:
@@ -9070,8 +9073,85 @@ def weather_compare_data():
                 desc[:20].title() or 'Cloudy')
         return temp, cond
 
+    def _fetch_tomorrow():
+        if not tomorrow_key:
+            raise RuntimeError('TOMORROW_KEY not set')
+        url = (f'https://api.tomorrow.io/v4/weather/realtime'
+               f'?location={lat:.4f},{lon:.4f}&units=imperial&apikey={tomorrow_key}')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        vals = d['data']['values']
+        temp = int(vals['temperature'])
+        code = int(vals.get('weatherCode', 1000))
+        cond = ({
+            1000: 'Clear', 1001: 'Cloudy', 1100: 'Clear', 1101: 'Partly Cloudy',
+            1102: 'Mostly Cloudy', 2000: 'Fog', 2100: 'Fog',
+            4000: 'Drizzle', 4001: 'Rain', 4200: 'Rain', 4201: 'Rain',
+            5000: 'Snow', 5001: 'Snow', 5100: 'Snow', 5101: 'Snow',
+            6000: 'Freezing Rain', 6001: 'Freezing Rain', 6200: 'Freezing Rain', 6201: 'Freezing Rain',
+            7000: 'Freezing Rain', 7101: 'Freezing Rain', 7102: 'Freezing Rain',
+            8000: 'Thunderstorm',
+        }).get(code, 'Cloudy')
+        return temp, cond
+
+    def _fetch_accuweather():
+        if not accuweather_key:
+            raise RuntimeError('ACCUWEATHER_KEY not set')
+        loc_url = (f'https://dataservice.accuweather.com/locations/v1/cities/geoposition/search'
+                   f'?q={lat:.4f},{lon:.4f}&apikey={accuweather_key}')
+        with urllib.request.urlopen(urllib.request.Request(loc_url, headers=hdr), timeout=8) as r:
+            loc = json.loads(r.read())
+        loc_key = loc['Key']
+        cur_url = (f'https://dataservice.accuweather.com/currentconditions/v1/{loc_key}'
+                   f'?apikey={accuweather_key}&details=false')
+        with urllib.request.urlopen(urllib.request.Request(cur_url, headers=hdr), timeout=8) as r:
+            cur = json.loads(r.read())[0]
+        temp = int(cur['Temperature']['Imperial']['Value'])
+        desc = (cur.get('WeatherText') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Rain'           if 'rain' in desc or 'drizzle' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
+    def _fetch_visualcrossing():
+        if not visualcross_key:
+            raise RuntimeError('VISUALCROSSING_KEY not set')
+        url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
+               f'/{lat:.4f},{lon:.4f}/today'
+               f'?unitGroup=us&include=current&key={visualcross_key}&contentType=json')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur  = d['currentConditions']
+        temp = int(cur['temp'])
+        desc = (cur.get('conditions') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Rain'           if 'rain' in desc or 'drizzle' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloud' in desc or 'overcast' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
     sources = [
         ('WUnderground PWS (nearest)', lambda: _fetch_wunderground_pws()),
+        ('Tomorrow.io',                lambda: _fetch_tomorrow()),
+        ('AccuWeather',                lambda: _fetch_accuweather()),
+        ('Visual Crossing',            lambda: _fetch_visualcrossing()),
         ('NWS Observation (station)',  lambda: _fetch_nws_obs()),
         ('NWS Hourly Forecast',        lambda: _fetch_nws_forecast()),
         ('WeatherAPI.com',             lambda: _fetch_weatherapi()),
@@ -9081,7 +9161,7 @@ def weather_compare_data():
     ]
 
     other_results = []
-    with _cf.ThreadPoolExecutor(max_workers=7) as ex:
+    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(fn): name for name, fn in sources}
         for fut, name in futures.items():
             try:
