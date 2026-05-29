@@ -788,101 +788,134 @@ def get_weather():
     global _nws_station_url, _nws_forecast_url
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
-    try:
-        hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
-        if not _nws_forecast_url:
+    hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+
+    # Resolve city name from NWS points (one-time, cached)
+    if not _nws_forecast_url:
+        try:
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=6) as r:
                 pts = json.loads(r.read())
-            # Pull city/state from NWS points response
             rel = pts.get('properties', {}).get('relativeLocation', {}).get('properties', {})
-            city  = rel.get('city', '')
-            state = rel.get('state', '')
+            city, state = rel.get('city', ''), rel.get('state', '')
             if city and state and not location_data.get('location_name'):
-                resolved_name = f'{city}, {state}'
-                location_data['location_name'] = resolved_name
-                threading.Thread(target=speak, args=(f'Location locked. {resolved_name}.',), daemon=True).start()
-            _nws_forecast_url  = pts['properties']['forecastHourly']
+                location_data['location_name'] = f'{city}, {state}'
+                threading.Thread(target=speak, args=(f'Location locked. {city}, {state}.',), daemon=True).start()
+            _nws_forecast_url = pts['properties']['forecastHourly']
             stations_url = pts['properties']['observationStations']
             with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=6) as r:
                 stations = json.loads(r.read())
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
+        except Exception:
+            pass
 
-        def _parse_condition(desc):
-            desc = (desc or '').lower()
-            if 'thunder' in desc:                                              return 'Thunderstorm'
-            elif 'snow' in desc or 'blizzard' in desc:                         return 'Snow'
-            elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:       return 'Freezing Rain'
-            elif 'fog' in desc or 'mist' in desc:                              return 'Fog'
-            elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'Rain'
-            elif 'overcast' in desc:                                            return 'Overcast'
-            elif 'cloudy' in desc:                                              return 'Cloudy'
-            elif any(w in desc for w in ('partly','mostly')):                  return 'Partly Cloudy'
-            elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'Clear'
-            else:                                                               return (desc[:20] or 'Cloudy').title()
+    # WMO weather code → clean condition label (same mapping TWC/Open-Meteo uses)
+    def _wmo_condition(code):
+        code = int(code or 0)
+        if code == 0:                    return 'Clear'
+        elif code in (1, 2):             return 'Partly Cloudy'
+        elif code == 3:                  return 'Cloudy'
+        elif code in (45, 48):           return 'Fog'
+        elif code in (51, 53, 55):       return 'Drizzle'
+        elif code in (56, 57):           return 'Freezing Rain'
+        elif code in (61, 63, 65):       return 'Rain'
+        elif code in (66, 67):           return 'Freezing Rain'
+        elif code in (71, 73, 75, 77):   return 'Snow'
+        elif code in (80, 81, 82):       return 'Rain'
+        elif code in (85, 86):           return 'Snow'
+        elif code in (95, 96, 99):       return 'Thunderstorm'
+        return 'Cloudy'
 
-        # Try current observations first (actual sensor readings, not forecast)
-        obs_temp_f    = None
-        obs_condition = None
-        obs_wind_mph  = 0
-        obs_desc_raw  = ''
+    def _parse_condition(desc):
+        desc = (desc or '').lower()
+        if 'thunder' in desc:                                              return 'Thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:                         return 'Snow'
+        elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:       return 'Freezing Rain'
+        elif 'fog' in desc or 'mist' in desc:                              return 'Fog'
+        elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'Rain'
+        elif 'overcast' in desc:                                            return 'Overcast'
+        elif 'cloudy' in desc:                                              return 'Cloudy'
+        elif any(w in desc for w in ('partly','mostly')):                  return 'Partly Cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'Clear'
+        else:                                                               return (desc[:20] or 'Cloudy').title()
+
+    # ── PRIMARY: Open-Meteo (ECMWF/GFS models, same data TWC uses, Fahrenheit direct) ──
+    try:
+        om_url = (
+            f'https://api.open-meteo.com/v1/forecast'
+            f'?latitude={lat:.4f}&longitude={lon:.4f}'
+            f'&current=temperature_2m,weather_code,wind_speed_10m,precipitation'
+            f'&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'
+            f'&timezone=auto'
+        )
+        with urllib.request.urlopen(urllib.request.Request(om_url, headers=hdr), timeout=8) as r:
+            om = json.loads(r.read())
+        cur = om.get('current', {})
+        temp_f    = int(cur['temperature_2m'])          # already Fahrenheit, no conversion rounding
+        condition = _wmo_condition(cur.get('weather_code', 0))
+        wind_mph  = round(float(cur.get('wind_speed_10m') or 0))
+        precip    = float(cur.get('precipitation') or 0)
+        return {
+            'temp': temp_f, 'condition': condition, 'desc': condition,
+            'wind': wind_mph, 'precip': precip,
+            'raining':  condition in ('Rain', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'freezing': temp_f < 32,
+            'snowing':  condition == 'Snow',
+        }
+    except Exception:
+        pass
+
+    # ── FALLBACK: NWS observation then hourly forecast ──
+    try:
+        obs_temp_f, obs_condition, obs_wind_mph = None, None, 0
         if _nws_station_url:
             try:
                 obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
                 with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
                     obs = json.loads(r.read())
                 props = obs.get('properties', {})
-                # NWS may return null for sensor values — guard with (x or {})
-                raw_temp_c  = (props.get('temperature')  or {}).get('value')
-                raw_wind_ms = (props.get('windSpeed')    or {}).get('value') or 0
-                if raw_temp_c is not None:
-                    obs_temp_f   = int(raw_temp_c * 9 / 5 + 32)  # floor like weather apps
-                obs_wind_mph = round(float(raw_wind_ms) * 2.237)
+                raw_c = (props.get('temperature') or {}).get('value')
+                raw_w = (props.get('windSpeed')   or {}).get('value') or 0
+                if raw_c is not None:
+                    obs_temp_f = int(raw_c * 9 / 5 + 32)
+                obs_wind_mph = round(float(raw_w) * 2.237)
                 text_desc = (props.get('textDescription') or '').strip()
                 if text_desc:
-                    obs_desc_raw  = text_desc
                     obs_condition = _parse_condition(text_desc)
             except Exception:
                 pass
 
-        # Fall back to hourly forecast for anything still missing
-        temp_f    = obs_temp_f
-        condition = obs_condition
-        wind_mph  = obs_wind_mph
-        desc_raw  = obs_desc_raw
-        if temp_f is None or condition is None:
+        temp_f, condition, wind_mph = obs_temp_f, obs_condition, obs_wind_mph
+        if (temp_f is None or condition is None) and _nws_forecast_url:
             with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
                 fc = json.loads(r.read())
             periods = fc['properties']['periods']
-            # Find the period that contains right now, not just [0] which may be next-hour
             period = periods[0]
             try:
                 from datetime import datetime, timezone as _tz
                 _now = datetime.now(_tz.utc)
                 for _p in periods:
-                    _s = datetime.fromisoformat(_p['startTime'])
-                    _e = datetime.fromisoformat(_p['endTime'])
-                    if _s <= _now <= _e:
+                    if datetime.fromisoformat(_p['startTime']) <= _now <= datetime.fromisoformat(_p['endTime']):
                         period = _p
                         break
             except Exception:
                 pass
-            if temp_f is None:
-                temp_f = period['temperature']
-            if condition is None:
-                short = (period.get('shortForecast') or '')
-                desc_raw  = short
-                condition = _parse_condition(short)
-            if wind_mph == 0:
-                wind_str = (period.get('windSpeed') or '0 mph').split()[0]
-                wind_mph = int(wind_str) if wind_str.isdigit() else 0
+            if temp_f    is None: temp_f    = period['temperature']
+            if condition is None: condition = _parse_condition(period.get('shortForecast') or '')
+            if wind_mph  == 0:
+                ws = (period.get('windSpeed') or '0 mph').split()[0]
+                wind_mph = int(ws) if ws.isdigit() else 0
 
-        return {'temp': temp_f, 'condition': condition, 'desc': desc_raw,
-                'wind': wind_mph, 'precip': 0,
-                'raining': condition in ('raining', 'thunderstorm'),
-                'freezing': temp_f < 32, 'snowing': condition == 'snowing'}
+        temp_f    = temp_f    or 70
+        condition = condition or 'Cloudy'
+        return {
+            'temp': temp_f, 'condition': condition, 'desc': condition,
+            'wind': wind_mph, 'precip': 0,
+            'raining':  condition in ('Rain', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'freezing': temp_f < 32,
+            'snowing':  condition == 'Snow',
+        }
     except Exception:
-        _nws_station_url = None
         return weather
 
 _active_alert_ids = set()
