@@ -832,7 +832,7 @@ def get_weather():
                 raw_temp_c  = (props.get('temperature')  or {}).get('value')
                 raw_wind_ms = (props.get('windSpeed')    or {}).get('value') or 0
                 if raw_temp_c is not None:
-                    obs_temp_f   = round(raw_temp_c * 9 / 5 + 32)
+                    obs_temp_f   = int(raw_temp_c * 9 / 5 + 32)  # floor like weather apps
                 obs_wind_mph = round(float(raw_wind_ms) * 2.237)
                 text_desc = (props.get('textDescription') or '').strip()
                 if text_desc:
