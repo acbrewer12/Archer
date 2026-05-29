@@ -8570,7 +8570,7 @@ def get_tier_html(tier, name=None):
 
 _BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/static'}
 
-_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/')
+_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal')
 
 @display_app.before_request
 def require_boot():
