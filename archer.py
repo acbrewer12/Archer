@@ -8585,7 +8585,10 @@ def require_boot():
         return None  # AJAX/API — let it through so terminal stays usable
     # Per-session boot: every new browser session goes through the boot sequence
     if not _sess.get('boot_complete'):
-        return _redir('/boot')
+        dest = _req.path
+        if _req.query_string:
+            dest += '?' + _req.query_string.decode('utf-8', errors='replace')
+        return _redir(f'/boot?next={dest}')
 
 
 @display_app.route('/boot/status')

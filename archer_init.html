@@ -184,7 +184,8 @@ async function runBootChecks() {
 
         bannerEl.classList.add('show');
         await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 1000));
-        window.location.href = '/';
+        const next = new URLSearchParams(location.search).get('next') || '/';
+        window.location.href = next;
         return;
       }
     } catch(e) {
@@ -195,7 +196,8 @@ async function runBootChecks() {
   }
 
   // Timeout fallback
-  window.location.href = '/';
+  const next = new URLSearchParams(location.search).get('next') || '/';
+  window.location.href = next;
 }
 
 // Start after a brief moment so the logo renders first
