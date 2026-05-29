@@ -821,8 +821,8 @@ def get_weather():
         elif code in (61, 63, 65):       return 'Rain'
         elif code in (66, 67):           return 'Freezing Rain'
         elif code in (71, 73, 75, 77):   return 'Snow'
-        elif code in (80, 81, 82):       return 'Rain'
-        elif code in (85, 86):           return 'Snow'
+        elif code in (80, 81, 82):       return 'Rain Showers'
+        elif code in (85, 86):           return 'Snow Showers'
         elif code in (95, 96, 99):       return 'Thunderstorm'
         return 'Cloudy'
 
@@ -858,7 +858,7 @@ def get_weather():
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
             'wind': wind_mph, 'precip': precip,
-            'raining':  condition in ('Rain', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'raining':  condition in ('Rain', 'Rain Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
             'freezing': temp_f < 32,
             'snowing':  condition == 'Snow',
         }
@@ -911,7 +911,7 @@ def get_weather():
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
             'wind': wind_mph, 'precip': 0,
-            'raining':  condition in ('Rain', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'raining':  condition in ('Rain', 'Rain Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
             'freezing': temp_f < 32,
             'snowing':  condition == 'Snow',
         }
