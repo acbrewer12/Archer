@@ -8850,31 +8850,6 @@ def weather_compare_data():
     lon = location_data.get('lon') or -91.5362
     hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
 
-    def _wmo(code):
-        code = int(code or 0)
-        if code == 0:                  return 'Clear'
-        elif code in (1, 2):           return 'Partly Cloudy'
-        elif code == 3:                return 'Cloudy'
-        elif code in (45, 48):         return 'Fog'
-        elif code in (51, 53, 55):     return 'Drizzle'
-        elif code in (56, 57, 66, 67): return 'Freezing Rain'
-        elif code in (61, 63, 65):     return 'Rain'
-        elif code in (71, 73, 75, 77): return 'Snow'
-        elif code in (80, 81, 82):     return 'Rain Showers'
-        elif code in (85, 86):         return 'Snow Showers'
-        elif code in (95, 96, 99):     return 'Thunderstorm'
-        return 'Cloudy'
-
-    def _fetch_open_meteo(model=None):
-        url = (f'https://api.open-meteo.com/v1/forecast'
-               f'?latitude={lat:.4f}&longitude={lon:.4f}'
-               f'&current=temperature_2m,weather_code,wind_speed_10m'
-               f'&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto'
-               + (f'&models={model}' if model else ''))
-        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
-            d = json.loads(r.read())['current']
-        return int(d['temperature_2m']), _wmo(d.get('weather_code', 0))
-
     def _fetch_nws_obs():
         if not _nws_station_url:
             return None, None
@@ -8963,37 +8938,25 @@ def weather_compare_data():
                 'Clear'        if 'clear' in wx or 'sunny' in wx else 'Cloudy')
         return temp_f, cond
 
-    om_sources = [
-        ('Open-Meteo (best match)',        lambda: _fetch_open_meteo()),
-        ('Open-Meteo — HRRR (NOAA hi-res)',lambda: _fetch_open_meteo('hrrr')),
-        ('Open-Meteo — GFS (NOAA global)', lambda: _fetch_open_meteo('gfs_seamless')),
-        ('Open-Meteo — Natl Blend (NOAA)', lambda: _fetch_open_meteo('ncep_nbm_conus')),
-        ('Open-Meteo — GraphCast (Google)',lambda: _fetch_open_meteo('gfs_graphcast025')),
-        ('Open-Meteo — ECMWF (European)',  lambda: _fetch_open_meteo('ecmwf_ifs025')),
-        ('Open-Meteo — GEM (Canada)',      lambda: _fetch_open_meteo('gem_seamless')),
-        ('Open-Meteo — DWD ICON (Germany)',lambda: _fetch_open_meteo('dwd_icon_seamless')),
-    ]
-    other_sources = [
-        ('wttr.in (aggregator)',           lambda: _fetch_wttr()),
-        ('7timer.info (aggregator)',       lambda: _fetch_7timer()),
-        ('NWS Observation (station)',      lambda: _fetch_nws_obs()),
-        ('NWS Hourly Forecast',            lambda: _fetch_nws_forecast()),
+    # First row: Archer's live reading (Open-Meteo, already cached — no extra HTTP call)
+    w = weather
+    archer_result = {
+        'name':      'Archer — Open-Meteo (live)',
+        'temp':      w.get('temp'),
+        'condition': w.get('condition'),
+        'error':     None if w.get('temp') is not None else 'no data yet',
+    }
+
+    sources = [
+        ('wttr.in (aggregator)',    lambda: _fetch_wttr()),
+        ('7timer.info (aggregator)',lambda: _fetch_7timer()),
+        ('NWS Observation (station)',lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',     lambda: _fetch_nws_forecast()),
     ]
 
-    # Open-Meteo requests run sequentially with a gap to avoid 429 rate limiting
-    om_results = []
-    for name, fn in om_sources:
-        try:
-            temp, cond = fn()
-            om_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
-        except Exception as e:
-            om_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
-        import time as _t; _t.sleep(0.2)
-
-    # Other sources run in parallel
     other_results = []
     with _cf.ThreadPoolExecutor(max_workers=4) as ex:
-        futures = {ex.submit(fn): name for name, fn in other_sources}
+        futures = {ex.submit(fn): name for name, fn in sources}
         for fut, name in futures.items():
             try:
                 temp, cond = fut.result(timeout=10)
@@ -9001,10 +8964,9 @@ def weather_compare_data():
             except Exception as e:
                 other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
 
-    # Reorder other_results to match original source order
-    order = [s[0] for s in other_sources]
+    order = [s[0] for s in sources]
     other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
-    results = om_results + other_results
+    results = [archer_result] + other_results
 
     return jsonify({'results': results, 'lat': lat, 'lon': lon,
                     'location': location_data.get('location_name', f'{lat:.2f}, {lon:.2f}')})
