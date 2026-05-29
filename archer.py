@@ -842,33 +842,8 @@ def get_weather():
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-    # ── PRIMARY: Open-Meteo (ECMWF/GFS models, same data TWC uses, Fahrenheit direct) ──
-    try:
-        om_url = (
-            f'https://api.open-meteo.com/v1/forecast'
-            f'?latitude={lat:.4f}&longitude={lon:.4f}'
-            f'&current=temperature_2m,weather_code,wind_speed_10m,precipitation'
-            f'&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'
-            f'&timezone=auto'
-        )
-        with urllib.request.urlopen(urllib.request.Request(om_url, headers=hdr), timeout=8) as r:
-            om = json.loads(r.read())
-        cur = om.get('current', {})
-        temp_f    = int(cur['temperature_2m'])          # already Fahrenheit, no conversion rounding
-        condition = _wmo_condition(cur.get('weather_code', 0))
-        wind_mph  = round(float(cur.get('wind_speed_10m') or 0))
-        precip    = float(cur.get('precipitation') or 0)
-        return {
-            'temp': temp_f, 'condition': condition, 'desc': condition,
-            'wind': wind_mph, 'precip': precip,
-            'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
-            'freezing': temp_f < 32,
-            'snowing':  condition == 'Snow',
-        }
-    except Exception:
-        pass
-
-    # ── FALLBACK: NWS observation then hourly forecast ──
+    # ── PRIMARY: NWS Observation (real measured station data, closest to TWC) ──
+    # Falls through to NWS Hourly Forecast if observation temp/condition missing.
     try:
         obs_temp_f, obs_condition, obs_wind_mph = None, None, 0
         if _nws_station_url:
@@ -909,11 +884,38 @@ def get_weather():
                 ws = (period.get('windSpeed') or '0 mph').split()[0]
                 wind_mph = int(ws) if ws.isdigit() else 0
 
-        temp_f    = temp_f    or 70
-        condition = condition or 'Cloudy'
+        if temp_f is not None and condition is not None:
+            precip = 1.0 if condition in ('Rain', 'Rain Showers', 'Scattered Showers',
+                                          'Thunderstorm', 'Drizzle', 'Freezing Rain') else 0.0
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'freezing': temp_f < 32,
+                'snowing':  condition == 'Snow',
+            }
+    except Exception:
+        pass
+
+    # ── FALLBACK: Open-Meteo (raw model data, no API key required) ──
+    try:
+        om_url = (
+            f'https://api.open-meteo.com/v1/forecast'
+            f'?latitude={lat:.4f}&longitude={lon:.4f}'
+            f'&current=temperature_2m,weather_code,wind_speed_10m,precipitation'
+            f'&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'
+            f'&timezone=auto'
+        )
+        with urllib.request.urlopen(urllib.request.Request(om_url, headers=hdr), timeout=8) as r:
+            om = json.loads(r.read())
+        cur = om.get('current', {})
+        temp_f    = int(cur['temperature_2m'])
+        condition = _wmo_condition(cur.get('weather_code', 0))
+        wind_mph  = round(float(cur.get('wind_speed_10m') or 0))
+        precip    = float(cur.get('precipitation') or 0)
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
-            'wind': wind_mph, 'precip': 0,
+            'wind': wind_mph, 'precip': precip,
             'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
             'freezing': temp_f < 32,
             'snowing':  condition == 'Snow',
@@ -8966,15 +8968,70 @@ def weather_compare_data():
         'error':     None if w.get('temp') is not None else 'no data yet',
     }
 
+    weatherapi_key  = os.environ.get('WEATHERAPI_KEY', '')
+    openweather_key = os.environ.get('OPENWEATHER_KEY', '')
+
+    def _fetch_weatherapi():
+        if not weatherapi_key:
+            raise RuntimeError('WEATHERAPI_KEY not set')
+        url = (f'https://api.weatherapi.com/v1/current.json'
+               f'?key={weatherapi_key}&q={lat:.4f},{lon:.4f}&aqi=no')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur   = d['current']
+        temp  = int(cur['temp_f'])
+        desc  = (cur.get('condition', {}).get('text') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice pellet' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc else
+                'Scattered Showers' if 'vicinity' in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Rain'           if 'rain' in desc or 'drizzle' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloudy' in desc or 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
+    def _fetch_openweather():
+        if not openweather_key:
+            raise RuntimeError('OPENWEATHER_KEY not set')
+        url = (f'https://api.openweathermap.org/data/2.5/weather'
+               f'?lat={lat:.4f}&lon={lon:.4f}&appid={openweather_key}&units=imperial')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        temp = int(d['main']['temp'])
+        desc = (d['weather'][0].get('description') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc or 'haze' in desc else
+                'Scattered Showers' if 'shower' in desc and 'light' not in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Drizzle'        if 'drizzle' in desc else
+                'Rain'           if 'rain' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'few' in desc or 'scattered' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
     sources = [
-        ('wttr.in (aggregator)',    lambda: _fetch_wttr()),
-        ('7timer.info (aggregator)',lambda: _fetch_7timer()),
-        ('NWS Observation (station)',lambda: _fetch_nws_obs()),
-        ('NWS Hourly Forecast',     lambda: _fetch_nws_forecast()),
+        ('NWS Observation (station)', lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',       lambda: _fetch_nws_forecast()),
+        ('WeatherAPI.com',            lambda: _fetch_weatherapi()),
+        ('OpenWeather',               lambda: _fetch_openweather()),
+        ('wttr.in (aggregator)',      lambda: _fetch_wttr()),
+        ('7timer.info (aggregator)',  lambda: _fetch_7timer()),
     ]
 
     other_results = []
-    with _cf.ThreadPoolExecutor(max_workers=4) as ex:
+    with _cf.ThreadPoolExecutor(max_workers=6) as ex:
         futures = {ex.submit(fn): name for name, fn in sources}
         for fut, name in futures.items():
             try:
