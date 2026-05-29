@@ -865,9 +865,9 @@ def get_weather():
             elif 'drizzle' in desc:                              condition = 'Drizzle'
             elif any(w in desc for w in ('shower', 'rain')):     condition = 'Rain Showers' if 'shower' in desc else 'Rain'
             elif cloud >= 90:                                    condition = 'Overcast'
-            elif cloud >= 70:                                    condition = 'Mostly Cloudy'
-            elif cloud >= 40:                                    condition = 'Cloudy'
-            elif cloud >= 20:                                    condition = 'Partly Cloudy'
+            elif cloud >= 75:                                    condition = 'Cloudy'
+            elif cloud >= 50:                                    condition = 'Mostly Cloudy'
+            elif cloud >= 25:                                    condition = 'Partly Cloudy'
             else:                                                condition = 'Clear'
             return {
                 'temp': temp_f, 'condition': condition, 'desc': condition,
@@ -9178,9 +9178,9 @@ def weather_compare_data():
         elif 'shower' in desc:                                    cond = 'Rain Showers'
         elif 'rain' in desc:                                      cond = 'Rain'
         elif cloud >= 90:                                         cond = 'Overcast'
-        elif cloud >= 70:                                         cond = 'Mostly Cloudy'
-        elif cloud >= 40:                                         cond = 'Cloudy'
-        elif cloud >= 20:                                         cond = 'Partly Cloudy'
+        elif cloud >= 75:                                         cond = 'Cloudy'
+        elif cloud >= 50:                                         cond = 'Mostly Cloudy'
+        elif cloud >= 25:                                         cond = 'Partly Cloudy'
         else:                                                     cond = 'Clear'
         return temp, cond
 
