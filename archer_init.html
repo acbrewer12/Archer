@@ -184,8 +184,10 @@ async function runBootChecks() {
 
         bannerEl.classList.add('show');
         await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 1000));
-        const next = new URLSearchParams(location.search).get('next') || '/';
-        window.location.href = next;
+        const next  = new URLSearchParams(location.search).get('next') || '/';
+        const token = finalData.token || '';
+        const sep   = next.includes('?') ? '&' : '?';
+        window.location.href = token ? next + sep + '_bt=' + token : next;
         return;
       }
     } catch(e) {

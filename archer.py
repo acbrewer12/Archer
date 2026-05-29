@@ -7491,9 +7491,9 @@ system_health = {
     'last_obd_update': time.time(),
     'failures':        [],
     'start_time':      time.time(),
-    'boot_complete':   False,   # set True once /boot/status returns ready
+    'boot_complete':   False,
     'maintenance':     False,   # toggled via terminal: "maintenance on/off"
-    'boot_nonce':      str(time.time()),  # unique per server start; invalidates old sessions
+    'boot_tokens':     {},      # one-time tokens: token -> expiry (unix time)
 }
 
 def log_system_failure(component, reason):
@@ -8566,16 +8566,15 @@ _BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan
 
 @display_app.before_request
 def require_boot():
-    """Redirect every request to boot or maintenance until session checks pass."""
-    from flask import request as _req, redirect as _redir, session as _sess
+    """Gate every page load behind boot. One-time tokens let the post-boot
+    redirect through; everything else (refresh, new tab, reopen) hits boot."""
+    from flask import request as _req, redirect as _redir
     if display_app.testing:
         return None
     path = _req.path
     if path in _BOOT_EXEMPT or path.startswith('/static'):
         return None
-    # Maintenance mode — only redirect browser page loads, not AJAX/API calls.
-    # This lets terminal commands (e.g. 'maintenance off') still reach the server
-    # while visitors see the maintenance page.
+    # Maintenance — browser page loads only; AJAX passes through so terminal works
     maintenance_active = (
         system_health['maintenance'] or
         os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes')
@@ -8583,16 +8582,30 @@ def require_boot():
     if maintenance_active:
         if 'text/html' in _req.headers.get('Accept', ''):
             return _redir('/maintenance')
-        return None  # AJAX/API — let it through so terminal stays usable
-    # Boot required if: no session, session from a previous server instance,
-    # or session that never completed boot. This ensures every fresh connection
-    # (new browser, new tab, server restart) always runs through boot.
-    nonce = system_health['boot_nonce']
-    if not _sess.get('boot_complete') or _sess.get('boot_nonce') != nonce:
-        dest = _req.path
-        if _req.query_string:
-            dest += '?' + _req.query_string.decode('utf-8', errors='replace')
-        return _redir(f'/boot?next={dest}')
+        return None
+    # Non-HTML requests (AJAX, SSE, etc.) never need boot
+    if 'text/html' not in _req.headers.get('Accept', ''):
+        return None
+    # Validate one-time boot token issued by /boot/status on success.
+    # Without a valid token every page load — including refresh and reopen — runs boot.
+    now = time.time()
+    bt = _req.args.get('_bt', '')
+    tokens = system_health['boot_tokens']
+    # Purge expired tokens
+    expired = [k for k, exp in tokens.items() if exp < now]
+    for k in expired:
+        tokens.pop(k, None)
+    if bt and bt in tokens:
+        tokens.pop(bt)   # consume — one-time use
+        return None      # let the destination page through
+    # No valid token → send to boot, preserving the intended destination
+    dest = _req.path
+    if _req.query_string:
+        # Strip any stale _bt from query before forwarding
+        from urllib.parse import urlencode, parse_qs
+        qs = {k: v for k, v in parse_qs(_req.query_string.decode('utf-8', errors='replace')).items() if k != '_bt'}
+        dest += ('?' + urlencode({k: v[0] for k, v in qs.items()})) if qs else ''
+    return _redir(f'/boot?next={dest}')
 
 
 @display_app.route('/boot/status')
@@ -8710,13 +8723,16 @@ def boot_status():
     all_done = reveal >= total
     all_ok   = all(c['status'] != 'fail' for c in all_checks)
     ready    = all_done and all_ok
+    boot_token = ''
     if ready:
+        import uuid as _uuid
         system_health['boot_complete'] = True
-        _sess['boot_complete'] = True
-        _sess['boot_nonce']    = system_health['boot_nonce']
+        boot_token = str(_uuid.uuid4())
+        system_health['boot_tokens'][boot_token] = time.time() + 15  # 15s to use it
     return jsonify({
         'checks': visible,
         'total':  total,
+        'token':  boot_token,
         'ready':  ready,
         'uptime': uptime_s,
     })
