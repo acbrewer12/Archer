@@ -780,9 +780,9 @@ weather = {
     'temp': 70, 'condition': 'clear', 'raining': False,
     'freezing': False, 'snowing': False, 'wind': 5, 'last_update': 0,
 }
-_nws_station_url = None  # cached after first lookup
-
-_nws_forecast_url = None   # cached hourly forecast URL for exact coordinates
+_nws_station_url  = None  # cached after first lookup
+_nws_forecast_url = None  # cached hourly forecast URL for exact coordinates
+_wu_key           = os.environ.get('WUNDERGROUND_KEY', '')
 
 def get_weather():
     global _nws_station_url, _nws_forecast_url
@@ -842,7 +842,33 @@ def get_weather():
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-    # ── PRIMARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
+    # ── PRIMARY: Weather Underground PWS (nearest personal weather station) ──
+    # TWC ingests WUnderground PWS data — actual thermometers in nearby yards.
+    # Gets within 0-1°F of TWC because it IS the source data TWC uses.
+    if _wu_key:
+        try:
+            wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
+                      f'?geocode={lat:.4f},{lon:.4f}&limit=1&format=json&units=e&apiKey={_wu_key}')
+            with urllib.request.urlopen(urllib.request.Request(wu_url, headers=hdr), timeout=8) as r:
+                wu = json.loads(r.read())
+            obs = wu['observations'][0]
+            imp = obs.get('imperial', {})
+            temp_f   = int(imp['temp'])
+            wind_mph = round(float(imp.get('windSpeed') or 0))
+            precip   = float(imp.get('precipRate') or 0)
+            wx_phrase = (obs.get('wxPhrase') or '').strip()
+            condition = _parse_condition(wx_phrase) if wx_phrase else 'Cloudy'
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'freezing': temp_f < 32,
+                'snowing':  condition == 'Snow',
+            }
+        except Exception:
+            pass
+
+    # ── SECONDARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
     # NWS Hourly gives the most accurate temp for exact coordinates.
     # NWS Observation gives the most accurate current condition (real station reading).
     try:
@@ -8967,10 +8993,11 @@ def weather_compare_data():
                 'Clear'        if 'clear' in wx or 'sunny' in wx else 'Cloudy')
         return temp_f, cond
 
-    # First row: Archer's live reading (Open-Meteo, already cached — no extra HTTP call)
+    # First row: Archer's live reading (cached — no extra HTTP call)
     w = weather
+    archer_src = 'WUnderground PWS' if _wu_key else 'NWS'
     archer_result = {
-        'name':      'Archer — NWS (live)',
+        'name':      f'Archer — {archer_src} (live)',
         'temp':      w.get('temp'),
         'condition': w.get('condition'),
         'error':     None if w.get('temp') is not None else 'no data yet',
@@ -8978,6 +9005,20 @@ def weather_compare_data():
 
     weatherapi_key  = os.environ.get('WEATHERAPI_KEY', '')
     openweather_key = os.environ.get('OPENWEATHER_KEY', '')
+
+    def _fetch_wunderground_pws():
+        if not _wu_key:
+            raise RuntimeError('WUNDERGROUND_KEY not set')
+        wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
+                  f'?geocode={lat:.4f},{lon:.4f}&limit=1&format=json&units=e&apiKey={_wu_key}')
+        with urllib.request.urlopen(urllib.request.Request(wu_url, headers=hdr), timeout=8) as r:
+            wu = json.loads(r.read())
+        obs  = wu['observations'][0]
+        imp  = obs.get('imperial', {})
+        temp = int(imp['temp'])
+        wx   = (obs.get('wxPhrase') or '').strip()
+        cond = _parse_condition(wx) if wx else 'Cloudy'
+        return temp, cond
 
     def _fetch_weatherapi():
         if not weatherapi_key:
@@ -9030,16 +9071,17 @@ def weather_compare_data():
         return temp, cond
 
     sources = [
-        ('NWS Observation (station)', lambda: _fetch_nws_obs()),
-        ('NWS Hourly Forecast',       lambda: _fetch_nws_forecast()),
-        ('WeatherAPI.com',            lambda: _fetch_weatherapi()),
-        ('OpenWeather',               lambda: _fetch_openweather()),
-        ('wttr.in (aggregator)',      lambda: _fetch_wttr()),
-        ('7timer.info (aggregator)',  lambda: _fetch_7timer()),
+        ('WUnderground PWS (nearest)', lambda: _fetch_wunderground_pws()),
+        ('NWS Observation (station)',  lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',        lambda: _fetch_nws_forecast()),
+        ('WeatherAPI.com',             lambda: _fetch_weatherapi()),
+        ('OpenWeather',                lambda: _fetch_openweather()),
+        ('wttr.in (aggregator)',       lambda: _fetch_wttr()),
+        ('7timer.info (aggregator)',   lambda: _fetch_7timer()),
     ]
 
     other_results = []
-    with _cf.ThreadPoolExecutor(max_workers=6) as ex:
+    with _cf.ThreadPoolExecutor(max_workers=7) as ex:
         futures = {ex.submit(fn): name for name, fn in sources}
         for fut, name in futures.items():
             try:
