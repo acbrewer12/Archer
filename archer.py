@@ -8572,9 +8572,17 @@ def require_boot():
     path = _req.path
     if path in _BOOT_EXEMPT or path.startswith('/static'):
         return None
-    # Maintenance mode — toggled via terminal or MAINTENANCE_MODE env var
-    if system_health['maintenance'] or os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes'):
-        return _redir('/maintenance')
+    # Maintenance mode — only redirect browser page loads, not AJAX/API calls.
+    # This lets terminal commands (e.g. 'maintenance off') still reach the server
+    # while visitors see the maintenance page.
+    maintenance_active = (
+        system_health['maintenance'] or
+        os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes')
+    )
+    if maintenance_active:
+        if 'text/html' in _req.headers.get('Accept', ''):
+            return _redir('/maintenance')
+        return None  # AJAX/API — let it through so terminal stays usable
     # Per-session boot: every new browser session goes through the boot sequence
     if not _sess.get('boot_complete'):
         return _redir('/boot')
