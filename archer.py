@@ -849,7 +849,20 @@ def get_weather():
         if temp_f is None or condition is None:
             with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
                 fc = json.loads(r.read())
-            period = fc['properties']['periods'][0]
+            periods = fc['properties']['periods']
+            # Find the period that contains right now, not just [0] which may be next-hour
+            period = periods[0]
+            try:
+                from datetime import datetime, timezone as _tz
+                _now = datetime.now(_tz.utc)
+                for _p in periods:
+                    _s = datetime.fromisoformat(_p['startTime'])
+                    _e = datetime.fromisoformat(_p['endTime'])
+                    if _s <= _now <= _e:
+                        period = _p
+                        break
+            except Exception:
+                pass
             if temp_f is None:
                 temp_f = period['temperature']
             if condition is None:
