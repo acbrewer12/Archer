@@ -8623,7 +8623,7 @@ def get_tier_html(tier, name=None):
 
 _BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/static'}
 
-_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal')
+_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
 
 @display_app.before_request
 def require_boot():
@@ -8838,6 +8838,246 @@ justify-content:center;height:100vh;text-align:center}
 <body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
 <div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
 <script>setTimeout(()=>window.location.href='/',30000)</script></body></html>''', mimetype='text/html')
+
+
+@display_app.route('/weather/compare/data')
+def weather_compare_data():
+    """Fetch current conditions from multiple APIs in parallel and return comparison JSON."""
+    import concurrent.futures as _cf
+    lat = location_data.get('lat') or 37.6456
+    lon = location_data.get('lon') or -91.5362
+    hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+
+    def _wmo(code):
+        code = int(code or 0)
+        if code == 0:                  return 'Clear'
+        elif code in (1, 2):           return 'Partly Cloudy'
+        elif code == 3:                return 'Cloudy'
+        elif code in (45, 48):         return 'Fog'
+        elif code in (51, 53, 55):     return 'Drizzle'
+        elif code in (56, 57, 66, 67): return 'Freezing Rain'
+        elif code in (61, 63, 65):     return 'Rain'
+        elif code in (71, 73, 75, 77): return 'Snow'
+        elif code in (80, 81, 82):     return 'Rain Showers'
+        elif code in (85, 86):         return 'Snow Showers'
+        elif code in (95, 96, 99):     return 'Thunderstorm'
+        return 'Cloudy'
+
+    def _fetch_open_meteo(model=None):
+        url = (f'https://api.open-meteo.com/v1/forecast'
+               f'?latitude={lat:.4f}&longitude={lon:.4f}'
+               f'&current=temperature_2m,weather_code,wind_speed_10m'
+               f'&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto'
+               + (f'&models={model}' if model else ''))
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())['current']
+        return int(d['temperature_2m']), _wmo(d.get('weather_code', 0))
+
+    def _fetch_nws_obs():
+        if not _nws_station_url:
+            return None, None
+        url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=6) as r:
+            props = json.loads(r.read())['properties']
+        raw_c = (props.get('temperature') or {}).get('value')
+        if raw_c is None:
+            return None, None
+        temp_f = int(raw_c * 9 / 5 + 32)
+        from archer import _parse_condition_nws  # noqa — defined inline below
+        desc = (props.get('textDescription') or '').lower()
+        cond = ('Thunderstorm' if 'thunder' in desc else
+                'Snow'         if 'snow' in desc else
+                'Freezing Rain' if 'freez' in desc or 'sleet' in desc else
+                'Fog'          if 'fog' in desc or 'mist' in desc else
+                'Rain'         if any(w in desc for w in ('rain','shower','drizzle')) else
+                'Overcast'     if 'overcast' in desc else
+                'Cloudy'       if 'cloudy' in desc else
+                'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
+                'Clear'        if any(w in desc for w in ('clear','sunny','fair')) else
+                desc[:20].title() or 'Cloudy')
+        return temp_f, cond
+
+    def _fetch_nws_forecast():
+        if not _nws_forecast_url:
+            return None, None
+        with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+            periods = json.loads(r.read())['properties']['periods']
+        try:
+            from datetime import datetime, timezone as _tz
+            now = datetime.now(_tz.utc)
+            period = next((p for p in periods
+                           if datetime.fromisoformat(p['startTime']) <= now <= datetime.fromisoformat(p['endTime'])),
+                          periods[0])
+        except Exception:
+            period = periods[0]
+        short = (period.get('shortForecast') or '').lower()
+        cond = ('Thunderstorm' if 'thunder' in short else
+                'Snow'         if 'snow' in short else
+                'Freezing Rain' if 'freez' in short or 'sleet' in short else
+                'Fog'          if 'fog' in short or 'mist' in short else
+                'Rain Showers' if 'shower' in short else
+                'Rain'         if any(w in short for w in ('rain','drizzle')) else
+                'Cloudy'       if 'cloudy' in short or 'overcast' in short else
+                'Partly Cloudy' if 'partly' in short or 'mostly' in short else
+                'Clear'        if any(w in short for w in ('clear','sunny','fair')) else
+                short[:20].title() or 'Cloudy')
+        return period['temperature'], cond
+
+    sources = [
+        ('Open-Meteo (best match)', lambda: _fetch_open_meteo()),
+        ('Open-Meteo — GFS (NOAA)', lambda: _fetch_open_meteo('gfs_seamless')),
+        ('Open-Meteo — ECMWF',      lambda: _fetch_open_meteo('ecmwf_ifs025')),
+        ('NWS Observation (station)', lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',      lambda: _fetch_nws_forecast()),
+    ]
+
+    results = []
+    with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(fn): name for name, fn in sources}
+        for fut, name in futures.items():
+            try:
+                temp, cond = fut.result(timeout=10)
+                results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+            except Exception as e:
+                results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+
+    return jsonify({'results': results, 'lat': lat, 'lon': lon,
+                    'location': location_data.get('location_name', f'{lat:.2f}, {lon:.2f}')})
+
+
+@display_app.route('/weather/compare')
+def weather_compare_page():
+    """Side-by-side weather API comparison page."""
+    from flask import Response as FR
+    html = """<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Archer — Weather Compare</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;padding:20px;min-height:100vh}
+h1{font-family:'Bebas Neue',sans-serif;color:#cc0000;font-size:32px;letter-spacing:8px;margin-bottom:4px}
+.sub{font-size:9px;color:#333;letter-spacing:3px;margin-bottom:24px}
+.ref-row{display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap}
+.ref-label{font-size:10px;color:#555;letter-spacing:2px}
+input{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share Tech Mono',monospace;
+  font-size:13px;padding:7px 10px;border-radius:3px;outline:none;width:80px}
+input:focus{border-color:#cc0000}
+select{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share Tech Mono',monospace;
+  font-size:11px;padding:7px 10px;border-radius:3px;outline:none;width:160px}
+.btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:'Share Tech Mono',monospace;
+  font-size:11px;letter-spacing:2px;padding:8px 16px;border-radius:3px;cursor:pointer}
+.btn:active{background:#330000}
+.grid{display:flex;flex-direction:column;gap:8px}
+.card{background:#050505;border:1px solid #111;border-radius:4px;padding:12px 14px;
+  display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;transition:border-color 0.3s}
+.card.best{border-color:#006622}
+.card.close{border-color:#664400}
+.name{font-size:10px;letter-spacing:2px;color:#666}
+.vals{text-align:right}
+.temp{font-size:18px;color:#fff;font-weight:bold}
+.cond{font-size:9px;color:#555;letter-spacing:1px;margin-top:2px}
+.diff{text-align:right;min-width:48px}
+.diff-val{font-size:13px;font-weight:bold}
+.diff-0{color:#00cc44}.diff-1{color:#88cc00}.diff-2{color:#ffaa00}.diff-3{color:#cc4400}.diff-big{color:#cc0000}
+.err{font-size:9px;color:#330000;letter-spacing:1px}
+.loading{color:#333;font-size:11px;letter-spacing:3px;padding:20px 0;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.winner-banner{margin-top:16px;padding:10px 14px;background:#001a00;border:1px solid #006622;
+  border-radius:4px;font-size:11px;color:#00cc44;letter-spacing:2px;display:none}
+.corner{position:fixed;width:14px;height:14px;border-color:#1a1a1a;border-style:solid;opacity:0.5}
+.corner.tl{top:10px;left:10px;border-width:1px 0 0 1px}
+.corner.tr{top:10px;right:10px;border-width:1px 1px 0 0}
+.corner.bl{bottom:10px;left:10px;border-width:0 0 1px 1px}
+.corner.br{bottom:10px;right:10px;border-width:0 1px 1px 0}
+</style></head><body>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
+
+<h1>WEATHER COMPARE</h1>
+<div class="sub" id="loc">LOADING LOCATION...</div>
+
+<div class="ref-row">
+  <span class="ref-label">YOUR PHONE:</span>
+  <input id="ref-temp" type="number" placeholder="temp" min="0" max="130">
+  <span class="ref-label">°F</span>
+  <select id="ref-cond">
+    <option value="">— condition —</option>
+    <option>Clear</option><option>Partly Cloudy</option><option>Cloudy</option>
+    <option>Overcast</option><option>Fog</option><option>Drizzle</option>
+    <option>Rain</option><option>Rain Showers</option><option>Thunderstorm</option>
+    <option>Snow</option><option>Snow Showers</option><option>Freezing Rain</option>
+  </select>
+  <button class="btn" onclick="load()">REFRESH</button>
+</div>
+
+<div class="grid" id="grid"><div class="loading">FETCHING ALL SOURCES...</div></div>
+<div class="winner-banner" id="winner"></div>
+
+<script>
+async function load() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '<div class="loading">FETCHING ALL SOURCES...</div>';
+  document.getElementById('winner').style.display = 'none';
+
+  const resp = await fetch('/weather/compare/data');
+  const data = await resp.json();
+  document.getElementById('loc').textContent = (data.location || '').toUpperCase();
+
+  const refTemp = parseFloat(document.getElementById('ref-temp').value);
+  const refCond = document.getElementById('ref-cond').value.toLowerCase();
+
+  grid.innerHTML = '';
+  let bestDiff = Infinity, bestName = '';
+
+  data.results.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    if (r.error) {
+      card.innerHTML = `<div class="name">${r.name}</div><div class="err">${r.error}</div><div></div>`;
+    } else {
+      const diff = (!isNaN(refTemp) && r.temp !== null) ? Math.abs(r.temp - refTemp) : null;
+      const condMatch = refCond && r.condition ? r.condition.toLowerCase() === refCond : null;
+
+      let diffClass = '';
+      if (diff !== null) {
+        diffClass = diff === 0 ? 'diff-0' : diff <= 1 ? 'diff-1' : diff <= 2 ? 'diff-2' : diff <= 3 ? 'diff-3' : 'diff-big';
+        if (diff < bestDiff) { bestDiff = diff; bestName = r.name; }
+      }
+
+      const condColor = condMatch === true ? '#00cc44' : condMatch === false ? '#cc4444' : '#444';
+
+      card.innerHTML = `
+        <div class="name">${r.name}</div>
+        <div class="vals">
+          <div class="temp">${r.temp !== null ? r.temp + '°F' : '—'}</div>
+          <div class="cond" style="color:${condColor}">${r.condition || '—'}</div>
+        </div>
+        <div class="diff">
+          ${diff !== null ? `<div class="diff-val ${diffClass}">${diff === 0 ? '✓' : (diff > 0 ? '+' : '') + (r.temp - refTemp) + '°'}</div>` : '<div class="diff-val" style="color:#222">—</div>'}
+        </div>`;
+    }
+    grid.appendChild(card);
+  });
+
+  // Highlight best match
+  if (bestName && !isNaN(refTemp)) {
+    [...grid.children].forEach(c => {
+      const name = c.querySelector('.name')?.textContent || '';
+      if (name === bestName) c.classList.add(bestDiff <= 1 ? 'best' : 'close');
+    });
+    const w = document.getElementById('winner');
+    w.textContent = `CLOSEST MATCH: ${bestName.toUpperCase()} — ${bestDiff === 0 ? 'EXACT' : bestDiff + '°F OFF'}`;
+    w.style.display = 'block';
+  }
+}
+
+load();
+</script>
+</body></html>"""
+    return FR(html, mimetype='text/html')
 
 
 @display_app.route('/fans')
