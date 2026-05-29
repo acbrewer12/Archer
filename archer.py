@@ -810,13 +810,16 @@ def get_weather():
 
         def _parse_condition(desc):
             desc = (desc or '').lower()
-            if 'thunder' in desc:                                              return 'thunderstorm'
-            elif 'snow' in desc or 'blizzard' in desc:                         return 'snowing'
-            elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'raining'
-            elif 'overcast' in desc or 'cloudy' in desc:                       return 'cloudy'
-            elif any(w in desc for w in ('partly','mostly')):                  return 'partly cloudy'
-            elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'clear'
-            else:                                                               return desc[:20] or 'cloudy'
+            if 'thunder' in desc:                                              return 'Thunderstorm'
+            elif 'snow' in desc or 'blizzard' in desc:                         return 'Snow'
+            elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:       return 'Freezing Rain'
+            elif 'fog' in desc or 'mist' in desc:                              return 'Fog'
+            elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'Rain'
+            elif 'overcast' in desc:                                            return 'Overcast'
+            elif 'cloudy' in desc:                                              return 'Cloudy'
+            elif any(w in desc for w in ('partly','mostly')):                  return 'Partly Cloudy'
+            elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'Clear'
+            else:                                                               return (desc[:20] or 'Cloudy').title()
 
         # Try current observations first (actual sensor readings, not forecast)
         obs_temp_f    = None
@@ -1171,7 +1174,7 @@ def get_display_data():
         'tc_on':         truck_state['tc_on'],
         'ghost_mode':    truck_state['ghost_mode'],
         'mood':          get_mood(),
-        'weather':       f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
+        'weather':       f"{weather['temp']}F {weather['condition']}",
         'road':          road_memory[current_road]['name'] if current_road else 'None',
         'profile':       driver_profiles[current_profile]['name'],
         'best_060':      personal_bests['best_0_60'] or 0,
@@ -1291,7 +1294,7 @@ Truck data right now:
 - Current mood: {mood}
 - Time: {datetime.now().strftime('%I:%M %p')}
 - Day: {datetime.now().strftime('%A')}
-- Weather: {weather['temp']}F — {weather.get('desc') or weather['condition']}{warning_context}{session_context}{pb_context}{road_context}{music_context}
+- Weather: {weather['temp']}F — {weather['condition']}{warning_context}{session_context}{pb_context}{road_context}{music_context}
 - Current driver: {driver_profiles[current_profile]['name']} — Tier {driver_profiles[current_profile]['tier']}
 """
     caps = get_build_caps()
@@ -1532,7 +1535,7 @@ def save_trip():
         'quality':     awareness['drive_quality'],
         'road':        road_memory[current_road]['name'] if current_road else 'unknown',
         'ethanol':     truck_state['ethanol'],
-        'weather':     f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
+        'weather':     f"{weather['temp']}F {weather['condition']}",
     }
     trip_log.append(trip)
     if len(trip_log) > 100:
@@ -4272,7 +4275,7 @@ def log_moment(category, description):
         'time':     datetime.now().strftime('%B %d %Y %I:%M %p'),
         'category': category, 'desc': description,
         'road':     road_memory[current_road]['name'] if current_road else 'unknown',
-        'weather':  f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
+        'weather':  f"{weather['temp']}F {weather['condition']}",
     }
     archer_memory['moments'].append(moment)
     if len(archer_memory['moments']) > 50:
@@ -4302,7 +4305,7 @@ def lock_legacy():
 def add_legacy_voice_note(note):
     entry = {
         'date': datetime.now().strftime('%B %d %Y %I:%M %p'),
-        'note': note, 'weather': f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
+        'note': note, 'weather': f"{weather['temp']}F {weather['condition']}",
     }
     legacy['voice_notes'].append(entry)
     save_state()
@@ -4407,7 +4410,7 @@ def casual_monitor():
         situation = f"""
 Current situation:
 - Time: {datetime.now().strftime('%I:%M %p')} on {datetime.now().strftime('%A')}
-- Weather: {weather['temp']}F — {weather.get('desc') or weather['condition']}
+- Weather: {weather['temp']}F — {weather['condition']}
 - RPM: {truck_state['rpm']} — throttle: {awareness['throttle_state']}
 - Oil: {truck_state['oil_temp']}F — trend: {awareness['oil_trend']}
 - Speed: {truck_state['speed']} mph — Ethanol: {truck_state['ethanol']}%
@@ -5168,7 +5171,7 @@ def print_status():
         ("Profile",    driver_profiles[current_profile]['name']),
         ("Road",       road_memory[current_road]['name'] if current_road else 'None logged'),
         ("Music",      music_state['current_song'] if music_state['playing'] else 'Off'),
-        ("Weather",    f"{weather['temp']}F — {weather.get('desc') or weather['condition']}"),
+        ("Weather",    f"{weather['temp']}F — {weather['condition']}"),
         ("Best 0-60",  f"{personal_bests['best_0_60']}s" if personal_bests['best_0_60'] else 'None logged'),
         ("Launches",   personal_bests['launch_count']),
         ("Legacy",     'ACTIVE' if legacy['active'] else 'OFF'),
@@ -8696,7 +8699,7 @@ def boot_status():
     # 6. Weather API
     weather_fetched = weather.get('last_update', 0) > 0 and weather.get('temp') is not None
     if weather_fetched:
-        w_detail = f"{weather['temp']}F — {weather.get('desc') or weather['condition']}"
+        w_detail = f"{weather['temp']}F — {weather['condition']}"
         w_status = 'ok'
     else:
         w_status, w_detail = 'warn', 'pending first fetch'
