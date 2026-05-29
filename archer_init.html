@@ -10,57 +10,55 @@ html,body{height:100%}
 body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;padding:20px}
 :root{--red:#cc0000;--amber:#ffaa00;--green:#00cc44;--dim:#1a1a1a;--label:#444;--text2:#888}
 
-.wrap{width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;gap:0}
+.wrap{width:100%;max-width:440px;display:flex;flex-direction:column;align-items:center;gap:0}
 
 /* LOGO */
 .logo-wrap{position:relative;margin-bottom:6px}
-.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.4)}
-.logo-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);animation:scan 2.4s linear infinite;top:0;opacity:0.7}
-@keyframes scan{0%{top:0;opacity:0}10%{opacity:0.7}90%{opacity:0.7}100%{top:100%;opacity:0}}
-
-.vehicle{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:28px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.35)}
+.logo-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);top:0;opacity:0;animation:scan 2.2s linear infinite}
+@keyframes scan{0%{top:0;opacity:0}8%{opacity:0.7}92%{opacity:0.7}100%{top:100%;opacity:0}}
+.vehicle{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:24px}
 
 /* PROGRESS BAR */
-.bar-track{width:100%;height:2px;background:#0d0d0d;border:1px solid var(--dim);border-radius:1px;margin-bottom:24px;overflow:hidden}
-.bar-fill{height:100%;width:0%;background:var(--red);border-radius:1px;transition:width 0.35s ease;box-shadow:0 0 8px rgba(204,0,0,0.6)}
+.bar-track{width:100%;height:2px;background:#0d0d0d;border:1px solid var(--dim);border-radius:1px;margin-bottom:20px;overflow:hidden}
+.bar-fill{height:100%;width:0%;background:var(--red);border-radius:1px;transition:width 0.4s ease;box-shadow:0 0 8px rgba(204,0,0,0.5)}
 
 /* CHECK LIST */
-.checks{width:100%;display:flex;flex-direction:column;gap:6px;min-height:210px}
-.check-item{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#050505;border:1px solid #0d0d0d;border-radius:4px;opacity:0;transform:translateY(6px);transition:opacity 0.3s ease,transform 0.3s ease}
+.checks{width:100%;display:flex;flex-direction:column;gap:5px}
+.check-item{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#050505;border:1px solid #0d0d0d;border-radius:4px;opacity:0;transform:translateY(5px);transition:opacity 0.25s ease,transform 0.25s ease}
 .check-item.visible{opacity:1;transform:translateY(0)}
-.check-icon{width:16px;height:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px}
-.check-spinner{width:12px;height:12px;border:1.5px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.6s linear infinite}
+.check-icon{width:18px;flex-shrink:0;text-align:center;font-size:12px}
+.spinner{width:12px;height:12px;border:1.5px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.55s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-.check-label{font-size:11px;letter-spacing:2px;color:#555;flex:1}
-.check-label.active{color:#888}
-.check-label.done{color:#fff}
-.check-status{font-size:10px;letter-spacing:1px;color:var(--label);flex-shrink:0}
-.check-status.ok{color:var(--green)}
-.check-status.warn{color:var(--amber)}
-.check-status.fail{color:var(--red)}
+.check-label{font-size:10px;letter-spacing:2px;color:var(--label);flex:1;text-transform:uppercase}
+.check-label.running{color:#888}
+.check-label.done{color:#ccc}
+.check-detail{font-size:9px;color:#333;letter-spacing:1px;flex-shrink:0;max-width:140px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.check-detail.ok   {color:#006622}
+.check-detail.warn {color:#664400}
+.check-detail.fail {color:#660000}
 
-/* READY */
-.ready-wrap{margin-top:20px;text-align:center;opacity:0;transition:opacity 0.5s}
-.ready-wrap.show{opacity:1}
-.ready-text{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:6px;color:var(--green)}
-.ready-sub{font-size:9px;color:var(--label);letter-spacing:3px;margin-top:4px}
+/* READY / ERROR banner */
+.banner{margin-top:16px;text-align:center;opacity:0;transition:opacity 0.4s}
+.banner.show{opacity:1}
+.banner-text{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:5px}
+.banner-text.ok  {color:var(--green)}
+.banner-text.warn{color:var(--amber)}
+.banner-text.fail{color:var(--red)}
+.banner-sub{font-size:9px;color:var(--label);letter-spacing:2px;margin-top:4px}
 
-/* VERSION */
-.ver{position:fixed;bottom:12px;font-size:8px;color:#1a1a1a;letter-spacing:2px}
-
-/* CORNER ACCENTS */
-.corner{position:fixed;width:18px;height:18px;border-color:var(--dim);border-style:solid;opacity:0.6}
+/* Corner accents */
+.corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5}
 .corner.tl{top:12px;left:12px;border-width:1px 0 0 1px}
 .corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
 .corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
 .corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
+.ver{position:fixed;bottom:10px;font-size:8px;color:#1a1a1a;letter-spacing:2px}
 </style>
 </head>
 <body>
-<div class="corner tl"></div>
-<div class="corner tr"></div>
-<div class="corner bl"></div>
-<div class="corner br"></div>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
 
 <div class="wrap">
   <div class="logo-wrap">
@@ -70,83 +68,133 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
   <div class="vehicle">2006 GMC SIERRA 2500HD</div>
 
   <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
-
   <div class="checks" id="checks"></div>
-
-  <div class="ready-wrap" id="ready">
-    <div class="ready-text">ALL SYSTEMS GO</div>
-    <div class="ready-sub">LOADING INTERFACE...</div>
+  <div class="banner" id="banner">
+    <div class="banner-text" id="banner-text"></div>
+    <div class="banner-sub" id="banner-sub"></div>
   </div>
 </div>
 
 <div class="ver">ARCHER AI v2.0 — AYDEN BREWER</div>
 
 <script>
-const STEPS = [
-  { label: 'INITIALIZING ARCHER SYSTEM',    delay: 0,    dur: 520,  status: 'OK',     statusClass: 'ok'   },
-  { label: 'LOADING VEHICLE PROFILE',        delay: 480,  dur: 480,  status: 'OK',     statusClass: 'ok'   },
-  { label: 'CONNECTING TO SENSORS',          delay: 920,  dur: 600,  status: 'SIMUL',  statusClass: 'warn' },
-  { label: 'AUTHENTICATING DEVICE',          delay: 1380, dur: 550,  status: 'OK',     statusClass: 'ok'   },
-  { label: 'ESTABLISHING AI CORE',           delay: 1880, dur: 700,  status: 'OK',     statusClass: 'ok'   },
-  { label: 'CALIBRATING TELEMETRY',          delay: 2380, dur: 460,  status: 'READY',  statusClass: 'ok'   },
-  { label: 'ALL SYSTEMS NOMINAL',            delay: 2780, dur: 400,  status: 'GO',     statusClass: 'ok'   },
-];
+const barEl     = document.getElementById('bar');
+const checksEl  = document.getElementById('checks');
+const bannerEl  = document.getElementById('banner');
+const bannerTxt = document.getElementById('banner-text');
+const bannerSub = document.getElementById('banner-sub');
 
-const checksEl = document.getElementById('checks');
-const barEl    = document.getElementById('bar');
-const readyEl  = document.getElementById('ready');
+// Status-to-display mapping
+const STATUS = {
+  ok:   { icon: '▸', color: '#00cc44', borderColor: '#0d1a0d' },
+  warn: { icon: '▸', color: '#ffaa00', borderColor: '#1a1500' },
+  fail: { icon: '✕', color: '#cc0000', borderColor: '#1a0000' },
+};
 
-const items = STEPS.map((s, i) => {
-  const row = document.createElement('div');
-  row.className = 'check-item';
-  row.innerHTML = `
-    <div class="check-icon" id="icon-${i}"></div>
-    <div class="check-label" id="lbl-${i}">${s.label}</div>
-    <div class="check-status" id="stat-${i}"></div>
-  `;
-  checksEl.appendChild(row);
-  return row;
-});
+// Track rendered rows by check id
+const rows = {};
 
 function setProgress(pct) {
-  barEl.style.width = pct + '%';
+  barEl.style.width = Math.min(100, pct) + '%';
 }
 
-STEPS.forEach((s, i) => {
-  const totalSteps = STEPS.length;
+function renderRow(check, index, total) {
+  const existing = rows[check.id];
+  const s = STATUS[check.status] || STATUS.warn;
 
-  // Appear
-  setTimeout(() => {
-    items[i].classList.add('visible');
-    document.getElementById(`lbl-${i}`).classList.add('active');
-    document.getElementById(`icon-${i}`).innerHTML = '<div class="check-spinner"></div>';
-    setProgress(Math.round(((i + 0.5) / totalSteps) * 100));
-  }, s.delay);
+  if (!existing) {
+    // First time we see this check — create the row
+    const row = document.createElement('div');
+    row.className = 'check-item';
+    row.id = 'row-' + check.id;
+    row.innerHTML = `
+      <div class="check-icon" id="icon-${check.id}"><div class="spinner"></div></div>
+      <div class="check-label running" id="lbl-${check.id}">${check.label}</div>
+      <div class="check-detail" id="det-${check.id}"></div>
+    `;
+    checksEl.appendChild(row);
+    rows[check.id] = row;
+    // Animate in after a tiny delay
+    requestAnimationFrame(() => { row.classList.add('visible'); });
+  }
 
-  // Complete
-  setTimeout(() => {
-    const icon  = document.getElementById(`icon-${i}`);
-    const lbl   = document.getElementById(`lbl-${i}`);
-    const stat  = document.getElementById(`stat-${i}`);
-    icon.innerHTML = '▸';
-    icon.style.color = s.statusClass === 'ok' ? 'var(--green)' : s.statusClass === 'warn' ? 'var(--amber)' : 'var(--red)';
-    lbl.className  = 'check-label done';
-    stat.textContent  = s.status;
-    stat.className    = 'check-status ' + s.statusClass;
-    items[i].style.borderColor = s.statusClass === 'ok' ? '#0d1a0d' : s.statusClass === 'warn' ? '#1a1500' : '#1a0000';
-    setProgress(Math.round(((i + 1) / totalSteps) * 100));
-  }, s.delay + s.dur);
-});
+  // Update icon, label, detail with real result
+  const icon = document.getElementById('icon-' + check.id);
+  const lbl  = document.getElementById('lbl-'  + check.id);
+  const det  = document.getElementById('det-'  + check.id);
+  const row  = rows[check.id];
 
-const totalTime = Math.max(...STEPS.map(s => s.delay + s.dur));
+  icon.innerHTML = `<span style="color:${s.color}">${s.icon}</span>`;
+  lbl.className  = 'check-label done';
+  det.textContent = check.detail || '';
+  det.className   = 'check-detail ' + check.status;
+  row.style.borderColor = s.borderColor;
+}
 
-setTimeout(() => {
-  setProgress(100);
-  readyEl.classList.add('show');
-}, totalTime + 80);
+async function runBootChecks() {
+  let attempts = 0;
+  const MAX_ATTEMPTS = 20; // 10 seconds max
+  let lastCheckCount = 0;
 
-setTimeout(() => {
+  while (attempts < MAX_ATTEMPTS) {
+    attempts++;
+    try {
+      const resp = await fetch('/boot/status');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      const checks = data.checks || [];
+      const total  = checks.length;
+
+      // Render each check row
+      checks.forEach((c, i) => renderRow(c, i, total));
+
+      // Progress bar: how many completed / total
+      const doneCount = checks.length;
+      setProgress(Math.round((doneCount / Math.max(total, 1)) * 95));
+
+      // Check if all done
+      if (data.ready || attempts >= MAX_ATTEMPTS) {
+        setProgress(100);
+
+        // Count statuses
+        const fails  = checks.filter(c => c.status === 'fail').length;
+        const warns  = checks.filter(c => c.status === 'warn').length;
+
+        if (fails > 0) {
+          bannerTxt.textContent = 'SYSTEM ISSUES DETECTED';
+          bannerTxt.className   = 'banner-text fail';
+          bannerSub.textContent = `${fails} failure${fails > 1 ? 's' : ''} — loading anyway`;
+        } else if (warns > 0) {
+          bannerTxt.textContent = 'SYSTEMS READY';
+          bannerTxt.className   = 'banner-text warn';
+          bannerSub.textContent = `${warns} warning${warns > 1 ? 's' : ''} — non-critical`;
+        } else {
+          bannerTxt.textContent = 'ALL SYSTEMS GO';
+          bannerTxt.className   = 'banner-text ok';
+          bannerSub.textContent = `uptime ${data.uptime}s — loading interface`;
+        }
+
+        bannerEl.classList.add('show');
+
+        // Short pause so user can see the result, then redirect
+        await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 900));
+        window.location.href = '/';
+        return;
+      }
+
+    } catch (e) {
+      // Server not ready yet — keep waiting
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Timeout fallback — go anyway
   window.location.href = '/';
-}, totalTime + 900);
+}
+
+// Start after a brief moment so the logo renders first
+setTimeout(runBootChecks, 300);
 </script>
 </body></html>

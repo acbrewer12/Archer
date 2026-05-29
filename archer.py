@@ -8529,12 +8529,126 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
+@display_app.route('/boot/status')
+def boot_status():
+    """Real system health checks for the boot page. Called by archer_init.html JS."""
+    checks = []
+
+    # 1. Archer core — if we got here, the server is up
+    uptime_s = round(time.time() - system_health['start_time'], 1)
+    checks.append({
+        'id': 'core', 'label': 'ARCHER CORE',
+        'status': 'ok', 'detail': f'up {uptime_s}s',
+    })
+
+    # 2. Auth system
+    secret = os.environ.get('ARCHER_SECRET', '')
+    secret_ok = bool(secret) and secret != 'archer2500hd'
+    checks.append({
+        'id': 'auth', 'label': 'AUTH SYSTEM',
+        'status': 'ok' if secret_ok else 'warn',
+        'detail': 'configured' if secret_ok else 'default key — set ARCHER_SECRET',
+    })
+
+    # 3. Vehicle profile / saved state
+    save_ok = os.path.exists(SAVE_FILE)
+    checks.append({
+        'id': 'profile', 'label': 'VEHICLE PROFILE',
+        'status': 'ok' if save_ok else 'warn',
+        'detail': 'state loaded' if save_ok else 'no saved state — fresh start',
+    })
+
+    # 4. Sensor link (OBD, BeamNG, or simulator)
+    if obd2_display['connected']:
+        sensor_status, sensor_detail = 'ok', 'OBD live'
+    elif beamng_state.get('connected'):
+        sensor_status, sensor_detail = 'ok', 'BeamNG bridge'
+    elif sim_random_enabled:
+        sensor_status, sensor_detail = 'warn', 'simulator mode'
+    else:
+        sensor_status, sensor_detail = 'warn', 'no sensor data'
+    checks.append({'id': 'sensors', 'label': 'SENSOR LINK', 'status': sensor_status, 'detail': sensor_detail})
+
+    # 5. AI backend
+    hf_ok   = bool(os.environ.get('HF_TOKEN', '').strip())
+    groq_ok = bool(os.environ.get('GROQ_API_KEY', '').strip())
+    if hf_ok and groq_ok:
+        ai_detail = 'HuggingFace + Groq'
+    elif hf_ok:
+        ai_detail = 'HuggingFace'
+    elif groq_ok:
+        ai_detail = 'Groq'
+    else:
+        ai_detail = 'local fallback only'
+    checks.append({
+        'id': 'ai', 'label': 'AI BACKEND',
+        'status': 'ok' if (hf_ok or groq_ok) else 'warn',
+        'detail': ai_detail,
+    })
+
+    # 6. Weather API (has it fetched yet?)
+    weather_fetched = weather.get('last_update', 0) > 0 and weather.get('temp') is not None
+    if weather_fetched:
+        w_detail = f"{weather['temp']}F — {weather.get('desc') or weather['condition']}"
+        w_status = 'ok'
+    else:
+        w_status = 'warn'
+        w_detail = 'pending first fetch'
+    checks.append({'id': 'weather', 'label': 'WEATHER API', 'status': w_status, 'detail': w_detail})
+
+    # 7. Voice / TTS system
+    if _IS_PI:
+        if _PIPER_AVAILABLE and _VOSK_AVAILABLE:
+            v_status, v_detail = 'ok', 'piper TTS + vosk STT'
+        elif _PIPER_AVAILABLE:
+            v_status, v_detail = 'warn', 'piper TTS — no STT'
+        elif _VOSK_AVAILABLE:
+            v_status, v_detail = 'warn', 'vosk STT — no TTS'
+        else:
+            v_status, v_detail = 'warn', 'no local voice stack'
+    else:
+        dectalk_ok = os.path.exists('/opt/dectalk/say')
+        if dectalk_ok:
+            v_status, v_detail = 'ok', 'DECtalk TTS'
+        elif hf_ok:
+            v_status, v_detail = 'ok', 'edge-tts (cloud)'
+        else:
+            v_status, v_detail = 'warn', 'web speech fallback'
+    checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
+
+    # 8. Memory store
+    mem_ok = os.path.exists(SAVE_FILE)
+    try:
+        if mem_ok:
+            with open(SAVE_FILE, 'r') as _f:
+                _json = json.load(_f)
+            mem_detail = f"{len(_json)} keys"
+            mem_status = 'ok'
+        else:
+            mem_status, mem_detail = 'warn', 'will create on first save'
+    except Exception:
+        mem_status, mem_detail = 'fail', 'corrupt save file'
+    checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
+
+    # 9. Spotify (optional — only show if configured)
+    if SPOTIFY_CLIENT_ID:
+        spot_status = 'ok' if spotify_tokens.get('access_token') else 'warn'
+        spot_detail = 'authenticated' if spotify_tokens.get('access_token') else 'not linked'
+        checks.append({'id': 'spotify', 'label': 'SPOTIFY', 'status': spot_status, 'detail': spot_detail})
+
+    ready = all(c['status'] != 'fail' for c in checks)
+    return jsonify({
+        'checks': checks,
+        'ready':  ready,
+        'uptime': uptime_s,
+    })
+
+
 @display_app.route('/boot')
 @display_app.route('/init')
 def boot_page():
     """Boot/initialization splash — animates then redirects to /."""
     from flask import Response as FR
-    import os
     if os.path.exists('archer_init.html'):
         with open('archer_init.html', 'r', encoding='utf-8') as f:
             html = f.read()
