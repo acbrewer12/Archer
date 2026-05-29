@@ -783,6 +783,7 @@ weather = {
 _nws_station_url  = None  # cached after first lookup
 _nws_forecast_url = None  # cached hourly forecast URL for exact coordinates
 _wu_key           = os.environ.get('WUNDERGROUND_KEY', '')
+_vc_key           = os.environ.get('VISUALCROSSING_KEY', '')
 
 def get_weather():
     global _nws_station_url, _nws_forecast_url
@@ -842,9 +843,44 @@ def get_weather():
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-    # ── PRIMARY: Weather Underground PWS (nearest personal weather station) ──
+    # ── PRIMARY: Visual Crossing (exact temp match in testing, 1000 free calls/day) ──
+    if _vc_key:
+        try:
+            vc_url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
+                      f'/{lat:.4f},{lon:.4f}/today'
+                      f'?unitGroup=us&include=current&key={_vc_key}&contentType=json')
+            with urllib.request.urlopen(urllib.request.Request(vc_url, headers=hdr), timeout=8) as r:
+                d = json.loads(r.read())
+            cur      = d['currentConditions']
+            temp_f   = int(cur['temp'])
+            wind_mph = round(float(cur.get('windspeed') or 0))
+            precip   = float(cur.get('precip') or 0)
+            cloud    = int(cur.get('cloudcover') or 0)
+            desc     = (cur.get('conditions') or '').lower()
+            # Use cloudcover % to distinguish Partly/Mostly/Cloudy accurately
+            if any(w in desc for w in ('thunder', 'storm')):     condition = 'Thunderstorm'
+            elif any(w in desc for w in ('snow', 'blizzard')):   condition = 'Snow'
+            elif any(w in desc for w in ('freez', 'sleet', 'ice pellet')): condition = 'Freezing Rain'
+            elif any(w in desc for w in ('fog', 'mist')):        condition = 'Fog'
+            elif 'drizzle' in desc:                              condition = 'Drizzle'
+            elif any(w in desc for w in ('shower', 'rain')):     condition = 'Rain Showers' if 'shower' in desc else 'Rain'
+            elif cloud >= 90:                                    condition = 'Overcast'
+            elif cloud >= 70:                                    condition = 'Mostly Cloudy'
+            elif cloud >= 40:                                    condition = 'Cloudy'
+            elif cloud >= 20:                                    condition = 'Partly Cloudy'
+            else:                                                condition = 'Clear'
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'freezing': temp_f < 32,
+                'snowing':  condition == 'Snow',
+            }
+        except Exception:
+            pass
+
+    # ── SECONDARY: Weather Underground PWS (nearest personal weather station) ──
     # TWC ingests WUnderground PWS data — actual thermometers in nearby yards.
-    # Gets within 0-1°F of TWC because it IS the source data TWC uses.
     if _wu_key:
         try:
             wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
@@ -8995,7 +9031,7 @@ def weather_compare_data():
 
     # First row: Archer's live reading (cached — no extra HTTP call)
     w = weather
-    archer_src = 'WUnderground PWS' if _wu_key else 'NWS'
+    archer_src = 'Visual Crossing' if _vc_key else ('WUnderground PWS' if _wu_key else 'NWS')
     archer_result = {
         'name':      f'Archer — {archer_src} (live)',
         'temp':      w.get('temp'),
@@ -9130,21 +9166,22 @@ def weather_compare_data():
                f'?unitGroup=us&include=current&key={visualcross_key}&contentType=json')
         with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
             d = json.loads(r.read())
-        cur  = d['currentConditions']
-        temp = int(cur['temp'])
-        desc = (cur.get('conditions') or '').lower()
-        cond = ('Thunderstorm'   if 'thunder' in desc else
-                'Snow'           if 'snow' in desc or 'blizzard' in desc else
-                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
-                'Fog'            if 'fog' in desc or 'mist' in desc else
-                'Rain Showers'   if 'shower' in desc else
-                'Rain'           if 'rain' in desc or 'drizzle' in desc else
-                'Overcast'       if 'overcast' in desc else
-                'Mostly Cloudy'  if 'mostly cloudy' in desc else
-                'Cloudy'         if 'cloud' in desc or 'overcast' in desc else
-                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
-                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
-                desc[:20].title() or 'Cloudy')
+        cur   = d['currentConditions']
+        temp  = int(cur['temp'])
+        desc  = (cur.get('conditions') or '').lower()
+        cloud = int(cur.get('cloudcover') or 0)
+        if any(w in desc for w in ('thunder', 'storm')):          cond = 'Thunderstorm'
+        elif any(w in desc for w in ('snow', 'blizzard')):        cond = 'Snow'
+        elif any(w in desc for w in ('freez', 'sleet', 'ice')):   cond = 'Freezing Rain'
+        elif any(w in desc for w in ('fog', 'mist')):             cond = 'Fog'
+        elif 'drizzle' in desc:                                   cond = 'Drizzle'
+        elif 'shower' in desc:                                    cond = 'Rain Showers'
+        elif 'rain' in desc:                                      cond = 'Rain'
+        elif cloud >= 90:                                         cond = 'Overcast'
+        elif cloud >= 70:                                         cond = 'Mostly Cloudy'
+        elif cloud >= 40:                                         cond = 'Cloudy'
+        elif cloud >= 20:                                         cond = 'Partly Cloudy'
+        else:                                                     cond = 'Clear'
         return temp, cond
 
     sources = [
