@@ -828,16 +828,18 @@ def get_weather():
 
     def _parse_condition(desc):
         desc = (desc or '').lower()
-        if 'thunder' in desc:                                              return 'Thunderstorm'
-        elif 'snow' in desc or 'blizzard' in desc:                         return 'Snow'
-        elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:       return 'Freezing Rain'
-        elif 'fog' in desc or 'mist' in desc:                              return 'Fog'
-        elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'Rain'
-        elif 'overcast' in desc:                                            return 'Overcast'
-        elif 'cloudy' in desc:                                              return 'Cloudy'
-        elif any(w in desc for w in ('partly','mostly')):                  return 'Partly Cloudy'
-        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'Clear'
-        else:                                                               return (desc[:20] or 'Cloudy').title()
+        if 'thunder' in desc:                                                  return 'Thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:                             return 'Snow'
+        elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:           return 'Freezing Rain'
+        elif 'fog' in desc or 'mist' in desc:                                  return 'Fog'
+        elif 'vicinity' in desc and any(w in desc for w in ('shower','rain')): return 'Scattered Showers'
+        elif 'shower' in desc:                                                  return 'Rain Showers'
+        elif any(w in desc for w in ('rain','drizzle')):                        return 'Rain'
+        elif 'overcast' in desc:                                                return 'Overcast'
+        elif 'cloudy' in desc:                                                  return 'Cloudy'
+        elif any(w in desc for w in ('partly','mostly')):                       return 'Partly Cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
+        else:                                                                   return (desc[:20] or 'Cloudy').title()
 
     # ── PRIMARY: Open-Meteo (ECMWF/GFS models, same data TWC uses, Fahrenheit direct) ──
     try:
@@ -858,7 +860,7 @@ def get_weather():
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
             'wind': wind_mph, 'precip': precip,
-            'raining':  condition in ('Rain', 'Rain Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
             'freezing': temp_f < 32,
             'snowing':  condition == 'Snow',
         }
@@ -911,7 +913,7 @@ def get_weather():
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
             'wind': wind_mph, 'precip': 0,
-            'raining':  condition in ('Rain', 'Rain Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
             'freezing': temp_f < 32,
             'snowing':  condition == 'Snow',
         }
@@ -8915,6 +8917,7 @@ def weather_compare_data():
                 'Snow'         if 'snow' in short else
                 'Freezing Rain' if 'freez' in short or 'sleet' in short else
                 'Fog'          if 'fog' in short or 'mist' in short else
+                'Scattered Showers' if 'vicinity' in short else
                 'Rain Showers' if 'shower' in short else
                 'Rain'         if any(w in short for w in ('rain','drizzle')) else
                 'Cloudy'       if 'cloudy' in short or 'overcast' in short else
@@ -8935,6 +8938,7 @@ def weather_compare_data():
             'Snow'         if 'snow' in desc or 'blizzard' in desc else
             'Freezing Rain' if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
             'Fog'          if 'fog' in desc or 'mist' in desc else
+            'Scattered Showers' if 'vicinity' in desc else
             'Rain Showers' if 'shower' in desc else
             'Rain'         if any(w in desc for w in ('rain','drizzle')) else
             'Overcast'     if 'overcast' in desc else
@@ -9050,7 +9054,7 @@ select{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share
     <option value="">— condition —</option>
     <option>Clear</option><option>Partly Cloudy</option><option>Cloudy</option>
     <option>Overcast</option><option>Fog</option><option>Drizzle</option>
-    <option>Rain</option><option>Rain Showers</option><option>Thunderstorm</option>
+    <option>Rain</option><option>Rain Showers</option><option>Scattered Showers</option><option>Thunderstorm</option>
     <option>Snow</option><option>Snow Showers</option><option>Freezing Rain</option>
   </select>
   <button class="btn" onclick="load()">REFRESH</button>
