@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#000000">
+<title>Archer — Under Maintenance</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  overflow:hidden;padding:20px}
+:root{--red:#cc0000;--amber:#ffaa00;--dim:#1a1a1a}
+
+.wrap{width:100%;max-width:440px;display:flex;flex-direction:column;align-items:center;gap:0}
+
+/* LOGO */
+.logo-wrap{position:relative;margin-bottom:6px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);
+  line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.35)}
+.vehicle{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:32px}
+
+/* MAINTENANCE BOX */
+.maint-box{width:100%;border:1px solid #1a0000;background:#050505;border-radius:4px;
+  padding:24px 20px;display:flex;flex-direction:column;align-items:center;gap:14px}
+
+.maint-icon{font-size:28px;color:var(--amber);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+
+.maint-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--amber);text-align:center}
+.maint-sub{font-size:9px;color:#555;letter-spacing:2px;text-align:center;line-height:1.7}
+
+/* Divider */
+.divider{width:100%;height:1px;background:#0d0d0d;margin:2px 0}
+
+/* Countdown */
+.countdown-wrap{display:flex;flex-direction:column;align-items:center;gap:4px}
+.countdown-label{font-size:8px;color:#333;letter-spacing:2px}
+.countdown{font-size:11px;color:#444;letter-spacing:3px}
+
+/* Corner accents */
+.corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5}
+.corner.tl{top:12px;left:12px;border-width:1px 0 0 1px}
+.corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
+.corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
+.corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
+.ver{position:fixed;bottom:10px;font-size:8px;color:#1a1a1a;letter-spacing:2px}
+</style>
+</head>
+<body>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
+
+<div class="wrap">
+  <div class="logo-wrap">
+    <div class="logo">ARCHER</div>
+  </div>
+  <div class="vehicle">2006 GMC SIERRA 2500HD</div>
+
+  <div class="maint-box">
+    <div class="maint-icon">⚙</div>
+    <div class="maint-title">UNDER MAINTENANCE</div>
+    <div class="divider"></div>
+    <div class="maint-sub">
+      SYSTEMS ARE TEMPORARILY OFFLINE<br>
+      UPDATES IN PROGRESS — CHECK BACK SHORTLY
+    </div>
+    <div class="divider"></div>
+    <div class="countdown-wrap">
+      <div class="countdown-label">AUTO-RETRY IN</div>
+      <div class="countdown" id="cd">0:30</div>
+    </div>
+  </div>
+</div>
+
+<div class="ver">ARCHER AI v2.0 — AYDEN BREWER</div>
+
+<script>
+let secs = 30;
+const cdEl = document.getElementById('cd');
+const tick = setInterval(() => {
+  secs--;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  cdEl.textContent = m + ':' + String(s).padStart(2, '0');
+  if (secs <= 0) {
+    clearInterval(tick);
+    window.location.reload();
+  }
+}, 1000);
+</script>
+</body></html>

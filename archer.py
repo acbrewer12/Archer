@@ -111,7 +111,8 @@ os.environ['OLLAMA_NONHISTORY'] = '1'
 from flask import Flask, jsonify, render_template_string, Response, stream_with_context, request
 import logging as _logging
 
-display_app     = Flask(__name__)
+display_app            = Flask(__name__)
+display_app.secret_key = os.environ.get('ARCHER_SECRET', 'archer2500hd')
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -8530,37 +8531,44 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
-_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/fans', '/fan', '/static'}
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/static'}
 
 @display_app.before_request
 def require_boot():
-    """Redirect every request to the boot page until system checks complete."""
-    from flask import request as _req, redirect as _redir
-    if display_app.testing or system_health['boot_complete']:
+    """Redirect every request to boot or maintenance until session checks pass."""
+    from flask import request as _req, redirect as _redir, session as _sess
+    if display_app.testing:
         return None
     path = _req.path
-    # Allow boot page itself and its status API through; block everything else
     if path in _BOOT_EXEMPT or path.startswith('/static'):
         return None
-    return _redir('/boot')
+    # Maintenance mode — set MAINTENANCE_MODE=1 in HF Space secrets during deploys
+    if os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes'):
+        return _redir('/maintenance')
+    # Per-session boot: every new browser session goes through the boot sequence
+    if not _sess.get('boot_complete'):
+        return _redir('/boot')
 
 
 @display_app.route('/boot/status')
 def boot_status():
-    """Real system health checks for the boot page. Called by archer_init.html JS."""
-    checks = []
+    """Real system health checks for the boot page. Called by archer_init.html JS.
+    ?reveal=N returns only the first N checks so the UI can animate them in one at a time.
+    When reveal >= total checks, sets session boot_complete and returns ready=True.
+    """
+    from flask import request as _req, session as _sess
+    reveal = int(_req.args.get('reveal', 0))
 
-    # 1. Archer core — if we got here, the server is up
+    all_checks = []
     uptime_s = round(time.time() - system_health['start_time'], 1)
-    checks.append({
-        'id': 'core', 'label': 'ARCHER CORE',
-        'status': 'ok', 'detail': f'up {uptime_s}s',
-    })
+
+    # 1. Archer core
+    all_checks.append({'id': 'core', 'label': 'ARCHER CORE', 'status': 'ok', 'detail': f'up {uptime_s}s'})
 
     # 2. Auth system
     secret = os.environ.get('ARCHER_SECRET', '')
     secret_ok = bool(secret) and secret != 'archer2500hd'
-    checks.append({
+    all_checks.append({
         'id': 'auth', 'label': 'AUTH SYSTEM',
         'status': 'ok' if secret_ok else 'warn',
         'detail': 'configured' if secret_ok else 'default key — set ARCHER_SECRET',
@@ -8568,13 +8576,13 @@ def boot_status():
 
     # 3. Vehicle profile / saved state
     save_ok = os.path.exists(SAVE_FILE)
-    checks.append({
+    all_checks.append({
         'id': 'profile', 'label': 'VEHICLE PROFILE',
         'status': 'ok' if save_ok else 'warn',
         'detail': 'state loaded' if save_ok else 'no saved state — fresh start',
     })
 
-    # 4. Sensor link (OBD, BeamNG, or simulator)
+    # 4. Sensor link
     if obd2_display['connected']:
         sensor_status, sensor_detail = 'ok', 'OBD live'
     elif beamng_state.get('connected'):
@@ -8583,7 +8591,7 @@ def boot_status():
         sensor_status, sensor_detail = 'warn', 'simulator mode'
     else:
         sensor_status, sensor_detail = 'warn', 'no sensor data'
-    checks.append({'id': 'sensors', 'label': 'SENSOR LINK', 'status': sensor_status, 'detail': sensor_detail})
+    all_checks.append({'id': 'sensors', 'label': 'SENSOR LINK', 'status': sensor_status, 'detail': sensor_detail})
 
     # 5. AI backend
     hf_ok   = bool(os.environ.get('HF_TOKEN', '').strip())
@@ -8596,23 +8604,22 @@ def boot_status():
         ai_detail = 'Groq'
     else:
         ai_detail = 'local fallback only'
-    checks.append({
+    all_checks.append({
         'id': 'ai', 'label': 'AI BACKEND',
         'status': 'ok' if (hf_ok or groq_ok) else 'warn',
         'detail': ai_detail,
     })
 
-    # 6. Weather API (has it fetched yet?)
+    # 6. Weather API
     weather_fetched = weather.get('last_update', 0) > 0 and weather.get('temp') is not None
     if weather_fetched:
         w_detail = f"{weather['temp']}F — {weather.get('desc') or weather['condition']}"
         w_status = 'ok'
     else:
-        w_status = 'warn'
-        w_detail = 'pending first fetch'
-    checks.append({'id': 'weather', 'label': 'WEATHER API', 'status': w_status, 'detail': w_detail})
+        w_status, w_detail = 'warn', 'pending first fetch'
+    all_checks.append({'id': 'weather', 'label': 'WEATHER API', 'status': w_status, 'detail': w_detail})
 
-    # 7. Voice / TTS system
+    # 7. Voice / TTS
     if _IS_PI:
         if _PIPER_AVAILABLE and _VOSK_AVAILABLE:
             v_status, v_detail = 'ok', 'piper TTS + vosk STT'
@@ -8630,7 +8637,7 @@ def boot_status():
             v_status, v_detail = 'ok', 'edge-tts (cloud)'
         else:
             v_status, v_detail = 'warn', 'web speech fallback'
-    checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
+    all_checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
 
     # 8. Memory store
     mem_ok = os.path.exists(SAVE_FILE)
@@ -8644,19 +8651,26 @@ def boot_status():
             mem_status, mem_detail = 'warn', 'will create on first save'
     except Exception:
         mem_status, mem_detail = 'fail', 'corrupt save file'
-    checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
+    all_checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
 
-    # 9. Spotify (optional — only show if configured)
+    # 9. Spotify (optional)
     if SPOTIFY_CLIENT_ID:
         spot_status = 'ok' if spotify_tokens.get('access_token') else 'warn'
         spot_detail = 'authenticated' if spotify_tokens.get('access_token') else 'not linked'
-        checks.append({'id': 'spotify', 'label': 'SPOTIFY', 'status': spot_status, 'detail': spot_detail})
+        all_checks.append({'id': 'spotify', 'label': 'SPOTIFY', 'status': spot_status, 'detail': spot_detail})
 
-    ready = all(c['status'] != 'fail' for c in checks)
+    total = len(all_checks)
+    # Return only the first `reveal` checks; reveal=0 means return all (fallback)
+    visible = all_checks[:reveal] if reveal > 0 else all_checks
+    all_done = reveal >= total
+    all_ok   = all(c['status'] != 'fail' for c in all_checks)
+    ready    = all_done and all_ok
     if ready:
         system_health['boot_complete'] = True
+        _sess['boot_complete'] = True
     return jsonify({
-        'checks': checks,
+        'checks': visible,
+        'total':  total,
         'ready':  ready,
         'uptime': uptime_s,
     })
@@ -8672,6 +8686,28 @@ def boot_page():
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
+
+
+@display_app.route('/maintenance')
+def maintenance_page():
+    """Shown when MAINTENANCE_MODE env var is set, or served from archer_maintenance.html."""
+    from flask import Response as FR
+    if os.path.exists('archer_maintenance.html'):
+        with open('archer_maintenance.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    # Inline fallback
+    return FR('''<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archer — Maintenance</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:monospace;display:flex;align-items:center;
+justify-content:center;height:100vh;text-align:center}
+.r{color:#cc0000;font-size:28px;letter-spacing:6px;margin-bottom:16px}
+.s{color:#444;font-size:11px;letter-spacing:3px}</style></head>
+<body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
+<div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
+<script>setTimeout(()=>location.reload(),30000)</script></body></html>''', mimetype='text/html')
 
 
 @display_app.route('/fans')

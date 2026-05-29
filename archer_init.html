@@ -132,34 +132,41 @@ function renderRow(check, index, total) {
 }
 
 async function runBootChecks() {
-  let attempts = 0;
-  const MAX_ATTEMPTS = 20; // 10 seconds max
-  let lastCheckCount = 0;
+  // First call with reveal=0 to learn the total check count
+  let total = 9; // reasonable default
+  try {
+    const r0 = await fetch('/boot/status?reveal=0');
+    if (r0.ok) { const d0 = await r0.json(); total = d0.total || total; }
+  } catch(_) {}
 
-  while (attempts < MAX_ATTEMPTS) {
-    attempts++;
+  const REVEAL_INTERVAL = 350; // ms between each check appearing
+  const MAX_WAIT_MS     = 15000;
+  const start           = Date.now();
+  let reveal = 0;
+
+  while (Date.now() - start < MAX_WAIT_MS) {
+    reveal = Math.min(reveal + 1, total);
     try {
-      const resp = await fetch('/boot/status');
+      const resp = await fetch(`/boot/status?reveal=${reveal}`);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
 
       const checks = data.checks || [];
-      const total  = checks.length;
-
-      // Render each check row
       checks.forEach((c, i) => renderRow(c, i, total));
+      setProgress(Math.round((reveal / Math.max(total, 1)) * 95));
 
-      // Progress bar: how many completed / total
-      const doneCount = checks.length;
-      setProgress(Math.round((doneCount / Math.max(total, 1)) * 95));
+      if (reveal >= total) {
+        // All checks revealed — fetch once more to get final ready state
+        let finalData = data;
+        try {
+          const rf = await fetch(`/boot/status?reveal=${total}`);
+          if (rf.ok) finalData = await rf.json();
+        } catch(_) {}
 
-      // Check if all done
-      if (data.ready || attempts >= MAX_ATTEMPTS) {
         setProgress(100);
-
-        // Count statuses
-        const fails  = checks.filter(c => c.status === 'fail').length;
-        const warns  = checks.filter(c => c.status === 'warn').length;
+        const allChecks = finalData.checks || checks;
+        const fails = allChecks.filter(c => c.status === 'fail').length;
+        const warns = allChecks.filter(c => c.status === 'warn').length;
 
         if (fails > 0) {
           bannerTxt.textContent = 'SYSTEM ISSUES DETECTED';
@@ -172,29 +179,26 @@ async function runBootChecks() {
         } else {
           bannerTxt.textContent = 'ALL SYSTEMS GO';
           bannerTxt.className   = 'banner-text ok';
-          bannerSub.textContent = `uptime ${data.uptime}s — loading interface`;
+          bannerSub.textContent = `uptime ${finalData.uptime}s — loading interface`;
         }
 
         bannerEl.classList.add('show');
-
-        // Short pause so user can see the result, then redirect
-        await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 900));
+        await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 1000));
         window.location.href = '/';
         return;
       }
-
-    } catch (e) {
+    } catch(e) {
       // Server not ready yet — keep waiting
     }
 
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, REVEAL_INTERVAL));
   }
 
-  // Timeout fallback — go anyway
+  // Timeout fallback
   window.location.href = '/';
 }
 
 // Start after a brief moment so the logo renders first
-setTimeout(runBootChecks, 300);
+setTimeout(runBootChecks, 400);
 </script>
 </body></html>
