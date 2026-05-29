@@ -7109,8 +7109,8 @@ def terminal_page():
 <title>Archer Terminal</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html{height:100%}
-body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height:100%;min-height:100vh;display:flex;flex-direction:column;overflow:hidden}
+html,body{height:100%}
+body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;display:flex;flex-direction:column;overflow:hidden}
 #header{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:8px 12px;display:flex;align-items:center;gap:12px;flex-shrink:0}
 #header-title{font-size:11px;letter-spacing:3px;color:#cc0000;flex:1}
 .tab-btn{background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:10px;letter-spacing:2px;padding:4px 10px;border-radius:3px;cursor:pointer;transition:all 0.2s}
@@ -7119,8 +7119,8 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 .pi-online{background:#001a00;color:#00ff00;border:1px solid #00ff00}
 .pi-offline{background:#1a0000;color:#cc0000;border:1px solid #330000}
 #terminal-container{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
-#output{flex:1;min-height:0;padding:10px 12px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-#log-output{flex:1;min-height:0;padding:10px 12px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
+#output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+#log-output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
 .log-spotify{color:#1db954}.log-archer{color:#cc4444}.log-display{color:#cc8800}
 .log-auth{color:#4488ff}.log-voice{color:#44cccc}.log-arduino{color:#ff8800}
 .log-you{color:#ffffff}
@@ -7130,11 +7130,11 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 #log-toolbar{display:none;padding:6px 8px;border-bottom:1px solid #1a1a1a;background:#050505;flex-shrink:0;gap:8px;align-items:center}
 .log-dot{width:8px;height:8px;border-radius:50%;background:#00ff00;animation:blink 1.5s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
-#input-row{display:flex;padding:8px;border-top:2px solid #1a1a1a;background:#050505;flex-shrink:0;align-items:center}
+#input-row{position:fixed;bottom:0;left:0;right:0;display:flex;padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));border-top:2px solid #1a1a1a;background:#050505;align-items:center;z-index:100}
 .prompt-label{color:#cc0000;padding:6px 8px;font-size:13px;flex-shrink:0}
-#cmd{flex:1;background:#111;color:#ff3333;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Courier New',monospace;font-size:13px;outline:none;caret-color:#ff3333;-webkit-user-select:text;user-select:text;touch-action:manipulation}
+#cmd{flex:1;background:#111;color:#ff3333;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Courier New',monospace;font-size:16px;outline:none;caret-color:#ff3333;-webkit-user-select:text;user-select:text;touch-action:manipulation}
 #cmd:focus{border-color:#cc0000;background:#0d0000}
-#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:11px;letter-spacing:1px;padding:8px 16px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0;touch-action:manipulation}
+#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:11px;letter-spacing:1px;padding:8px 16px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0;touch-action:manipulation;min-width:52px;min-height:40px}
 #send-btn:active{background:#330000}
 .line-prompt{color:#cc0000}
 .line-out{color:#ff6666}
@@ -7327,6 +7327,18 @@ append('', 'info');
 // poll Pi status every 15s
 checkPiStatus();
 setInterval(checkPiStatus, 15000);
+
+// Keep body height = visual viewport so input stays above keyboard on mobile
+function syncViewport() {
+  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  document.body.style.height = h + 'px';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewport);
+  window.visualViewport.addEventListener('scroll', syncViewport);
+}
+window.addEventListener('resize', syncViewport);
+syncViewport();
 </script>
 </body>
 </html>"""
