@@ -842,20 +842,21 @@ def get_weather():
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-    # ── PRIMARY: NWS Observation (real measured station data, closest to TWC) ──
-    # Falls through to NWS Hourly Forecast if observation temp/condition missing.
+    # ── PRIMARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
+    # NWS Hourly gives the most accurate temp for exact coordinates.
+    # NWS Observation gives the most accurate current condition (real station reading).
     try:
-        obs_temp_f, obs_condition, obs_wind_mph = None, None, 0
+        obs_condition, obs_wind_mph = None, 0
+        fc_temp_f, fc_condition, fc_wind_mph = None, None, 0
+
+        # Observation → condition + wind
         if _nws_station_url:
             try:
                 obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
                 with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
                     obs = json.loads(r.read())
                 props = obs.get('properties', {})
-                raw_c = (props.get('temperature') or {}).get('value')
-                raw_w = (props.get('windSpeed')   or {}).get('value') or 0
-                if raw_c is not None:
-                    obs_temp_f = int(raw_c * 9 / 5 + 32)
+                raw_w = (props.get('windSpeed') or {}).get('value') or 0
                 obs_wind_mph = round(float(raw_w) * 2.237)
                 text_desc = (props.get('textDescription') or '').strip()
                 if text_desc:
@@ -863,26 +864,33 @@ def get_weather():
             except Exception:
                 pass
 
-        temp_f, condition, wind_mph = obs_temp_f, obs_condition, obs_wind_mph
-        if (temp_f is None or condition is None) and _nws_forecast_url:
-            with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
-                fc = json.loads(r.read())
-            periods = fc['properties']['periods']
-            period = periods[0]
+        # Hourly forecast → temp + condition (as fallback)
+        if _nws_forecast_url:
             try:
-                from datetime import datetime, timezone as _tz
-                _now = datetime.now(_tz.utc)
-                for _p in periods:
-                    if datetime.fromisoformat(_p['startTime']) <= _now <= datetime.fromisoformat(_p['endTime']):
-                        period = _p
-                        break
+                with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+                    fc = json.loads(r.read())
+                periods = fc['properties']['periods']
+                period = periods[0]
+                try:
+                    from datetime import datetime, timezone as _tz
+                    _now = datetime.now(_tz.utc)
+                    for _p in periods:
+                        if datetime.fromisoformat(_p['startTime']) <= _now <= datetime.fromisoformat(_p['endTime']):
+                            period = _p
+                            break
+                except Exception:
+                    pass
+                fc_temp_f   = period['temperature']
+                fc_condition = _parse_condition(period.get('shortForecast') or '')
+                ws = (period.get('windSpeed') or '0 mph').split()[0]
+                fc_wind_mph = int(ws) if ws.isdigit() else 0
             except Exception:
                 pass
-            if temp_f    is None: temp_f    = period['temperature']
-            if condition is None: condition = _parse_condition(period.get('shortForecast') or '')
-            if wind_mph  == 0:
-                ws = (period.get('windSpeed') or '0 mph').split()[0]
-                wind_mph = int(ws) if ws.isdigit() else 0
+
+        # Hybrid: use hourly temp (grid-adjusted for exact coords), obs condition (real station)
+        temp_f    = fc_temp_f
+        condition = obs_condition or fc_condition
+        wind_mph  = obs_wind_mph or fc_wind_mph
 
         if temp_f is not None and condition is not None:
             precip = 1.0 if condition in ('Rain', 'Rain Showers', 'Scattered Showers',
@@ -8962,7 +8970,7 @@ def weather_compare_data():
     # First row: Archer's live reading (Open-Meteo, already cached — no extra HTTP call)
     w = weather
     archer_result = {
-        'name':      'Archer — Open-Meteo (live)',
+        'name':      'Archer — NWS (live)',
         'temp':      w.get('temp'),
         'condition': w.get('condition'),
         'error':     None if w.get('temp') is not None else 'no data yet',
@@ -9132,7 +9140,7 @@ async function load() {
   const refCond = document.getElementById('ref-cond').value.toLowerCase();
 
   grid.innerHTML = '';
-  let bestDiff = Infinity, bestName = '';
+  let bestDiff = Infinity, bestName = '', bestTempDiff = Infinity;
 
   data.results.forEach(r => {
     const card = document.createElement('div');
@@ -9147,7 +9155,9 @@ async function load() {
       let diffClass = '';
       if (diff !== null) {
         diffClass = diff === 0 ? 'diff-0' : diff <= 1 ? 'diff-1' : diff <= 2 ? 'diff-2' : diff <= 3 ? 'diff-3' : 'diff-big';
-        if (diff < bestDiff) { bestDiff = diff; bestName = r.name; }
+        // Score = temp diff + 4°F penalty for condition mismatch (so wrong condition can't win on temp alone)
+        const score = diff + (condMatch === false ? 4 : 0);
+        if (score < bestDiff) { bestDiff = score; bestName = r.name; bestTempDiff = diff; }
       }
 
       const condColor = condMatch === true ? '#00cc44' : condMatch === false ? '#cc4444' : '#444';
@@ -9169,10 +9179,10 @@ async function load() {
   if (bestName && !isNaN(refTemp)) {
     [...grid.children].forEach(c => {
       const name = c.querySelector('.name')?.textContent || '';
-      if (name === bestName) c.classList.add(bestDiff <= 1 ? 'best' : 'close');
+      if (name === bestName) c.classList.add(bestTempDiff <= 1 ? 'best' : 'close');
     });
     const w = document.getElementById('winner');
-    w.textContent = `CLOSEST MATCH: ${bestName.toUpperCase()} — ${bestDiff === 0 ? 'EXACT' : bestDiff + '°F OFF'}`;
+    w.textContent = `CLOSEST MATCH: ${bestName.toUpperCase()} — ${bestTempDiff === 0 ? 'EXACT TEMP' : bestTempDiff + '°F OFF'}`;
     w.style.display = 'block';
   }
 }
