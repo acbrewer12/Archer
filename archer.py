@@ -807,7 +807,7 @@ def get_weather():
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
 
         def _parse_condition(desc):
-            desc = desc.lower()
+            desc = (desc or '').lower()
             if 'thunder' in desc:                                              return 'thunderstorm'
             elif 'snow' in desc or 'blizzard' in desc:                         return 'snowing'
             elif any(w in desc for w in ('rain','shower','drizzle','storm')):  return 'raining'
@@ -816,46 +816,52 @@ def get_weather():
             elif any(w in desc for w in ('clear','sunny','fair','few clouds')): return 'clear'
             else:                                                               return desc[:20] or 'cloudy'
 
-        # Try current observations first (actual conditions, not forecast)
-        obs_temp_f = None
+        # Try current observations first (actual sensor readings, not forecast)
+        obs_temp_f    = None
         obs_condition = None
         obs_wind_mph  = 0
+        obs_desc_raw  = ''
         if _nws_station_url:
             try:
                 obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
                 with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
                     obs = json.loads(r.read())
                 props = obs.get('properties', {})
-                raw_temp_c = props.get('temperature', {}).get('value')
+                # NWS may return null for sensor values — guard with (x or {})
+                raw_temp_c  = (props.get('temperature')  or {}).get('value')
+                raw_wind_ms = (props.get('windSpeed')    or {}).get('value') or 0
                 if raw_temp_c is not None:
-                    obs_temp_f = round(raw_temp_c * 9 / 5 + 32)
-                raw_wind_ms = props.get('windSpeed', {}).get('value') or 0
-                obs_wind_mph = round(raw_wind_ms * 2.237)
-                text_desc = props.get('textDescription', '')
+                    obs_temp_f   = round(raw_temp_c * 9 / 5 + 32)
+                obs_wind_mph = round(float(raw_wind_ms) * 2.237)
+                text_desc = (props.get('textDescription') or '').strip()
                 if text_desc:
+                    obs_desc_raw  = text_desc
                     obs_condition = _parse_condition(text_desc)
             except Exception:
                 pass
 
-        # Fall back to hourly forecast for anything missing
+        # Fall back to hourly forecast for anything still missing
         temp_f    = obs_temp_f
         condition = obs_condition
         wind_mph  = obs_wind_mph
+        desc_raw  = obs_desc_raw
         if temp_f is None or condition is None:
             with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
                 fc = json.loads(r.read())
-            period   = fc['properties']['periods'][0]
+            period = fc['properties']['periods'][0]
             if temp_f is None:
                 temp_f = period['temperature']
             if condition is None:
-                desc = (period.get('shortForecast') or '').lower()
-                condition = _parse_condition(desc)
+                short = (period.get('shortForecast') or '')
+                desc_raw  = short
+                condition = _parse_condition(short)
             if wind_mph == 0:
                 wind_str = (period.get('windSpeed') or '0 mph').split()[0]
                 wind_mph = int(wind_str) if wind_str.isdigit() else 0
 
-        return {'temp': temp_f, 'condition': condition, 'wind': wind_mph, 'precip': 0,
-                'raining': condition in ('raining','thunderstorm'),
+        return {'temp': temp_f, 'condition': condition, 'desc': desc_raw,
+                'wind': wind_mph, 'precip': 0,
+                'raining': condition in ('raining', 'thunderstorm'),
                 'freezing': temp_f < 32, 'snowing': condition == 'snowing'}
     except Exception:
         _nws_station_url = None
@@ -1150,7 +1156,7 @@ def get_display_data():
         'tc_on':         truck_state['tc_on'],
         'ghost_mode':    truck_state['ghost_mode'],
         'mood':          get_mood(),
-        'weather':       f"{weather['temp']}F {weather['condition']}",
+        'weather':       f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
         'road':          road_memory[current_road]['name'] if current_road else 'None',
         'profile':       driver_profiles[current_profile]['name'],
         'best_060':      personal_bests['best_0_60'] or 0,
@@ -1270,7 +1276,7 @@ Truck data right now:
 - Current mood: {mood}
 - Time: {datetime.now().strftime('%I:%M %p')}
 - Day: {datetime.now().strftime('%A')}
-- Weather: {weather['temp']}F — {weather['condition']}{warning_context}{session_context}{pb_context}{road_context}{music_context}
+- Weather: {weather['temp']}F — {weather.get('desc') or weather['condition']}{warning_context}{session_context}{pb_context}{road_context}{music_context}
 - Current driver: {driver_profiles[current_profile]['name']} — Tier {driver_profiles[current_profile]['tier']}
 """
     caps = get_build_caps()
@@ -1511,7 +1517,7 @@ def save_trip():
         'quality':     awareness['drive_quality'],
         'road':        road_memory[current_road]['name'] if current_road else 'unknown',
         'ethanol':     truck_state['ethanol'],
-        'weather':     f"{weather['temp']}F {weather['condition']}",
+        'weather':     f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
     }
     trip_log.append(trip)
     if len(trip_log) > 100:
@@ -3440,7 +3446,7 @@ def get_detailed_weather():
         if w['freezing']: result += ', below freezing'
         return result
     except:
-        return f'{weather["temp"]}F {weather["condition"]}'
+        return f'{weather["temp"]}F {weather.get("desc") or weather["condition"]}'
 
 
 # ══════════════════════════════════════════
@@ -3901,7 +3907,7 @@ def check_tow_detection():
 # OFFLINE AI FALLBACK IMPROVEMENTS
 # ══════════════════════════════════════════
 SMART_FALLBACKS = {
-    'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in {location_data.get("location_name") or "your area"}.',
+    'weather':     lambda: f'{weather["temp"]}F and {weather.get("desc") or weather["condition"]} in {location_data.get("location_name") or "your area"}.',
     'rpm':         lambda: f'RPM is at {truck_state["rpm"]}.',
     'boost':       lambda: (f'Boost is {truck_state["boost"]} PSI.' if get_build_caps()['supercharged'] else 'No forced induction. Stock six liter, naturally aspirated.'),
     'oil':         lambda: f'Oil temp is {truck_state["oil_temp"]}F.',
@@ -4162,7 +4168,7 @@ def discord_vitals():
         f'**Battery** {truck_state["battery_main"]}V | '
         f'**E85** {truck_state["ethanol"]}% | '
         f'**Exhaust** {truck_state["exhaust"]}%\n'
-        f'**Weather** {weather["temp"]}F {weather["condition"]} | '
+        f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]} | '
         f'**Score** {calculate_drive_score()[0]}/100'
     )
     discord_send(
@@ -4246,7 +4252,7 @@ def log_moment(category, description):
         'time':     datetime.now().strftime('%B %d %Y %I:%M %p'),
         'category': category, 'desc': description,
         'road':     road_memory[current_road]['name'] if current_road else 'unknown',
-        'weather':  f"{weather['temp']}F {weather['condition']}",
+        'weather':  f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
     }
     archer_memory['moments'].append(moment)
     if len(archer_memory['moments']) > 50:
@@ -4276,7 +4282,7 @@ def lock_legacy():
 def add_legacy_voice_note(note):
     entry = {
         'date': datetime.now().strftime('%B %d %Y %I:%M %p'),
-        'note': note, 'weather': f"{weather['temp']}F {weather['condition']}",
+        'note': note, 'weather': f"{weather['temp']}F {weather.get('desc') or weather['condition']}",
     }
     legacy['voice_notes'].append(entry)
     save_state()
@@ -4381,7 +4387,7 @@ def casual_monitor():
         situation = f"""
 Current situation:
 - Time: {datetime.now().strftime('%I:%M %p')} on {datetime.now().strftime('%A')}
-- Weather: {weather['temp']}F — {weather['condition']}
+- Weather: {weather['temp']}F — {weather.get('desc') or weather['condition']}
 - RPM: {truck_state['rpm']} — throttle: {awareness['throttle_state']}
 - Oil: {truck_state['oil_temp']}F — trend: {awareness['oil_trend']}
 - Speed: {truck_state['speed']} mph — Ethanol: {truck_state['ethanol']}%
@@ -5142,7 +5148,7 @@ def print_status():
         ("Profile",    driver_profiles[current_profile]['name']),
         ("Road",       road_memory[current_road]['name'] if current_road else 'None logged'),
         ("Music",      music_state['current_song'] if music_state['playing'] else 'Off'),
-        ("Weather",    f"{weather['temp']}F — {weather['condition']}"),
+        ("Weather",    f"{weather['temp']}F — {weather.get('desc') or weather['condition']}"),
         ("Best 0-60",  f"{personal_bests['best_0_60']}s" if personal_bests['best_0_60'] else 'None logged'),
         ("Launches",   personal_bests['launch_count']),
         ("Legacy",     'ACTIVE' if legacy['active'] else 'OFF'),
