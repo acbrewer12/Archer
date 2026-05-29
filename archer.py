@@ -836,8 +836,9 @@ def get_weather():
         elif 'shower' in desc:                                                  return 'Rain Showers'
         elif any(w in desc for w in ('rain','drizzle')):                        return 'Rain'
         elif 'overcast' in desc:                                                return 'Overcast'
+        elif 'mostly cloudy' in desc:                                           return 'Mostly Cloudy'
         elif 'cloudy' in desc:                                                  return 'Cloudy'
-        elif any(w in desc for w in ('partly','mostly')):                       return 'Partly Cloudy'
+        elif 'partly' in desc or 'mostly' in desc:                             return 'Partly Cloudy'
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
@@ -8866,10 +8867,11 @@ def weather_compare_data():
                 'Freezing Rain' if 'freez' in desc or 'sleet' in desc else
                 'Fog'          if 'fog' in desc or 'mist' in desc else
                 'Rain'         if any(w in desc for w in ('rain','shower','drizzle')) else
-                'Overcast'     if 'overcast' in desc else
-                'Cloudy'       if 'cloudy' in desc else
+                'Overcast'      if 'overcast' in desc else
+                'Mostly Cloudy' if 'mostly cloudy' in desc else
+                'Cloudy'        if 'cloudy' in desc else
                 'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
-                'Clear'        if any(w in desc for w in ('clear','sunny','fair')) else
+                'Clear'         if any(w in desc for w in ('clear','sunny','fair')) else
                 desc[:20].title() or 'Cloudy')
         return temp_f, cond
 
@@ -8894,7 +8896,8 @@ def weather_compare_data():
                 'Scattered Showers' if 'vicinity' in short else
                 'Rain Showers' if 'shower' in short else
                 'Rain'         if any(w in short for w in ('rain','drizzle')) else
-                'Cloudy'       if 'cloudy' in short or 'overcast' in short else
+                'Mostly Cloudy' if 'mostly cloudy' in short else
+                'Cloudy'        if 'cloudy' in short or 'overcast' in short else
                 'Partly Cloudy' if 'partly' in short or 'mostly' in short else
                 'Clear'        if any(w in short for w in ('clear','sunny','fair')) else
                 short[:20].title() or 'Cloudy')
@@ -8915,8 +8918,9 @@ def weather_compare_data():
             'Scattered Showers' if 'vicinity' in desc else
             'Rain Showers' if 'shower' in desc else
             'Rain'         if any(w in desc for w in ('rain','drizzle')) else
-            'Overcast'     if 'overcast' in desc else
-            'Cloudy'       if 'cloudy' in desc or 'cloud' in desc else
+            'Overcast'      if 'overcast' in desc else
+            'Mostly Cloudy' if 'mostly cloudy' in desc else
+            'Cloudy'        if 'cloudy' in desc or 'cloud' in desc else
             'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
             'Clear'        if any(w in desc for w in ('clear','sunny','fair','bright')) else
             desc[:20].title() or 'Cloudy')
@@ -9031,7 +9035,7 @@ select{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share
   <span class="ref-label">°F</span>
   <select id="ref-cond">
     <option value="">— condition —</option>
-    <option>Clear</option><option>Partly Cloudy</option><option>Cloudy</option>
+    <option>Clear</option><option>Partly Cloudy</option><option>Mostly Cloudy</option><option>Cloudy</option>
     <option>Overcast</option><option>Fog</option><option>Drizzle</option>
     <option>Rain</option><option>Rain Showers</option><option>Scattered Showers</option><option>Thunderstorm</option>
     <option>Snow</option><option>Snow Showers</option><option>Freezing Rain</option>
