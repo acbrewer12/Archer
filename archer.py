@@ -8885,7 +8885,6 @@ def weather_compare_data():
         if raw_c is None:
             return None, None
         temp_f = int(raw_c * 9 / 5 + 32)
-        from archer import _parse_condition_nws  # noqa — defined inline below
         desc = (props.get('textDescription') or '').lower()
         cond = ('Thunderstorm' if 'thunder' in desc else
                 'Snow'         if 'snow' in desc else
@@ -8964,7 +8963,7 @@ def weather_compare_data():
                 'Clear'        if 'clear' in wx or 'sunny' in wx else 'Cloudy')
         return temp_f, cond
 
-    sources = [
+    om_sources = [
         ('Open-Meteo (best match)',        lambda: _fetch_open_meteo()),
         ('Open-Meteo — HRRR (NOAA hi-res)',lambda: _fetch_open_meteo('hrrr')),
         ('Open-Meteo — GFS (NOAA global)', lambda: _fetch_open_meteo('gfs_seamless')),
@@ -8973,21 +8972,39 @@ def weather_compare_data():
         ('Open-Meteo — ECMWF (European)',  lambda: _fetch_open_meteo('ecmwf_ifs025')),
         ('Open-Meteo — GEM (Canada)',      lambda: _fetch_open_meteo('gem_seamless')),
         ('Open-Meteo — DWD ICON (Germany)',lambda: _fetch_open_meteo('dwd_icon_seamless')),
+    ]
+    other_sources = [
         ('wttr.in (aggregator)',           lambda: _fetch_wttr()),
         ('7timer.info (aggregator)',       lambda: _fetch_7timer()),
         ('NWS Observation (station)',      lambda: _fetch_nws_obs()),
         ('NWS Hourly Forecast',            lambda: _fetch_nws_forecast()),
     ]
 
-    results = []
-    with _cf.ThreadPoolExecutor(max_workers=12) as ex:
-        futures = {ex.submit(fn): name for name, fn in sources}
+    # Open-Meteo requests run sequentially with a gap to avoid 429 rate limiting
+    om_results = []
+    for name, fn in om_sources:
+        try:
+            temp, cond = fn()
+            om_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+        except Exception as e:
+            om_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+        import time as _t; _t.sleep(0.2)
+
+    # Other sources run in parallel
+    other_results = []
+    with _cf.ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(fn): name for name, fn in other_sources}
         for fut, name in futures.items():
             try:
                 temp, cond = fut.result(timeout=10)
-                results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+                other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
             except Exception as e:
-                results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+                other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+
+    # Reorder other_results to match original source order
+    order = [s[0] for s in other_sources]
+    other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+    results = om_results + other_results
 
     return jsonify({'results': results, 'lat': lat, 'lon': lon,
                     'location': location_data.get('location_name', f'{lat:.2f}, {lon:.2f}')})
