@@ -8720,8 +8720,15 @@ def boot_page():
 
 @display_app.route('/maintenance')
 def maintenance_page():
-    """Shown when MAINTENANCE_MODE env var is set, or served from archer_maintenance.html."""
-    from flask import Response as FR
+    """Shown when maintenance mode is active. Redirects to / if maintenance is off."""
+    from flask import Response as FR, redirect as _redir
+    # If maintenance was turned off, send them back through the normal flow
+    maintenance_active = (
+        system_health['maintenance'] or
+        os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes')
+    )
+    if not maintenance_active:
+        return _redir('/')
     if os.path.exists('archer_maintenance.html'):
         with open('archer_maintenance.html', 'r', encoding='utf-8') as f:
             html = f.read()
@@ -8737,7 +8744,7 @@ justify-content:center;height:100vh;text-align:center}
 .s{color:#444;font-size:11px;letter-spacing:3px}</style></head>
 <body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
 <div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
-<script>setTimeout(()=>location.reload(),30000)</script></body></html>''', mimetype='text/html')
+<script>setTimeout(()=>window.location.href='/',30000)</script></body></html>''', mimetype='text/html')
 
 
 @display_app.route('/fans')
