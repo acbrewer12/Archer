@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Archer logo icon: red circle with white A -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Red filled background circle -->
+    <path
+        android:fillColor="#CC0000"
+        android:pathData="M54,10 A44,44 0 1,1 53.999,10 Z" />
+    <!-- White A glyph -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0"
+        android:pathData="M54,28 L68,76 L63,76 L59.5,64 L48.5,64 L45,76 L40,76 Z
+                          M54,36 L58,60 L50,60 Z" />
+</vector>
