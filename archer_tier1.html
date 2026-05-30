@@ -1258,7 +1258,28 @@ body.day{background:#0d0d0d}
   <div class="footer">
     <div class="footer-score">SCORE <span id="ft-score">A — 94</span></div>
     <div class="footer-time" id="ft-time">11:46 PM</div>
+    <div onclick="openBrowser()" style="cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:9px;color:#cc0000;letter-spacing:2px;padding:2px 8px;border:1px solid #2a0000;border-radius:3px;background:#0a0000">BROWSER</div>
   </div>
+
+</div>
+
+<!-- ══════════ BROWSER OVERLAY (Tier 1 only) ══════════ -->
+<div id="browser-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:#000;flex-direction:column">
+
+  <!-- Browser header -->
+  <div style="background:#0a0a0a;border-bottom:1px solid #cc0000;padding:8px 10px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+    <div onclick="closeBrowser()" style="cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:11px;color:#cc0000;padding:4px 10px;border:1px solid #cc0000;border-radius:3px;letter-spacing:1px">← ARCHER</div>
+    <div id="br-url" style="flex:1;font-family:'Share Tech Mono',monospace;font-size:9px;color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+    <div onclick="refreshBrowserTab()" style="cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:11px;color:#666;padding:4px 10px;border:1px solid #222;border-radius:3px;letter-spacing:1px">↺</div>
+  </div>
+
+  <!-- Iframe -->
+  <div style="flex:1;position:relative;overflow:hidden">
+    <iframe id="br-frame" src="" style="width:100%;height:100%;border:none;background:#000" allow="geolocation; microphone; camera; fullscreen"></iframe>
+  </div>
+
+  <!-- Browser tab bar -->
+  <div style="background:#0a0a0a;border-top:1px solid #cc0000;display:flex;overflow-x:auto;flex-shrink:0;scrollbar-width:none" id="br-tabbar"></div>
 
 </div>
 
@@ -2749,6 +2770,70 @@ async function launchControl() {
 
 // Init speech on first interaction
 document.addEventListener('click', () => { if (!recognition) initSpeech(); }, { once: true });
+
+// ══════════════════════════════════════════
+// BROWSER (Tier 1 only)
+// ══════════════════════════════════════════
+const BR_TABS = [
+  { name: 'ARCHER',    url: 'https://aydencatman-archer.hf.space/display' },
+  { name: 'KHLOE',     url: 'https://aydencatman-archer.hf.space/passenger' },
+  { name: 'SIMULATOR', url: 'https://aydencatman-archer.hf.space/simulator' },
+  { name: 'VALET',     url: 'https://aydencatman-archer.hf.space/valet' },
+  { name: 'FANS',      url: 'https://aydencatman-archer.hf.space/fans' },
+  { name: 'GITHUB',    url: 'https://github.com/acbrewer12/Archer' },
+  { name: 'CLAUDE',    url: 'https://claude.ai' },
+];
+let brActive = 0;
+let brLoaded = {};
+
+function buildBrTabBar() {
+  const bar = document.getElementById('br-tabbar');
+  bar.innerHTML = BR_TABS.map((t, i) => `
+    <div onclick="setBrTab(${i})" id="br-tab-${i}" style="
+      flex-shrink:0;padding:10px 14px;font-family:'Share Tech Mono',monospace;
+      font-size:9px;letter-spacing:1.5px;cursor:pointer;white-space:nowrap;
+      color:${i===brActive?'#fff':'#444'};
+      border-bottom:2px solid ${i===brActive?'#cc0000':'transparent'};
+      position:relative;
+    ">${t.name}</div>
+  `).join('');
+}
+
+function setBrTab(i) {
+  brActive = i;
+  const frame = document.getElementById('br-frame');
+  const urlEl = document.getElementById('br-url');
+  if (!brLoaded[i]) {
+    frame.src = BR_TABS[i].url;
+    brLoaded[i] = true;
+  } else {
+    // Already loaded — just update src to bring it back into view
+    // (single iframe approach: navigate to it)
+    frame.src = BR_TABS[i].url;
+  }
+  urlEl.textContent = BR_TABS[i].url;
+  buildBrTabBar();
+}
+
+function refreshBrowserTab() {
+  const frame = document.getElementById('br-frame');
+  frame.src = frame.src; // force reload
+}
+
+function openBrowser() {
+  const ov = document.getElementById('browser-overlay');
+  ov.style.display = 'flex';
+  buildBrTabBar();
+  if (!brLoaded[brActive]) {
+    document.getElementById('br-frame').src = BR_TABS[brActive].url;
+    document.getElementById('br-url').textContent = BR_TABS[brActive].url;
+    brLoaded[brActive] = true;
+  }
+}
+
+function closeBrowser() {
+  document.getElementById('browser-overlay').style.display = 'none';
+}
 
 </script>
 </body>
