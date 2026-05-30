@@ -138,6 +138,7 @@ body.day{background:#0d0d0d}
 .screens{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0}
 .screen{display:none;flex-direction:column;gap:4px;padding:8px;background:var(--bg)}
 .screen.active{display:flex;flex:1}
+#screen-drive{justify-content:space-between;gap:0;padding-bottom:6px}
 
 /* ─── SHARED ─── */
 .box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;transition:background 0.3s,border 0.3s}
@@ -191,8 +192,8 @@ body.day{background:#0d0d0d}
 .drive-score-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1;color:var(--green)}
 .drive-score-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
 .drive-cond{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:6px 10px;display:flex;flex-direction:column;justify-content:center}
-.drive-cond-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
-.drive-cond-val{font-size:11px;color:var(--text3)}
+.drive-cond-lbl{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.drive-cond-val{font-size:11px;color:var(--text2)}
 
 /* ═══════════════════════════════════════
    SCREEN: DASH (original upgraded)
@@ -555,7 +556,7 @@ body.day{background:#0d0d0d}
   .drive-gear-num { font-size: clamp(48px, 7vw, 80px); }
   .drive-boost-row { padding: 0 16px; }
   .drive-boost-num { font-size: clamp(32px, 4vw, 52px); }
-  .drive-stats { grid-template-columns: repeat(8, 1fr); padding: 0 16px; }
+  .drive-stats { grid-template-columns: repeat(4, 1fr); padding: 0 16px; }
   .drive-stat-val { font-size: 18px; }
   .drive-msg { margin: 0 16px 6px; padding: 10px 14px; }
   .drive-msg-text { font-size: 13px; }
@@ -693,9 +694,11 @@ body.day{background:#0d0d0d}
   <div class="screens">
 
     <!-- ══════════ DRIVE (safety) ══════════ -->
-    <div class="screen active" id="screen-drive">
-      <div class="drive-speed" id="dr-speed">0</div>
-      <div class="drive-speed-unit">MPH</div>
+    <div class="screen active" id="screen-drive" style="justify-content:space-between;gap:0;padding-bottom:6px">
+      <div style="text-align:center;padding-top:4px">
+        <div class="drive-speed" id="dr-speed" style="padding-top:0">0</div>
+        <div class="drive-speed-unit">MPH</div>
+      </div>
 
       <div class="drive-rpm-row">
         <div>
@@ -765,6 +768,8 @@ body.day{background:#0d0d0d}
           <div class="drive-stat-lbl">MODE</div>
         </div>
       </div>
+
+      <div style="height:1px;background:linear-gradient(90deg,transparent,#2a0000,transparent);margin:0 6px"></div>
 
       <div class="drive-msg">
         <span class="drive-msg-tag">ARCHER</span>
@@ -1798,12 +1803,12 @@ async function pollLive() {
     // ── DRIVE tab — CONDITIONS (weather + road) ──────────────
     const _gpsAvail = d.gps_lat != null && d.gps_lon != null;
     const _coordFallback = _gpsAvail ? `${d.gps_lat.toFixed(2)}°N ${Math.abs(d.gps_lon).toFixed(2)}°W` : '';
-    const _locLabel = d.gps_name || _coordFallback || 'No GPS';
+    const _locLabel = d.gps_name || _coordFallback || 'Salem, MO';
     set('map-loc-label', _locLabel);
-    if (d.weather && d.road) {
-      set('dr-conditions', (d.road && d.road !== 'None' ? d.road + ' — ' : _locLabel + ' — ') + d.weather);
+    if (d.weather && d.road && d.road !== 'None') {
+      set('dr-conditions', d.road + ' — ' + d.weather);
     } else if (d.weather) {
-      set('dr-conditions', _locLabel + ' — ' + d.weather);
+      set('dr-conditions', (_gpsAvail ? _locLabel + ' — ' : '') + d.weather);
     }
 
     // ── LAUNCH tab ───────────────────────────────────────────

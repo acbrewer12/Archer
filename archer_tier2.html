@@ -28,7 +28,7 @@
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:12px}
 
-.phone{width:360px;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 0 40px rgba(255,61,166,0.15)}
+.phone{width:360px;max-width:100%;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 0 40px rgba(255,61,166,0.15);display:flex;flex-direction:column;min-height:calc(100vh - 24px)}
 
 /* HEADER */
 .hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;justify-content:space-between}
@@ -52,9 +52,9 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
 .tab.active{color:var(--pink);border-bottom-color:var(--pink)}
 
 /* SCREENS */
-.screens{background:var(--bg)}
+.screens{background:var(--bg);flex:1;display:flex;flex-direction:column}
 .screen{display:none;flex-direction:column;gap:8px;padding:10px}
-.screen.active{display:flex}
+.screen.active{display:flex;flex:1;overflow-y:auto}
 
 /* SECTION HEADERS */
 .section-hdr{font-size:9px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding:2px 0 6px;border-bottom:1px solid var(--border);margin-bottom:2px}
@@ -229,8 +229,8 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
           <div class="status-lbl">ENGINE</div>
         </div>
         <div class="status-box">
-          <div class="status-val status-fine" id="s-fuel">84%</div>
-          <div class="status-lbl">E85 FUEL</div>
+          <div class="status-val status-fine" id="s-fuel">---</div>
+          <div class="status-lbl">E85</div>
         </div>
         <div class="status-box">
           <div class="status-val status-ok" id="s-temp">195°F</div>
@@ -246,7 +246,21 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
         <div class="trip-row"><span class="trip-label">Drive Mode</span><span class="trip-val" id="s-mode">SPORT</span></div>
         <div class="trip-row"><span class="trip-label">Est. Range</span><span class="trip-val">~180 mi</span></div>
         <div class="trip-row"><span class="trip-label">Outside Temp</span><span class="trip-val">68°F</span></div>
-        <div class="trip-row"><span class="trip-label">Location</span><span class="trip-val">Salem MO</span></div>
+        <div class="trip-row"><span class="trip-label">Location</span><span class="trip-val" id="s-location">Salem MO</span></div>
+      </div>
+      <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:4px 0 2px">
+        <button onclick="setTab('climate')" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px 4px;color:var(--text3);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;cursor:pointer;transition:all 0.2s" ontouchstart="this.style.borderColor='var(--pink)';this.style.color='var(--pink2)'" ontouchend="this.style.borderColor='var(--border2)';this.style.color='var(--text3)'">🌡<br>CLIMATE</button>
+        <button onclick="setTab('music')" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px 4px;color:var(--text3);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;cursor:pointer;transition:all 0.2s" ontouchstart="this.style.borderColor='var(--pink)';this.style.color='var(--pink2)'" ontouchend="this.style.borderColor='var(--border2)';this.style.color='var(--text3)'">🎵<br>MUSIC</button>
+        <button onclick="setTab('comfort')" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px 4px;color:var(--text3);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;cursor:pointer;transition:all 0.2s" ontouchstart="this.style.borderColor='var(--pink)';this.style.color='var(--pink2)'" ontouchend="this.style.borderColor='var(--border2)';this.style.color='var(--text3)'">💺<br>COMFORT</button>
+      </div>
+      <div class="card" style="margin-top:8px">
+        <div class="section-hdr">QUICK REQUESTS</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+          <button onclick="requestFromAyden('exhaust')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 6px;color:var(--text2);font-family:'Quicksand',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.25s">🔊 Open Exhaust</button>
+          <button onclick="requestFromAyden('sport')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 6px;color:var(--text2);font-family:'Quicksand',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.25s">⚡ Sport Mode</button>
+          <button onclick="requestFromAyden('gas')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 6px;color:var(--text2);font-family:'Quicksand',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.25s">⛽ Stop for Gas</button>
+          <button onclick="requestFromAyden('music')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 6px;color:var(--text2);font-family:'Quicksand',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.25s">🎵 Louder Music</button>
+        </div>
       </div>
     </div>
 
@@ -923,6 +937,13 @@ async function pollLive() {
       const batEl = document.getElementById('s-bat');
       if (batEl) batEl.textContent = d.battery.toFixed(1) + 'V';
     }
+    if (d.road || d.gps_name) {
+      const locEl = document.getElementById('s-location');
+      if (locEl) {
+        const loc = d.gps_name || (d.road && d.road !== 'None' ? d.road : 'Salem MO');
+        locEl.textContent = loc.substring(0, 18);
+      }
+    }
     if (d.archer_msg) {
       const msgEl = document.getElementById('archer-msg');
       if (msgEl && msgEl._archLock !== d.archer_msg) {
@@ -933,8 +954,13 @@ async function pollLive() {
     if (d.ethanol != null) {
       const fuelEl = document.getElementById('s-fuel');
       if (fuelEl) {
-        fuelEl.textContent = d.ethanol + '%';
-        fuelEl.className = 'status-val ' + (d.ethanol > 75 ? 'status-fine' : d.ethanol > 50 ? 'status-ok' : 'status-warn');
+        if (d.ethanol === 0) {
+          fuelEl.textContent = '---';
+          fuelEl.className = 'status-val status-fine';
+        } else {
+          fuelEl.textContent = d.ethanol + '%';
+          fuelEl.className = 'status-val ' + (d.ethanol > 75 ? 'status-fine' : d.ethanol > 50 ? 'status-ok' : 'status-warn');
+        }
       }
     }
   } catch(e) {}
