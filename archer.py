@@ -7899,8 +7899,9 @@ def index():
         elif tier == 4:
             return get_tier_html(4, name=name)
 
-    # 4. Unknown — registration page
-    return registration_page(mac)
+    # 4. Unknown — show fan page (sign in from there)
+    from flask import redirect as _redir
+    return _redir('/fans')
 
 def registration_page(mac=None):
     """Show registration page for unknown devices."""
@@ -8710,7 +8711,7 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
-_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/static'}
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static'}
 
 _BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
 
@@ -9369,14 +9370,38 @@ load();
 @display_app.route('/fans')
 @display_app.route('/fan')
 def fan_page():
-    """Public fan page — no auth required."""
-    import os
-    from flask import Response as FR
+    """Public fan page — injects auth context so JS knows if user is signed in."""
+    import os, hashlib as _hl
+    from flask import request as flask_request, Response as FR
+    # Resolve auth from cookie
+    user_info = None
+    cookie_val = flask_request.cookies.get('archer_auth', '')
+    if cookie_val:
+        try:
+            parts = cookie_val.split(':')
+            if len(parts) == 3:
+                c_tier, c_name, c_token = parts
+                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                if c_token == expected:
+                    user_info = {'tier': int(c_tier), 'name': c_name}
+        except Exception:
+            pass
+    user_json = json.dumps(user_info) if user_info else 'null'
     if os.path.exists('archer_fan.html'):
         with open('archer_fan.html', 'r', encoding='utf-8') as f:
             html = f.read()
+        html = html.replace('</head>', f'<script>window.ARCHER_USER={user_json};</script></head>', 1)
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
+
+
+@display_app.route('/register')
+def register_page():
+    """Registration / sign-in page — linked from fan page."""
+    from flask import request as flask_request
+    mac = get_client_mac(flask_request)
+    return registration_page(mac)
 
 
 @display_app.route('/fans/ask', methods=['POST'])
