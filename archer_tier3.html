@@ -269,6 +269,12 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
 
 </div>
 
+<div style="background:var(--bg2);border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;gap:6px;flex-shrink:0">
+  <button id="mic-btn-t3" onclick="toggleVoice3()" style="width:32px;height:32px;border-radius:50%;background:var(--bg3);border:1px solid var(--blue);color:var(--blue);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s">🎤</button>
+  <input id="voice-input-t3" type="text" placeholder="Ask about the truck..." onkeydown="if(event.key==='Enter')sendVoice3()" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:7px 12px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;letter-spacing:0.5px">
+  <button onclick="sendVoice3()" style="width:32px;height:32px;border-radius:50%;background:var(--blue);border:none;color:#fff;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">↑</button>
+</div>
+
 <div class="footer">
   <div class="footer-item">FAMILY ACCESS</div>
   <div class="footer-item" id="f-time2">--:--</div>
@@ -441,5 +447,61 @@ setInterval(updateClock, 1000);
 setInterval(poll, 2000);
 updateClock();
 poll();
+
+// ─── TIER 3 VOICE (Family — informational only) ───
+const SR3 = window.SpeechRecognition || window.webkitSpeechRecognition;
+let sr3 = null, sr3Active = false;
+
+function toggleVoice3() {
+  if (sr3Active) { if (sr3) sr3.stop(); return; }
+  if (!SR3) { document.getElementById('voice-input-t3').focus(); return; }
+  sr3 = new SR3();
+  sr3.lang = 'en-US';
+  sr3.interimResults = false;
+  sr3.onresult = e => {
+    document.getElementById('voice-input-t3').value = e.results[0][0].transcript;
+    sendVoice3();
+  };
+  sr3.onend = () => { sr3Active = false; setMicState3(false); };
+  sr3.onerror = () => { sr3Active = false; setMicState3(false); };
+  sr3.start();
+  sr3Active = true;
+  setMicState3(true);
+}
+
+function setMicState3(on) {
+  const btn = document.getElementById('mic-btn-t3');
+  btn.style.background = on ? 'rgba(68,136,255,0.2)' : 'var(--bg3)';
+  btn.textContent = on ? '⏹' : '🎤';
+}
+
+async function sendVoice3() {
+  const inp = document.getElementById('voice-input-t3');
+  const cmd = inp.value.trim();
+  if (!cmd) return;
+  inp.value = '';
+  setEl('archer-msg', 'Thinking...');
+  try {
+    const r = await fetch('/voice_command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: cmd})
+    });
+    const d = await r.json();
+    const resp = d.response || 'Got it.';
+    setEl('archer-msg', resp);
+    tts3(resp);
+  } catch(e) {
+    setEl('archer-msg', "Can't connect to Archer.");
+  }
+}
+
+function tts3(text) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0; u.pitch = 1;
+  speechSynthesis.speak(u);
+}
 </script>
 </body></html>

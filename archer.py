@@ -8710,7 +8710,7 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
-_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/static'}
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/static'}
 
 _BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
 
@@ -9377,6 +9377,21 @@ def fan_page():
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
+
+
+@display_app.route('/fans/ask', methods=['POST'])
+def fans_ask():
+    """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
+    from flask import request as flask_request
+    try:
+        data = flask_request.get_json() or {}
+        question = (data.get('question') or data.get('command') or '').strip()
+        if not question:
+            return jsonify({'response': 'Ask me something about Archer!'})
+        response = ask_archer(question)
+        return jsonify({'response': response or "I'm not sure about that one."})
+    except Exception:
+        return jsonify({'response': 'Give me a second.'})
 
 
 
