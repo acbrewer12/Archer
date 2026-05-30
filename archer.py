@@ -7923,7 +7923,7 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
 .card-hint{{font-size:10px;color:#555;letter-spacing:0.5px;text-align:center;line-height:1.7}}
 .code-input{{background:#0d0d0d;border:1px solid #222;border-radius:10px;padding:18px 14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:10px;outline:none;width:100%;text-align:center;transition:border-color 0.2s,opacity 0.2s}}
 .code-input:focus{{border-color:#cc0000}}
-.code-input::placeholder{{color:#1a1a1a;letter-spacing:6px;font-size:22px}}
+.code-input::placeholder{{color:#333;letter-spacing:6px;font-size:22px}}
 .submit-btn{{background:#cc0000;border:none;border-radius:8px;padding:14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;cursor:pointer;width:100%;transition:background 0.15s}}
 .submit-btn:hover{{background:#dd0000}}
 .submit-btn:active{{background:#aa0000}}
