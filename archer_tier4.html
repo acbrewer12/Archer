@@ -4,10 +4,11 @@
 <meta name="theme-color" content="#0a0a0a">
 <title>Archer — Valet</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+html{overflow-x:hidden}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;width:100vw;max-width:100vw}
 
 :root{
   --amber:#ffaa00;
@@ -34,15 +35,15 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 /* SURVEILLANCE BANNER */
 .surv-banner{background:#0a0500;border-bottom:1px solid #331a00;padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0}
 .surv-icon{font-size:16px}
-.surv-text{font-size:9px;color:var(--amber);letter-spacing:1px;line-height:1.6;word-break:break-word}
+.surv-text{font-size:9px;color:var(--amber);letter-spacing:1px;line-height:1.6;word-break:break-word;min-width:0;flex:1}
 
 /* CONTENT */
 .content{flex:1;padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
 
 /* SPEED — BIG */
-.speed-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;position:relative}
+.speed-section{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--amber);border-radius:8px;padding:14px;text-align:center;position:relative}
 .speed-label{font-size:8px;color:var(--label);letter-spacing:3px;margin-bottom:4px}
-.speed-val{font-family:'Bebas Neue',sans-serif;font-size:80px;line-height:1;letter-spacing:2px;color:#fff;transition:color 0.3s,text-shadow 0.3s}
+.speed-val{font-family:'Bebas Neue',sans-serif;font-size:88px;line-height:1;letter-spacing:0px;color:#fff;transition:color 0.3s,text-shadow 0.3s}
 .speed-unit{font-size:10px;color:var(--label);letter-spacing:3px;margin-top:2px}
 .speed-limit-badge{position:absolute;top:10px;right:12px;background:#1a0000;border:1px solid var(--red);border-radius:6px;padding:4px 8px;text-align:center}
 .speed-limit-label{font-size:7px;color:#555;letter-spacing:1px}
@@ -58,10 +59,10 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .rpm-markers{display:flex;justify-content:space-between;font-size:7px;color:#333;margin-top:3px;padding:0 1px}
 
 /* STATS GRID */
-.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
-.stat-box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 6px;text-align:center}
-.stat-label{font-size:7px;color:var(--label);letter-spacing:2px;margin-bottom:4px}
-.stat-val{font-size:18px;font-weight:bold;letter-spacing:1px}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;width:100%}
+.stat-box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 6px;text-align:center;min-width:0;overflow:hidden}
+.stat-label{font-size:7px;color:var(--label);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase}
+.stat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:1px}
 
 /* EVENT LOG */
 .log-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;flex:1}
