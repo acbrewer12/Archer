@@ -51,45 +51,45 @@ jobs:
           if [ -z "$URL" ]; then
             URL="https://acbrewer12-archer.hf.space"
           fi
-          echo "Building with URL: $URL"
+          echo "Building APK for: $URL"
           find android-apk -name "*.java" \
             -exec sed -i "s|ARCHER_URL_PLACEHOLDER|$URL|g" {} +
 
-      # ── 6. Build ──────────────────────────────────────────────────────────
+      # ── 6. Build debug APK (auto-signed, sideloadable) ────────────────────
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --project-dir android-apk
 
-      - name: Build Release APK (unsigned)
-        run: gradle assembleRelease --no-daemon --project-dir android-apk
+      # ── 7. Rename for clarity ─────────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          mv android-apk/app/build/outputs/apk/debug/app-debug.apk \
+             android-apk/app/build/outputs/apk/debug/Archer.apk
 
-      # ── 7. Upload artifacts ───────────────────────────────────────────────
-      - name: Upload Debug APK
+      # ── 8. Upload — download this and sideload directly ───────────────────
+      - name: Upload Archer.apk
         uses: actions/upload-artifact@v4
         with:
-          name: archer-debug-${{ github.run_number }}
-          path: android-apk/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
+          name: Archer-${{ github.run_number }}
+          path: android-apk/app/build/outputs/apk/debug/Archer.apk
+          retention-days: 90
 
-      - name: Upload Release APK (unsigned)
-        uses: actions/upload-artifact@v4
-        with:
-          name: archer-release-unsigned-${{ github.run_number }}
-          path: android-apk/app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
-
-      # ── 8. Show install instructions ─────────────────────────────────────
+      # ── 9. Install instructions ───────────────────────────────────────────
       - name: Install instructions
         run: |
           echo ""
-          echo "═══════════════════════════════════════════════"
-          echo "  APK built successfully."
-          echo "  Download from the Artifacts section above."
+          echo "══════════════════════════════════════════════════"
+          echo "  Archer.apk built and ready."
           echo ""
-          echo "  To install on your phone:"
-          echo "  1. Enable 'Install unknown apps' for your browser"
-          echo "  2. Transfer APK to phone and tap to install"
-          echo "  3. Go to Settings → Apps → Default Apps"
-          echo "       → Digital Assistant → Archer"
-          echo "  4. Long-press the circle/home button"
-          echo "       → Archer opens instead of Google Assistant"
-          echo "═══════════════════════════════════════════════"
+          echo "  HOW TO INSTALL:"
+          echo "  1. Download Archer.apk from the Artifacts section"
+          echo "  2. On your phone: Settings → Apps → Special app"
+          echo "     access → Install unknown apps → enable for"
+          echo "     your browser or Files app"
+          echo "  3. Open the APK file on your phone → Install"
+          echo ""
+          echo "  REPLACE GOOGLE ASSISTANT:"
+          echo "  4. Settings → Apps → Default Apps"
+          echo "       → Digital assistant app → Archer"
+          echo "  5. Long-press the circle button → Archer opens"
+          echo "       instead of Gemini, mic starts automatically"
+          echo "══════════════════════════════════════════════════"
