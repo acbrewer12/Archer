@@ -416,8 +416,8 @@ async function poll() {
     if (smiEl) smiEl.textContent = sessionMiles.toFixed(1);
 
     // ── LOG EVENTS ─────────────────────────
-    if (speed === 0 && lastSpeed > 5) logEvent('● Vehicle stopped — ' + new Date().toLocaleTimeString(), 'normal');
-    if (speed > 5  && lastSpeed === 0) logEvent('● Vehicle started moving', 'normal');
+    if (speed === 0 && lastSpeed > 0) logEvent('● Vehicle stopped — ' + new Date().toLocaleTimeString(), 'normal');
+    if (speed > 0  && lastSpeed === 0) logEvent('● Vehicle started moving', 'normal');
     if (d.warning && !lastWarning) logEvent('🚨 System warning: ' + (d.warning_msg || 'unknown').replace(/_/g,' '), 'alert');
 
     lastSpeed   = speed;
