@@ -864,7 +864,7 @@ def get_weather():
             vc_desc = (cur.get('conditions') or '').lower()
             vc_cond = _parse_condition(vc_desc) or 'Cloudy'
 
-            # NWS Observation: only use for precipitation override
+            # NWS Observation: use for all condition types (real station reading beats VC model)
             _PRECIP = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
             condition = vc_cond
             if _nws_station_url:
@@ -877,8 +877,8 @@ def get_weather():
                     nws_cond = _parse_condition(text_desc) if text_desc else None
                     w = (props.get('windSpeed') or {}).get('value') or 0
                     wind_mph = round(float(w) * 2.237) or wind_mph
-                    # Override with NWS for active precipitation, or to correct fog when NWS disagrees
-                    if nws_cond in _PRECIP or (vc_cond == 'Fog' and nws_cond and nws_cond not in ('Fog',)):
+                    # NWS obs is a real station reading — use it for all conditions when available
+                    if nws_cond:
                         condition = nws_cond
                 except Exception:
                     pass
