@@ -7920,7 +7920,7 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
 .sub{{font-size:10px;color:#333;letter-spacing:3px;text-align:center}}
 .card{{background:#080808;border:1px solid #1a1a1a;border-top:2px solid #cc0000;border-radius:14px;padding:26px 22px;width:100%;display:flex;flex-direction:column;align-items:center;gap:14px}}
 .card-title{{font-family:'Bebas Neue',sans-serif;font-size:16px;color:#888;letter-spacing:3px;text-align:center}}
-.card-hint{{font-size:10px;color:#2a2a2a;letter-spacing:0.5px;text-align:center;line-height:1.7}}
+.card-hint{{font-size:10px;color:#555;letter-spacing:0.5px;text-align:center;line-height:1.7}}
 .code-input{{background:#0d0d0d;border:1px solid #222;border-radius:10px;padding:18px 14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:10px;outline:none;width:100%;text-align:center;transition:border-color 0.2s,opacity 0.2s}}
 .code-input:focus{{border-color:#cc0000}}
 .code-input::placeholder{{color:#1a1a1a;letter-spacing:6px;font-size:22px}}
@@ -7929,9 +7929,9 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
 .submit-btn:active{{background:#aa0000}}
 .error{{color:#cc0000;font-size:10px;letter-spacing:1px;text-align:center;height:14px;opacity:0;transition:opacity 0.25s}}
 .error.on{{opacity:1}}
-.fan-note{{font-size:10px;color:#222;letter-spacing:1px;text-align:center}}
-.fan-link{{color:#444;text-decoration:none;border-bottom:1px solid #2a2a2a;padding-bottom:1px;transition:color 0.2s}}
-.fan-link:hover{{color:#888}}
+.fan-note{{font-size:10px;color:#444;letter-spacing:1px;text-align:center}}
+.fan-link{{color:#666;text-decoration:none;border-bottom:1px solid #333;padding-bottom:1px;transition:color 0.2s}}
+.fan-link:hover{{color:#aaa}}
 </style>
 </head><body>
 <div class="wrap">
