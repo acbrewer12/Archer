@@ -832,7 +832,6 @@ def get_weather():
         if 'thunder' in desc:                                                  return 'Thunderstorm'
         elif 'snow' in desc or 'blizzard' in desc:                             return 'Snow'
         elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:           return 'Freezing Rain'
-        elif 'fog' in desc or 'mist' in desc:                                  return 'Fog'
         elif 'vicinity' in desc and any(w in desc for w in ('shower','rain')): return 'Scattered Showers'
         elif 'shower' in desc:                                                  return 'Rain Showers'
         elif any(w in desc for w in ('rain','drizzle')):                        return 'Rain'
@@ -841,6 +840,7 @@ def get_weather():
         elif 'cloudy' in desc:                                                  return 'Cloudy'
         elif 'partly' in desc or 'mostly' in desc:                             return 'Partly Cloudy'
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
+        elif 'fog' in desc or 'mist' in desc:                                  return 'Fog'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
     # ── PRIMARY: Visual Crossing temp + NWS Observation condition ──
@@ -877,8 +877,8 @@ def get_weather():
                     nws_cond = _parse_condition(text_desc) if text_desc else None
                     w = (props.get('windSpeed') or {}).get('value') or 0
                     wind_mph = round(float(w) * 2.237) or wind_mph
-                    # Override with NWS only if it detects active precipitation
-                    if nws_cond in _PRECIP:
+                    # Override with NWS for active precipitation, or to correct fog when NWS disagrees
+                    if nws_cond in _PRECIP or (vc_cond == 'Fog' and nws_cond and nws_cond not in ('Fog',)):
                         condition = nws_cond
                 except Exception:
                     pass
