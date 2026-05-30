@@ -9182,7 +9182,7 @@ def weather_compare_data():
         elif cloud >= 50:                                         cond = 'Mostly Cloudy'
         elif cloud >= 25:                                         cond = 'Partly Cloudy'
         else:                                                     cond = 'Clear'
-        return temp, cond
+        return temp, f'{cond} ({cloud}%)'
 
     sources = [
         ('WUnderground PWS (nearest)', lambda: _fetch_wunderground_pws()),
