@@ -101,7 +101,7 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
     <div id="rpm-labels">
       <span>0</span><span>1000</span><span>2000</span><span>3000</span><span>4000</span><span>5000</span><span>6200</span>
     </div>
-    <div id="rpm-num-overlay" id="rpm-overlay">750 RPM</div>
+    <div id="rpm-num-overlay">750 RPM</div>
   </div>
 
   <!-- BOTTOM STATS -->
@@ -190,7 +190,7 @@ function applyData(d) {
   }
 
   // Mood
-  set('b-mood', mood.substring(0, 6));
+  set('b-mood', mood.substring(0, 8));
 
   // Warning flash
   document.getElementById('app').classList.toggle('warning', warn);

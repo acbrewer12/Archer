@@ -69,10 +69,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 #beamng-car{font-size:9px;color:#333;letter-spacing:1px}
 
 /* Log */
-#log{background:#050505;border:1px solid #111;border-radius:6px;padding:8px 10px;height:80px;overflow-y:auto;font-size:10px;color:#444;line-height:1.6}
+#log{background:#050505;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px;height:90px;overflow-y:auto;font-size:10px;color:#555;line-height:1.6}
 #log .entry{color:#555}
-#log .entry.ok{color:#884400}
-#log .entry.live{color:#006622}
+#log .entry.ok{color:#996622}
+#log .entry.live{color:#008833}
 </style>
 </head>
 <body>
@@ -358,7 +358,7 @@ function poll() {
       setText('rd-oil',  d.oil_temp, d.oil_temp > 225);
       setText('rd-cool', d.coolant, d.coolant > 220);
       setText('rd-bat',  d.battery, d.battery < 12.0);
-      setText('rd-eth',  d.ethanol + '%');
+      setText('rd-eth',  (d.ethanol != null && d.ethanol > 0) ? d.ethanol + '%' : '---');
       const sd = d.sensor_data || {};
       setText('rd-afr',  sd.afr || '—');
       setText('rd-tim',  sd.timing_deg || '—');

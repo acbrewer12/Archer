@@ -103,24 +103,24 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 
 /* ── RESPONSIVE ─────────────────────────────────────────── */
 @media (max-width: 480px) {
-  .speed-big { font-size: clamp(44px, 18vw, 72px) !important; }
+  .speed-val { font-size: clamp(44px, 18vw, 72px) !important; }
   .stat-box { padding: 8px 6px; }
-  .stat-num { font-size: clamp(14px, 5vw, 22px) !important; }
-  .stat-lbl { font-size: 7px; }
-  .event-row { font-size: 10px; padding: 6px 8px; }
+  .stat-val { font-size: clamp(14px, 5vw, 22px) !important; }
+  .stat-label { font-size: 7px; }
+  .log-item { font-size: 10px; padding: 5px 4px; }
   .header-title { font-size: 10px; }
 }
 @media (max-width: 360px) {
-  .speed-big { font-size: clamp(36px, 15vw, 58px) !important; }
+  .speed-val { font-size: clamp(36px, 15vw, 58px) !important; }
 }
 @media (max-height: 300px) {
-  .speed-big { font-size: clamp(28px, 12vh, 50px) !important; }
+  .speed-val { font-size: clamp(28px, 12vh, 50px) !important; }
   .header { padding: 3px 8px; }
 }
 @media (min-width: 768px) {
-  .speed-big { font-size: 96px !important; }
-  .stat-num { font-size: 28px !important; }
-  .event-row { font-size: 13px; padding: 10px 16px; }
+  .speed-val { font-size: 96px !important; }
+  .stat-val { font-size: 28px !important; }
+  .log-item { font-size: 11px; }
 }
 </style>
 </head>
@@ -371,7 +371,7 @@ async function poll() {
     // ── OIL ────────────────────────────────
     const oilEl = document.getElementById('v-oil');
     if (oilEl) {
-      oilEl.textContent = Math.round(oil) + 'F';
+      oilEl.textContent = Math.round(oil) + '°F';
       oilEl.style.color = oil > 225 ? 'var(--red)' : oil > 210 ? 'var(--amber)' : '#fff';
     }
 
