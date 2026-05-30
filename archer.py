@@ -844,8 +844,10 @@ def get_weather():
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
     # ── PRIMARY: Visual Crossing temp + NWS Observation condition ──
-    # VC API cloudcover is stale/cached and unreliable for condition labeling.
-    # NWS Observation is a real station sky reading — use it for condition only.
+    # ── PRIMARY: Visual Crossing temp + smart condition blend ──
+    # VC temp is accurate. For condition: use VC forecast text for clear/cloudy
+    # labels (forecast model matches TWC methodology); override with NWS station
+    # only when it detects active precipitation (station data reliable for rain/snow).
     if _vc_key:
         try:
             vc_url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
@@ -858,32 +860,35 @@ def get_weather():
             wind_mph = round(float(cur.get('windspeed') or 0))
             precip   = float(cur.get('precip') or 0)
 
-            # Condition: NWS Observation station (real sky reading, accurate labels)
-            condition = None
+            # VC forecast condition (model-based, matches TWC methodology for clear/cloudy)
+            vc_desc = (cur.get('conditions') or '').lower()
+            vc_cond = _parse_condition(vc_desc) or 'Cloudy'
+
+            # NWS Observation: only use for precipitation override
+            _PRECIP = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+            condition = vc_cond
             if _nws_station_url:
                 try:
                     obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
                     with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=5) as r:
                         obs = json.loads(r.read())
-                    text_desc = (obs['properties'].get('textDescription') or '').strip()
-                    if text_desc:
-                        condition = _parse_condition(text_desc)
-                        w = (obs['properties'].get('windSpeed') or {}).get('value') or 0
-                        wind_mph = round(float(w) * 2.237) or wind_mph
+                    props = obs['properties']
+                    text_desc = (props.get('textDescription') or '').strip()
+                    nws_cond = _parse_condition(text_desc) if text_desc else None
+                    w = (props.get('windSpeed') or {}).get('value') or 0
+                    wind_mph = round(float(w) * 2.237) or wind_mph
+                    # Override with NWS only if it detects active precipitation
+                    if nws_cond in _PRECIP:
+                        condition = nws_cond
                 except Exception:
                     pass
-
-            # Fallback condition from VC description text if NWS unavailable
-            if condition is None:
-                desc = (cur.get('conditions') or '').lower()
-                condition = _parse_condition(desc) or 'Cloudy'
 
             return {
                 'temp': temp_f, 'condition': condition, 'desc': condition,
                 'wind': wind_mph, 'precip': precip,
-                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'raining':  condition in _PRECIP,
                 'freezing': temp_f < 32,
-                'snowing':  condition == 'Snow',
+                'snowing':  condition in ('Snow', 'Snow Showers'),
             }
         except Exception:
             pass
