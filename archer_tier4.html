@@ -328,8 +328,8 @@ async function poll() {
     const r = await fetch(window.location.origin + '/display_data');
     const d = await r.json();
 
-    const speed = d.speed || 0;
-    const rpm   = d.rpm   || 750;
+    const speed = d.speed ?? 0;
+    const rpm   = d.rpm   ?? 750;
     const oil   = d.oil_temp || 195;
     const bat   = d.battery  || 13.8;
     const tcOn  = d.tc_on;
@@ -390,6 +390,10 @@ async function poll() {
       if (!tcOn && lastTcOn) logEvent('🚨 Traction control turned off', 'alert');
     }
     lastTcOn = tcOn;
+
+    // ── GEAR ───────────────────────────────
+    const gearEl4 = document.getElementById('v-gear');
+    if (gearEl4) gearEl4.textContent = d.gear != null ? d.gear : '—';
 
     // ── E85 ────────────────────────────────
     const fuelEl4 = document.getElementById('v-fuel');
