@@ -8,14 +8,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Quicksand:wght@400;600;700&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;overflow:hidden}
+html{background:#030001}
+body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;overflow:hidden;max-width:680px;margin:0 auto;width:100%;box-shadow:0 0 60px rgba(204,0,0,0.08)}
 
 .hdr{background:#0d0005;border-bottom:2px solid #cc0000;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px}
 .hdr-left{display:flex;flex-direction:column}
 .hdr-title{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:6px;color:#cc0000;line-height:1}
 .hdr-sub{font-size:8px;color:#552222;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-top:1px}
 .hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
-.sign-in-btn{background:#1a0000;border:1px solid #440000;border-radius:20px;padding:5px 14px;font-size:10px;color:#ff6644;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;transition:all 0.15s;white-space:nowrap}
+.sign-in-btn{background:#1a0000;border:1px solid #550000;border-radius:20px;padding:5px 12px;font-size:9px;color:#ff6644;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;transition:all 0.15s;white-space:nowrap;line-height:1.4}
 .sign-in-btn:active{background:#2a0000;border-color:#cc0000}
 .user-chip{display:flex;align-items:center;gap:6px}
 .user-name{font-size:10px;color:#ff8866;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
@@ -27,14 +28,22 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .stat-val{font-size:13px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
 .stat-lbl{font-size:8px;color:#552222;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
 
-.info-strip{display:flex;gap:8px;padding:8px 12px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;border-bottom:1px solid #1a0008}
+.info-strip-wrap{position:relative;flex-shrink:0;border-bottom:1px solid #1a0008}
+.info-strip-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:32px;background:linear-gradient(to right,transparent,#080002);pointer-events:none}
+.info-strip{display:flex;gap:8px;padding:8px 12px;overflow-x:auto;scrollbar-width:none}
 .info-strip::-webkit-scrollbar{display:none}
 .info-card{background:#0d0005;border:1px solid #2a0010;border-radius:10px;padding:9px 13px;flex-shrink:0;min-width:120px}
 .info-icon{font-size:18px;margin-bottom:3px}
-.info-label{font-size:8px;color:#552222;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.info-label{font-size:8px;color:#884444;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
 .info-val{font-size:12px;font-weight:700;color:#ff8866;line-height:1.3}
 
-.chat-area{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px}
+.chat-area{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px;position:relative}
+.live-hint{display:flex;flex-direction:column;gap:6px;padding:8px 12px;flex-shrink:0;border-top:1px solid #1e0008;background:linear-gradient(to bottom,#0a0002,#080002)}
+.live-hint-label{font-size:8px;color:#664422;letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding-left:0;border-top:1px solid #2a0010;padding-top:8px}
+.live-hint-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+.live-hint-card{background:#0d0005;border:1px solid #1e0008;border-radius:8px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:3px}
+.lhc-val{font-size:15px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
+.lhc-lbl{font-size:7px;color:#664433;letter-spacing:1px;font-family:'Share Tech Mono',monospace;text-align:center}
 .chat-area::-webkit-scrollbar{width:3px}
 .chat-area::-webkit-scrollbar-track{background:transparent}
 .chat-area::-webkit-scrollbar-thumb{background:#330010;border-radius:2px}
@@ -45,10 +54,16 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .msg.archer .msg-bubble{background:#0d0005;border:1px solid #2a0010;color:#ddbbbb;border-bottom-left-radius:4px}
 .msg.user .msg-bubble{background:#2a0008;border:1px solid #550020;color:#ffcccc;border-bottom-right-radius:4px}
 .msg-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;margin-top:2px}
-.msg.archer .msg-avatar{background:radial-gradient(circle,#cc0000,#330000);border:2px solid #cc0000}
+.msg.archer .msg-avatar{background:radial-gradient(circle,#cc0000,#330000);border:2px solid #cc0000;animation:avatar-pulse 3s ease-in-out infinite}
+@keyframes avatar-pulse{0%,100%{box-shadow:0 0 0 0 rgba(204,0,0,0.3)}50%{box-shadow:0 0 0 5px rgba(204,0,0,0)}}
 .msg.user .msg-avatar{background:#1a0008;border:1px solid #440020;font-size:11px}
 .msg-tag{font-size:8px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px;color:#660022}
 .msg.user .msg-tag{text-align:right;color:#885544}
+
+.build-divider{display:flex;align-items:center;gap:10px;padding:12px 0;flex-shrink:0}
+.build-divider-line{flex:1;height:1px;background:#1a0008}
+.build-divider-text{font-size:9px;color:#554433;letter-spacing:2px;font-family:'Share Tech Mono',monospace;white-space:nowrap}
+.build-divider-badge{background:#0d0005;border:1px solid #2a0010;border-radius:12px;padding:4px 12px;font-size:9px;color:#ff6633;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 
 .typing-bubble{padding:9px 13px;background:#0d0005;border:1px solid #2a0010;border-radius:14px;border-bottom-left-radius:4px;display:inline-flex;gap:4px;align-items:center}
 .dot{width:6px;height:6px;border-radius:50%;background:#660022;animation:blink 1.2s infinite}
@@ -56,13 +71,15 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .dot:nth-child(3){animation-delay:0.4s}
 @keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}
 
-.suggestions{padding:0 12px 6px;display:flex;flex-wrap:wrap;gap:5px;flex-shrink:0}
+.suggestions{padding:0 12px 6px;flex-shrink:0}
+.sug-label{font-size:8px;color:#331010;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:5px}
+.sug-chips{display:flex;flex-wrap:wrap;gap:5px}
 .sug-chip{background:#0d0005;border:1px solid #2a0010;border-radius:20px;padding:5px 11px;font-size:10px;color:#cc6644;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:0.5px;transition:all 0.15s;white-space:nowrap}
 .sug-chip:active{background:#200008;border-color:#cc0000;color:#ff8866}
 
 .input-bar{background:#0d0005;border-top:1px solid #2a0010;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
 #fan-input{flex:1;background:#150008;border:1px solid #330010;border-radius:22px;padding:9px 15px;color:#fff;font-family:'Quicksand',sans-serif;font-size:13px;outline:none;-webkit-appearance:none;min-width:0}
-#fan-input::placeholder{color:#552222}
+#fan-input::placeholder{color:#774433}
 .fan-mic-btn{width:38px;height:38px;border-radius:50%;background:#150008;border:2px solid #440020;color:#cc4444;font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
 .fan-mic-btn.active{background:rgba(204,0,0,0.2);border-color:#cc0000;color:#ff4422}
 .fan-send-btn{width:38px;height:38px;border-radius:50%;background:#cc0000;border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s}
@@ -90,14 +107,14 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
   <div class="stat-chip"><div class="stat-val" id="f-speed">--</div><div class="stat-lbl">MPH</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-rpm">--</div><div class="stat-lbl">RPM</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-boost">--</div><div class="stat-lbl">BOOST</div></div>
-  <div class="stat-chip"><div class="stat-val" id="f-eth">--</div><div class="stat-lbl">ETHANOL</div></div>
+  <div class="stat-chip"><div class="stat-val" id="f-mode">--</div><div class="stat-lbl">MODE</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-oil">--</div><div class="stat-lbl">OIL &deg;F</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-bat">--</div><div class="stat-lbl">VOLTS</div></div>
 </div>
 
-<div class="info-strip">
+<div class="info-strip-wrap"><div class="info-strip">
   <div class="info-card">
-    <div class="info-icon">🏗</div>
+    <div class="info-icon">🚚</div>
     <div class="info-label">YEAR / MODEL</div>
     <div class="info-val">2006 GMC Sierra 2500HD</div>
   </div>
@@ -121,18 +138,31 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
     <div class="info-label">HOME BASE</div>
     <div class="info-val">Salem, Missouri</div>
   </div>
-</div>
+</div></div>
 
 <div class="suggestions" id="suggestions">
-  <div class="sug-chip" onclick="askQuestion('What engine does Archer have?')">Engine?</div>
-  <div class="sug-chip" onclick="askQuestion('What fuel does Archer run?')">Fuel?</div>
-  <div class="sug-chip" onclick="askQuestion('What mods does Archer have?')">Mods?</div>
-  <div class="sug-chip" onclick="askQuestion('What is the build plan?')">Build plan?</div>
-  <div class="sug-chip" onclick="askQuestion('How fast is Archer?')">How fast?</div>
-  <div class="sug-chip" onclick="askQuestion('What boost does Archer make?')">Boost?</div>
+  <div class="sug-label">ASK ME</div>
+  <div class="sug-chips">
+    <div class="sug-chip" onclick="askQuestion('What engine does Archer have?')">Engine?</div>
+    <div class="sug-chip" onclick="askQuestion('What fuel does Archer run?')">Fuel?</div>
+    <div class="sug-chip" onclick="askQuestion('What mods does Archer have?')">Mods?</div>
+    <div class="sug-chip" onclick="askQuestion('What is the build plan?')">Build plan?</div>
+    <div class="sug-chip" onclick="askQuestion('How fast is Archer?')">How fast?</div>
+    <div class="sug-chip" onclick="askQuestion('What boost does Archer make?')">Boost?</div>
+  </div>
 </div>
 
 <div class="chat-area" id="chat"></div>
+
+<div class="live-hint" id="live-hint">
+  <div class="live-hint-label"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:#cc0000;margin-right:6px;vertical-align:middle;animation:avatar-pulse 2s ease-in-out infinite"></span>LIVE STATUS</div>
+  <div class="live-hint-grid">
+    <div class="live-hint-card"><div class="lhc-val" id="lh-speed">--</div><div class="lhc-lbl">MPH</div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-rpm">--</div><div class="lhc-lbl">RPM</div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-oil">--</div><div class="lhc-lbl">OIL °F</div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-bat">--</div><div class="lhc-lbl">VOLTS</div></div>
+  </div>
+</div>
 
 <!-- History bar — shown only for signed-in users -->
 <div class="history-bar" id="history-bar" style="display:none">
@@ -171,7 +201,7 @@ let sr = null;
     const hl = document.getElementById('history-label');
     if (hl) hl.textContent = 'CHAT SAVED • ' + USER.name.toUpperCase();
   } else {
-    el.innerHTML = '<a class="sign-in-btn" href="/register">SIGN IN</a>';
+    el.innerHTML = '<a class="sign-in-btn" href="/register">SIGN IN<br>TO SAVE CHAT</a>';
   }
 })();
 
@@ -184,9 +214,13 @@ async function pollStats() {
     set('f-speed', Math.round(d.speed || 0));
     set('f-rpm', d.rpm || 750);
     set('f-boost', (d.boost || 0) + ' PSI');
-    set('f-eth', (d.ethanol != null ? d.ethanol : '--') + '%');
+    set('f-mode', (d.drive_mode || 'SPORT').toUpperCase().slice(0,5));
     set('f-oil', d.oil_temp || '--');
     set('f-bat', d.battery ? d.battery.toFixed(1) + 'V' : '--');
+    set('lh-speed', Math.round(d.speed || 0));
+    set('lh-rpm', d.rpm || 750);
+    set('lh-oil', d.oil_temp || '--');
+    set('lh-bat', d.battery ? d.battery.toFixed(1) : '--');
     const sc = d.supercharged || false;
     const ph = d.build_phase || 1;
     const eng = document.getElementById('f-engine');
@@ -263,7 +297,6 @@ function loadHistory() {
     chatHistory = saved;
     saved.forEach(m => renderMsg(m.role, m.text));
     chatEl.scrollTop = chatEl.scrollHeight;
-    // Hide suggestions if there's history
     const sugs = document.getElementById('suggestions');
     if (sugs) sugs.style.display = 'none';
     return true;
@@ -284,6 +317,31 @@ function addWelcome() {
     ? 'Hey ' + USER.name + ', welcome back. Chat is saved on this device. Ask me anything about the truck.'
     : 'Hey, welcome to the fan page. I\'m Archer — a 2006 GMC Sierra 2500HD being built into something serious. Ask me anything about the truck, the build, or what I\'m running right now.';
   renderMsg('archer', greeting);
+  // Build phase divider
+  fetch(BASE + '/display_data').then(r => r.json()).then(d => {
+    const phase = d.build_phase || 1;
+    const sc = d.supercharged;
+    const phaseLabel = sc ? 'PHASE 2 — SUPERCHARGED' : 'PHASE 1 — BUILDING';
+    const divEl = document.createElement('div');
+    divEl.className = 'build-divider';
+    divEl.id = 'build-divider';
+    divEl.innerHTML = '<div class="build-divider-line"></div>' +
+      '<div class="build-divider-badge">' + phaseLabel + '</div>' +
+      '<div class="build-divider-line"></div>';
+    chatEl.appendChild(divEl);
+  }).catch(() => {});
+  // Second bubble with live data snapshot (fetched async)
+  fetch(BASE + '/display_data').then(r => r.json()).then(d => {
+    const spd = Math.round(d.speed || 0);
+    const rpm = d.rpm || 750;
+    const oil = d.oil_temp || '--';
+    const bat = d.battery ? d.battery.toFixed(1) : '--';
+    const mode = (d.drive_mode || 'comfort').toUpperCase();
+    const status = spd > 0
+      ? `Running ${mode} at ${spd} mph right now. Oil is at ${oil}°F, ${bat}V on the battery.`
+      : `Sitting at idle — ${rpm} RPM, oil at ${oil}°F, ${bat}V. Hit me with a question.`;
+    renderMsg('archer', status);
+  }).catch(() => {});
 }
 
 // ── INIT ──
@@ -298,6 +356,8 @@ async function sendFanQuestion() {
   inp.value = '';
   const sugs = document.getElementById('suggestions');
   if (sugs) sugs.style.display = 'none';
+  const bd = document.getElementById('build-divider');
+  if (bd) bd.style.display = 'none';
   addMsg('user', q);
   showTyping();
   try {
