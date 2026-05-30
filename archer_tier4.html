@@ -7,7 +7,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden}
 
 :root{
   --amber:#ffaa00;
@@ -34,7 +34,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 /* SURVEILLANCE BANNER */
 .surv-banner{background:#0a0500;border-bottom:1px solid #331a00;padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0}
 .surv-icon{font-size:16px}
-.surv-text{font-size:9px;color:var(--amber);letter-spacing:2px;line-height:1.6}
+.surv-text{font-size:9px;color:var(--amber);letter-spacing:1px;line-height:1.6;word-break:break-word}
 
 /* CONTENT */
 .content{flex:1;padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
@@ -86,10 +86,10 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 /* LIMITS NOTICE */
 .limits-card{background:#080800;border:1px solid #332200;border-radius:8px;padding:10px 12px}
 .limits-title{font-size:8px;color:var(--amber);letter-spacing:3px;margin-bottom:8px}
-.limit-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:9px}
+.limit-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:9px;gap:8px}
 .limit-row:last-child{border-bottom:none}
-.limit-name{color:#444;letter-spacing:1px}
-.limit-val{color:var(--amber);letter-spacing:1px}
+.limit-name{color:#444;letter-spacing:1px;flex:1}
+.limit-val{color:var(--amber);letter-spacing:1px;text-align:right;white-space:nowrap}
 
 /* FOOTER */
 .footer{background:#000;border-top:1px solid #111;padding:5px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}

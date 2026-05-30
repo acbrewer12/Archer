@@ -7916,7 +7916,7 @@ def registration_page(mac=None):
 html,body{{height:100%;overflow:hidden}}
 body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}}
 .wrap{{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;gap:20px}}
-.logo{{font-family:'Bebas Neue',sans-serif;font-size:56px;letter-spacing:8px;color:#cc0000;line-height:1}}
+.logo{{font-family:'Bebas Neue',sans-serif;font-size:52px;letter-spacing:5px;color:#cc0000;line-height:1}}
 .sub{{font-size:10px;color:#333;letter-spacing:3px;text-align:center}}
 .card{{background:#080808;border:1px solid #1a1a1a;border-radius:14px;padding:26px 22px;width:100%;display:flex;flex-direction:column;align-items:center;gap:14px}}
 .card-title{{font-size:11px;color:#555;letter-spacing:3px;text-align:center}}

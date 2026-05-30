@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=480, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Mirror</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+html{width:100%;height:100%;background:#000}
+body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
 
 /* ── LAYOUT ─────────────────────────────── */
 #app{display:grid;grid-template-rows:26px 1fr 28px 32px 20px;height:272px;width:480px}
@@ -238,6 +239,21 @@ async function poll() {
 
 poll();
 setInterval(poll, 800);
+
+function scaleToFit() {
+  const app = document.getElementById('app');
+  const s = Math.min(window.innerWidth / 480, window.innerHeight / 272);
+  const scaledW = 480 * s;
+  const scaledH = 272 * s;
+  const ml = (window.innerWidth  - scaledW) / 2;
+  const mt = (window.innerHeight - scaledH) / 2;
+  app.style.transformOrigin = 'top left';
+  app.style.transform  = `scale(${s})`;
+  app.style.marginLeft = ml + 'px';
+  app.style.marginTop  = mt + 'px';
+}
+window.addEventListener('resize', scaleToFit);
+scaleToFit();
 </script>
 </body>
 </html>

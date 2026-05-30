@@ -6,12 +6,12 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#cc4400;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:12px}
+body{background:#0a0a0a;color:#cc4400;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:12px;overflow-x:hidden}
 
 /* Header */
 .hdr{text-align:center;margin-bottom:14px;padding:12px 14px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;border-bottom:2px solid #cc0000}
-.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:6px;color:#cc0000}
-.hdr-sub{font-size:9px;letter-spacing:2px;color:#444;margin-top:2px}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#cc0000;overflow:hidden;white-space:nowrap}
+.hdr-sub{font-size:9px;letter-spacing:1px;color:#444;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Status bar */
 #status-bar{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:10px;letter-spacing:1px}
