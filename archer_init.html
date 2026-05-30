@@ -17,7 +17,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.35)}
 .logo-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);top:0;opacity:0;animation:scan 2.2s linear infinite}
 @keyframes scan{0%{top:0;opacity:0}8%{opacity:0.7}92%{opacity:0.7}100%{top:100%;opacity:0}}
-.vehicle{font-size:9px;color:#333;letter-spacing:4px;margin-bottom:24px}
+.vehicle{font-size:9px;color:#555;letter-spacing:4px;margin-bottom:24px}
 
 /* PROGRESS BAR */
 .bar-track{width:100%;height:2px;background:#0d0d0d;border:1px solid var(--dim);border-radius:1px;margin-bottom:20px;overflow:hidden}
@@ -30,13 +30,13 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .check-icon{width:18px;flex-shrink:0;text-align:center;font-size:12px}
 .spinner{width:12px;height:12px;border:1.5px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.55s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
-.check-label{font-size:10px;letter-spacing:2px;color:var(--label);flex:1;text-transform:uppercase}
+.check-label{font-size:10px;letter-spacing:2px;color:#555;flex:1;text-transform:uppercase}
 .check-label.running{color:#888}
 .check-label.done{color:#ccc}
-.check-detail{font-size:9px;color:#333;letter-spacing:1px;flex-shrink:0;max-width:140px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.check-detail.ok   {color:#006622}
-.check-detail.warn {color:#664400}
-.check-detail.fail {color:#660000}
+.check-detail{font-size:9px;color:#555;letter-spacing:1px;flex-shrink:0;max-width:140px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.check-detail.ok   {color:#00aa44}
+.check-detail.warn {color:#cc8800}
+.check-detail.fail {color:#cc3300}
 
 /* READY / ERROR banner */
 .banner{margin-top:16px;text-align:center;opacity:0;transition:opacity 0.4s}
@@ -45,7 +45,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .banner-text.ok  {color:var(--green)}
 .banner-text.warn{color:var(--amber)}
 .banner-text.fail{color:var(--red)}
-.banner-sub{font-size:9px;color:var(--label);letter-spacing:2px;margin-top:4px}
+.banner-sub{font-size:9px;color:#555;letter-spacing:2px;margin-top:4px}
 
 /* Corner accents */
 .corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5}
@@ -53,7 +53,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
 .corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
 .corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
-.ver{position:fixed;bottom:10px;font-size:8px;color:#1a1a1a;letter-spacing:2px}
+.ver{position:fixed;bottom:10px;font-size:8px;color:#333;letter-spacing:2px}
 </style>
 </head>
 <body>
