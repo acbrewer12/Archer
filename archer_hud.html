@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Archer HUD</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+:root{
+  --red:#cc0000;
+  --amber:#ffaa00;
+  --green:#00cc44;
+  --label:#333;
+  --text2:#555;
+}
+body{display:flex;flex-direction:column}
+
+/* TOP BAR */
+#topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 14px;height:42px;flex-shrink:0;
+  background:#050505;border-bottom:1px solid #111
+}
+#tb-logo{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:5px;color:var(--red)}
+#tb-clock{font-size:14px;letter-spacing:2px;color:#666}
+#tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:var(--label)}
+#obd-dot{width:8px;height:8px;border-radius:50%;background:#222;transition:background 0.4s}
+#obd-dot.live{background:var(--green);box-shadow:0 0 6px var(--green)}
+#obd-dot.sim{background:#ff6600;box-shadow:0 0 5px #ff6600}
+
+/* MESSAGE STRIP */
+#msg-strip{
+  display:flex;align-items:center;gap:8px;
+  padding:0 14px;height:28px;flex-shrink:0;
+  background:#000;border-bottom:1px solid #0d0d0d;overflow:hidden
+}
+#msg-label{font-size:8px;letter-spacing:2px;color:var(--red);flex-shrink:0}
+#msg-text{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 0.5s}
+#msg-text.fresh{color:#cc6600}
+
+/* SPEED ZONE */
+#speed-zone{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  position:relative;padding:8px 70px
+}
+#speed-num{
+  font-family:'Bebas Neue',sans-serif;
+  font-size:clamp(96px,36vw,200px);
+  line-height:0.88;color:#fff;
+  letter-spacing:-3px;text-align:center;
+  transition:color 0.3s,text-shadow 0.3s
+}
+#speed-num.amber{color:var(--amber);text-shadow:0 0 40px rgba(255,170,0,0.25)}
+#speed-num.hot{color:var(--red);text-shadow:0 0 40px rgba(204,0,0,0.35)}
+#speed-unit{font-size:10px;letter-spacing:5px;color:var(--label);margin-top:6px}
+/* Side panels */
+.side-panel{position:absolute;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:2px}
+#panel-left{left:10px;text-align:center}
+#panel-right{right:10px;text-align:center}
+.side-val{font-family:'Bebas Neue',sans-serif;font-size:34px;line-height:1;transition:color 0.3s}
+.side-lbl{font-size:7px;letter-spacing:1px;color:var(--label)}
+/* Warning border */
+#warn-ring{position:absolute;inset:0;border:3px solid var(--red);pointer-events:none;opacity:0;transition:opacity 0.2s}
+#warn-ring.on{opacity:1;animation:warnpulse 0.5s ease-in-out infinite}
+@keyframes warnpulse{0%,100%{opacity:1}50%{opacity:0.25}}
+
+/* RPM BAR */
+#rpm-wrap{padding:5px 14px 4px;flex-shrink:0}
+#rpm-track{background:#0d0d0d;height:12px;border-radius:3px;overflow:hidden;border:1px solid #111}
+#rpm-fill{
+  height:100%;width:12%;border-radius:3px;
+  background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,var(--amber) 65%,var(--red) 85%,#ff0000 100%);
+  transition:width 0.15s ease-out,box-shadow 0.2s
+}
+#rpm-labels{display:flex;justify-content:space-between;font-size:7px;color:var(--label);margin-top:2px;padding:0 1px}
+#rpm-footer{display:flex;justify-content:space-between;font-size:9px;color:var(--text2);margin-top:2px}
+
+/* STATS ROW */
+#statsrow{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  border-top:1px solid #111;background:#050505;
+  flex-shrink:0;height:54px
+}
+.hstat{display:flex;flex-direction:column;align-items:center;justify-content:center;border-right:1px solid #0d0d0d;padding:4px 2px}
+.hstat:last-child{border-right:none}
+.hstat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;line-height:1;transition:color 0.3s}
+.hstat-lbl{font-size:6px;letter-spacing:1px;color:var(--label);margin-top:2px}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="tb-logo">ARCHER</div>
+  <div id="tb-clock">--:--</div>
+  <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
+</div>
+
+<div id="msg-strip">
+  <span id="msg-label">ARCHER</span>
+  <span id="msg-text">Online. Everything looks good.</span>
+</div>
+
+<div id="speed-zone">
+  <div class="side-panel" id="panel-left">
+    <div class="side-val" id="sl-gear" style="color:#777">—</div>
+    <div class="side-lbl">GEAR</div>
+  </div>
+
+  <div id="speed-num">0</div>
+  <div id="speed-unit">MPH</div>
+
+  <div class="side-panel" id="panel-right">
+    <div class="side-val" id="sl-boost" style="color:#ff6600">0</div>
+    <div class="side-lbl">BOOST PSI</div>
+  </div>
+
+  <div id="warn-ring"></div>
+</div>
+
+<div id="rpm-wrap">
+  <div id="rpm-track"><div id="rpm-fill"></div></div>
+  <div id="rpm-labels">
+    <span>0</span><span>1k</span><span>2k</span><span>3k</span><span>4k</span><span>5k</span><span>6.2k</span>
+  </div>
+  <div id="rpm-footer">
+    <span>ENGINE RPM</span>
+    <span id="rpm-val">750</span>
+  </div>
+</div>
+
+<div id="statsrow">
+  <div class="hstat">
+    <div class="hstat-val" id="hs-oil" style="color:var(--amber)">195°</div>
+    <div class="hstat-lbl">OIL °F</div>
+  </div>
+  <div class="hstat">
+    <div class="hstat-val" id="hs-cool" style="color:#666">190°</div>
+    <div class="hstat-lbl">COOLANT</div>
+  </div>
+  <div class="hstat">
+    <div class="hstat-val" id="hs-bat" style="color:var(--green)">13.8V</div>
+    <div class="hstat-lbl">BATTERY</div>
+  </div>
+  <div class="hstat">
+    <div class="hstat-val" id="hs-eth" style="color:#4488ff">---</div>
+    <div class="hstat-lbl">E85</div>
+  </div>
+</div>
+
+<script>
+let lastMsg = '';
+let msgTimer = null;
+
+function $(id){ return document.getElementById(id); }
+function set(id, v){ const e=$(id); if(e) e.textContent=v; }
+function clr(id, c){ const e=$(id); if(e) e.style.color=c; }
+
+function updateClock() {
+  set('tb-clock', new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+}
+
+function applyData(d) {
+  const rpm   = d.rpm      ?? 750;
+  const speed = d.speed    ?? 0;
+  const boost = d.boost    ?? 0;
+  const oil   = d.oil_temp ?? 195;
+  const cool  = d.coolant  ?? 190;
+  const bat   = d.battery  ?? 13.8;
+  const gear  = d.gear;
+  const warn  = d.warning  ?? false;
+  const msg   = d.archer_msg || '';
+
+  // Speed
+  const sEl = $('speed-num');
+  if (sEl) {
+    sEl.textContent = Math.round(speed);
+    if (speed > 80)      sEl.className = 'hot';
+    else if (speed > 55) sEl.className = 'amber';
+    else                 sEl.className = '';
+  }
+
+  // Gear
+  set('sl-gear', gear != null ? gear : '—');
+
+  // Boost
+  set('sl-boost', Math.round(boost));
+  clr('sl-boost', boost > 18 ? '#ff3300' : '#ff6600');
+
+  // RPM
+  const pct = Math.min(100, (rpm / 6200) * 100);
+  const fill = $('rpm-fill');
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.style.boxShadow = rpm > 5000 ? '0 0 8px var(--red)' : rpm > 3500 ? '0 0 6px var(--amber)' : 'none';
+  }
+  set('rpm-val', Math.round(rpm) + ' RPM');
+
+  // Oil
+  set('hs-oil', Math.round(oil) + '°');
+  clr('hs-oil', oil > 225 ? '#ff3300' : oil > 210 ? 'var(--amber)' : '#777');
+
+  // Coolant
+  set('hs-cool', Math.round(cool) + '°');
+  clr('hs-cool', cool > 230 ? '#ff3300' : cool > 215 ? 'var(--amber)' : '#666');
+
+  // Battery
+  set('hs-bat', parseFloat(bat).toFixed(1) + 'V');
+  clr('hs-bat', bat < 12.0 ? '#ff3300' : bat < 12.8 ? 'var(--amber)' : 'var(--green)');
+
+  // E85
+  if (d.ethanol != null && d.ethanol > 0) {
+    set('hs-eth', Math.round(d.ethanol) + '%');
+    clr('hs-eth', d.ethanol < 30 ? '#ff3300' : d.ethanol < 55 ? 'var(--amber)' : '#4488ff');
+  } else {
+    set('hs-eth', '---');
+    clr('hs-eth', '#333');
+  }
+
+  // Warning ring
+  $('warn-ring').className = warn ? 'on' : '';
+
+  // Archer message
+  if (msg && msg !== lastMsg) {
+    const el = $('msg-text');
+    el.textContent = msg;
+    el.className = 'fresh';
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => { el.className = ''; }, 4000);
+    lastMsg = msg;
+  }
+}
+
+function updateObd(connected) {
+  const dot = $('obd-dot');
+  const lbl = $('obd-label');
+  if (connected) { dot.className = 'live'; lbl.textContent = 'LIVE'; }
+  else           { dot.className = 'sim';  lbl.textContent = 'SIM'; }
+}
+
+let tick = 0;
+async function poll() {
+  try {
+    const r = await fetch('/display_data');
+    const d = await r.json();
+    applyData(d);
+    if (tick++ % 5 === 0) {
+      const s = await fetch('/sim/status').then(r=>r.json()).catch(()=>({}));
+      updateObd(!!s.obd_connected);
+    }
+  } catch(e) {}
+  updateClock();
+}
+
+poll();
+setInterval(poll, 800);
+</script>
+</body>
+</html>

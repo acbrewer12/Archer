@@ -191,7 +191,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
     </div>
     <div class="stat-box">
       <div class="stat-label">E85</div>
-      <div class="stat-val" id="v-fuel" style="color:var(--green)">82%</div>
+      <div class="stat-val" id="v-fuel" style="color:var(--label)">---</div>
     </div>
     <div class="stat-box">
       <div class="stat-label">SESSION MI</div>
@@ -370,14 +370,14 @@ async function poll() {
     // ── OIL ────────────────────────────────
     const oilEl = document.getElementById('v-oil');
     if (oilEl) {
-      oilEl.textContent = oil + 'F';
+      oilEl.textContent = Math.round(oil) + 'F';
       oilEl.style.color = oil > 225 ? 'var(--red)' : oil > 210 ? 'var(--amber)' : '#fff';
     }
 
     // ── BATTERY ────────────────────────────
     const batEl = document.getElementById('v-bat');
     if (batEl) {
-      batEl.textContent = bat + 'V';
+      batEl.textContent = parseFloat(bat).toFixed(1) + 'V';
       batEl.style.color = bat < 12 ? 'var(--red)' : bat < 12.8 ? 'var(--amber)' : 'var(--green)';
     }
 
@@ -388,16 +388,27 @@ async function poll() {
       tcEl.style.color  = tcOn ? 'var(--green)' : 'var(--red)';
       if (!tcOn && lastTcOn) logEvent('🚨 Traction control turned off', 'alert');
     }
+    lastTcOn = tcOn;
 
     // ── E85 ────────────────────────────────
     const fuelEl4 = document.getElementById('v-fuel');
-    if (fuelEl4 && d.ethanol != null) {
-      fuelEl4.textContent = d.ethanol + '%';
-      fuelEl4.style.color = d.ethanol < 30 ? 'var(--red)' : d.ethanol < 55 ? 'var(--amber)' : 'var(--green)';
+    if (fuelEl4) {
+      if (d.ethanol != null && d.ethanol > 0) {
+        fuelEl4.textContent = d.ethanol + '%';
+        fuelEl4.style.color = d.ethanol < 30 ? 'var(--red)' : d.ethanol < 55 ? 'var(--amber)' : 'var(--green)';
+      } else {
+        fuelEl4.textContent = '---';
+        fuelEl4.style.color = 'var(--label)';
+      }
     }
 
     // ── ARCHER MSG ─────────────────────────
     document.getElementById('v-archer-msg').textContent = getArcherMsg(speed, rpm, d.warning);
+
+    // ── SESSION MI ─────────────────────────
+    sessionMiles += speed / 3600;
+    const smiEl = document.getElementById('v-session-mi');
+    if (smiEl) smiEl.textContent = sessionMiles.toFixed(1);
 
     // ── LOG EVENTS ─────────────────────────
     if (speed === 0 && lastSpeed > 5) logEvent('● Vehicle stopped — ' + new Date().toLocaleTimeString(), 'normal');

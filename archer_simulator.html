@@ -4,74 +4,82 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Simulator</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;min-height:100vh;padding:12px}
-h1{font-size:13px;letter-spacing:4px;color:#cc0000;text-align:center;margin-bottom:4px}
-.subtitle{font-size:9px;letter-spacing:2px;color:#333;text-align:center;margin-bottom:16px}
+body{background:#0a0a0a;color:#cc4400;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:12px}
+
+/* Header */
+.hdr{text-align:center;margin-bottom:14px;padding:12px 14px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;border-bottom:2px solid #cc0000}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:6px;color:#cc0000}
+.hdr-sub{font-size:9px;letter-spacing:2px;color:#444;margin-top:2px}
 
 /* Status bar */
-#status-bar{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:7px 12px;margin-bottom:14px;font-size:10px;letter-spacing:1px}
+#status-bar{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:10px;letter-spacing:1px}
 #obd-dot{width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0;transition:background 0.4s}
 #obd-dot.live{background:#00ff44;box-shadow:0 0 6px #00ff44}
 #obd-dot.sim{background:#ff6600;box-shadow:0 0 6px #ff6600}
-#status-text{flex:1;color:#666}
-#status-text span{color:#cc0000}
+#status-text{flex:1;color:#555}
+#status-text span{color:#cc4400}
+
+/* Section labels */
+.section-label{font-size:9px;letter-spacing:3px;color:#884400;margin-bottom:8px;text-transform:uppercase;border-left:2px solid #cc0000;padding-left:7px}
 
 /* Scenario buttons */
-.section-label{font-size:9px;letter-spacing:3px;color:#333;margin-bottom:8px;text-transform:uppercase}
-#scenarios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px}
-.scn-btn{background:#0d0d0d;border:1px solid #1a1a1a;color:#555;font-family:'Courier New',monospace;font-size:9px;letter-spacing:2px;padding:8px 4px;border-radius:3px;cursor:pointer;text-align:center;transition:all 0.15s;text-transform:uppercase}
-.scn-btn:hover{border-color:#cc0000;color:#cc0000;background:#100000}
-.scn-btn.active{border-color:#cc0000;color:#ff3333;background:#1a0000}
+#scenarios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px}
+.scn-btn{background:#0d0d0d;border:1px solid #1a1a1a;color:#555;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:2px;padding:8px 4px;border-radius:5px;cursor:pointer;text-align:center;transition:all 0.15s;text-transform:uppercase}
+.scn-btn:hover{border-color:#aa3300;color:#cc4400;background:#100800}
+.scn-btn.active{border-color:#cc0000;color:#ff6600;background:#1a0500;box-shadow:0 0 8px rgba(204,0,0,0.15)}
 
 /* Sliders */
-#sliders{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.slider-card{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:10px 12px}
+#sliders{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.slider-card{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px}
 .slider-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
-.slider-name{font-size:9px;letter-spacing:2px;color:#666;text-transform:uppercase}
-.slider-val{font-size:14px;color:#ff3333;font-weight:bold;min-width:60px;text-align:right}
+.slider-name{font-size:9px;letter-spacing:2px;color:#555;text-transform:uppercase}
+.slider-val{font-family:'Bebas Neue',sans-serif;font-size:18px;color:#cc4400;min-width:50px;text-align:right;line-height:1}
 input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#1a1a1a;outline:none;cursor:pointer}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#cc0000;cursor:pointer;border:2px solid #ff3333}
-input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #ff3333;cursor:pointer}
-.slider-range{display:flex;justify-content:space-between;font-size:8px;color:#333;margin-top:3px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#cc0000;cursor:pointer;border:2px solid #ff4400}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #ff4400;cursor:pointer}
+.slider-range{display:flex;justify-content:space-between;font-size:8px;color:#2a2a2a;margin-top:3px}
 
 /* Live readout */
-#readout{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:10px 12px;margin-bottom:14px}
-.readout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px}
+#readout{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;margin-bottom:10px}
+.readout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px}
 .readout-item{text-align:center}
-.readout-lbl{font-size:8px;letter-spacing:1px;color:#333;text-transform:uppercase;display:block;margin-bottom:2px}
-.readout-num{font-size:13px;color:#ff6666;font-weight:bold}
-.readout-num.warn{color:#ff4400}
+.readout-lbl{font-size:8px;letter-spacing:1px;color:#444;text-transform:uppercase;display:block;margin-bottom:2px}
+.readout-num{font-family:'Bebas Neue',sans-serif;font-size:20px;color:#cc4400}
+.readout-num.warn{color:#ff4400;text-shadow:0 0 6px rgba(255,68,0,0.4)}
 
 /* Random toggle */
-#rand-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;margin-bottom:14px}
-.rand-label{font-size:9px;letter-spacing:2px;color:#666;flex:1}
+#rand-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;margin-bottom:10px}
+.rand-label{font-size:9px;letter-spacing:2px;color:#555;flex:1}
 .toggle{position:relative;width:36px;height:20px;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0}
 .toggle-track{position:absolute;inset:0;border-radius:10px;background:#1a1a1a;border:1px solid #2a2a2a;cursor:pointer;transition:background 0.2s}
-.toggle input:checked+.toggle-track{background:#330000;border-color:#cc0000}
+.toggle input:checked+.toggle-track{background:#2a0800;border-color:#cc0000}
 .toggle-thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#444;transition:transform 0.2s,background 0.2s;pointer-events:none}
 .toggle input:checked~.toggle-thumb{transform:translateX(16px);background:#cc0000}
 
 /* BeamNG status card */
-#beamng-card{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:7px 12px;margin-bottom:14px;font-size:10px;letter-spacing:1px}
+#beamng-card{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:10px;letter-spacing:1px}
 #beamng-dot{width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0;transition:background 0.4s}
 #beamng-dot.live{background:#00aaff;box-shadow:0 0 6px #00aaff}
-#beamng-label{flex:1;color:#666}
+#beamng-label{flex:1;color:#555}
 #beamng-label span{color:#0088cc}
 #beamng-car{font-size:9px;color:#333;letter-spacing:1px}
 
 /* Log */
-#log{background:#050505;border:1px solid #111;border-radius:4px;padding:8px 10px;height:80px;overflow-y:auto;font-size:10px;color:#444;line-height:1.6}
+#log{background:#050505;border:1px solid #111;border-radius:6px;padding:8px 10px;height:80px;overflow-y:auto;font-size:10px;color:#444;line-height:1.6}
 #log .entry{color:#555}
-#log .entry.ok{color:#cc6600}
-#log .entry.live{color:#00aa33}
+#log .entry.ok{color:#884400}
+#log .entry.live{color:#006622}
 </style>
 </head>
 <body>
 
-<h1>ARCHER SIMULATOR</h1>
-<p class="subtitle">2006 GMC SIERRA 2500HD — OBD CONTROL PANEL</p>
+<div class="hdr">
+  <div class="hdr-title">ARCHER SIMULATOR</div>
+  <div class="hdr-sub">2006 GMC SIERRA 2500HD — OBD CONTROL PANEL</div>
+</div>
 
 <!-- BeamNG status -->
 <div id="beamng-card">

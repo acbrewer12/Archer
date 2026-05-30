@@ -7909,97 +7909,73 @@ def registration_page(mac=None):
     return f"""<!DOCTYPE html>
 <html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Archer — Register Device</title>
+<title>Archer — Sign In</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}}
-.wrap{{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:16px}}
-.title{{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:6px;color:#cc0000}}
-.sub{{font-size:11px;color:#444;letter-spacing:2px;text-align:center}}
-.mac{{font-size:10px;color:#333;letter-spacing:1px;background:#0a0a0a;border:1px solid #1a1a1a;padding:6px 12px;border-radius:4px}}
-.card{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:10px;padding:20px;width:100%;display:flex;flex-direction:column;gap:12px}}
-.card-title{{font-size:10px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
-.tier-btn{{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all 0.2s;text-align:left;width:100%}}
-.tier-btn:hover{{border-color:#cc0000}}
-.tier-name{{font-size:14px;color:#fff;letter-spacing:1px}}
-.tier-sub{{font-size:10px;color:#444;margin-top:2px}}
-.tier-arrow{{color:#333;font-size:18px}}
-.code-section{{display:none;flex-direction:column;gap:10px}}
-.code-section.on{{display:flex}}
-.code-label{{font-size:10px;color:#555;letter-spacing:2px}}
-.code-input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:12px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:14px;letter-spacing:3px;outline:none;width:100%;text-align:center}}
+html,body{{height:100%;overflow:hidden}}
+body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}}
+.wrap{{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;gap:20px}}
+.logo{{font-family:'Bebas Neue',sans-serif;font-size:56px;letter-spacing:8px;color:#cc0000;line-height:1}}
+.sub{{font-size:10px;color:#333;letter-spacing:3px;text-align:center}}
+.card{{background:#080808;border:1px solid #1a1a1a;border-radius:14px;padding:26px 22px;width:100%;display:flex;flex-direction:column;align-items:center;gap:14px}}
+.card-title{{font-size:11px;color:#555;letter-spacing:3px;text-align:center}}
+.card-hint{{font-size:10px;color:#2a2a2a;letter-spacing:0.5px;text-align:center;line-height:1.7}}
+.code-input{{background:#0d0d0d;border:1px solid #222;border-radius:10px;padding:18px 14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:10px;outline:none;width:100%;text-align:center;transition:border-color 0.2s,opacity 0.2s}}
 .code-input:focus{{border-color:#cc0000}}
-.submit-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%;transition:all 0.15s}}
+.code-input::placeholder{{color:#1a1a1a;letter-spacing:6px;font-size:22px}}
+.submit-btn{{background:#cc0000;border:none;border-radius:8px;padding:14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;cursor:pointer;width:100%;transition:background 0.15s}}
+.submit-btn:hover{{background:#dd0000}}
 .submit-btn:active{{background:#aa0000}}
-.error{{color:#cc0000;font-size:11px;letter-spacing:1px;text-align:center;display:none}}
-.error.on{{display:block}}
-.fan-note{{font-size:10px;color:#333;letter-spacing:1px;text-align:center;margin-top:4px}}
-.fan-link{{color:#555;text-decoration:none;border-bottom:1px solid #333;padding-bottom:1px}}
+.error{{color:#cc0000;font-size:10px;letter-spacing:1px;text-align:center;height:14px;opacity:0;transition:opacity 0.25s}}
+.error.on{{opacity:1}}
+.fan-note{{font-size:10px;color:#222;letter-spacing:1px;text-align:center}}
+.fan-link{{color:#444;text-decoration:none;border-bottom:1px solid #2a2a2a;padding-bottom:1px;transition:color 0.2s}}
+.fan-link:hover{{color:#888}}
 </style>
 </head><body>
 <div class="wrap">
-  <div class="title">ARCHER</div>
+  <div class="logo">ARCHER</div>
   <div class="sub">2006 GMC SIERRA 2500HD</div>
-  <div class="mac">DEVICE: {mac_display}</div>
 
   <div class="card">
-    <div class="card-title">SELECT YOUR ACCESS LEVEL</div>
-
-    <button class="tier-btn" onclick="selectTier(2)">
-      <div><div class="tier-name">PASSENGER</div><div class="tier-sub">Music, climate, comfort controls</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <button class="tier-btn" onclick="selectTier(3)">
-      <div><div class="tier-name">FAMILY</div><div class="tier-sub">Read-only status view</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <button class="tier-btn" onclick="selectTier(4)">
-      <div><div class="tier-name">VALET</div><div class="tier-sub">Limited access, monitored</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <div class="code-section" id="code-section">
-      <div class="code-label">ENTER ACCESS CODE</div>
-      <input class="code-input" id="code-input" type="password" placeholder="••••••••" maxlength="20">
-      <div class="error" id="error-msg">Incorrect code. Try again.</div>
-      <button class="submit-btn" onclick="submitCode()">REGISTER DEVICE</button>
-    </div>
+    <div class="card-title">ENTER ACCESS CODE</div>
+    <div class="card-hint">Ayden will give you a 6-digit code.</div>
+    <input class="code-input" id="code-input" type="password" inputmode="numeric"
+           placeholder="······" maxlength="6" autofocus autocomplete="one-time-code">
+    <div class="error" id="error-msg">Incorrect code — try again</div>
+    <button class="submit-btn" onclick="submitCode()">SIGN IN</button>
   </div>
 
   <div class="fan-note">Just here for the show? <a href="/fans" class="fan-link">Fan page →</a></div>
 </div>
 
 <script>
-let _selectedTier = 0;
-function selectTier(tier) {{
-  _selectedTier = tier;
-  document.getElementById('code-section').classList.add('on');
-  document.getElementById('code-input').focus();
-}}
 async function submitCode() {{
-  const code = document.getElementById('code-input').value.trim();
+  const inp  = document.getElementById('code-input');
+  const code = inp.value.trim();
   if (code.length !== 6) return;
+  inp.style.opacity = '0.4';
   const r = await fetch('/register_mac', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{code: code, mac: '{mac_display}'}})
+    body: JSON.stringify({{code, mac: '{mac_display}'}})
   }});
   const d = await r.json();
+  inp.style.opacity = '1';
   if (d.success) {{
     window.location.href = d.redirect;
   }} else {{
-    document.getElementById('error-msg').classList.add('on');
-    document.getElementById('code-input').value = '';
-    document.getElementById('code-input').focus();
+    const err = document.getElementById('error-msg');
+    err.classList.add('on');
+    inp.value = '';
+    inp.focus();
+    setTimeout(() => err.classList.remove('on'), 3000);
   }}
 }}
-document.getElementById('code-input')?.addEventListener('keydown', e => {{ if (e.key === 'Enter') submitCode(); }});
-document.getElementById('code-input')?.addEventListener('input', e => {{
-  if (e.target.value.length === 6) submitCode();
-}});
+const inp = document.getElementById('code-input');
+inp?.addEventListener('keydown', e => {{ if (e.key === 'Enter') submitCode(); }});
+inp?.addEventListener('input',   e => {{ if (e.target.value.length === 6) submitCode(); }});
 </script>
 </body></html>"""
 
@@ -9442,6 +9418,14 @@ def mirror_page():
         with open('archer_mirror.html', 'r', encoding='utf-8') as f:
             return FR(f.read(), mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MIRROR — archer_mirror.html not found</body></html>', mimetype='text/html')
+
+@display_app.route('/hud')
+def hud_page():
+    from flask import Response as FR
+    if os.path.exists('archer_hud.html'):
+        with open('archer_hud.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">HUD — archer_hud.html not found</body></html>', mimetype='text/html')
 
 @display_app.route('/simulator')
 def simulator_page():

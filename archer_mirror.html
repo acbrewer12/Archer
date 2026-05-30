@@ -118,7 +118,7 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
       <div class="bstat-lbl">BATTERY</div>
     </div>
     <div class="bstat" id="bs-eth">
-      <div class="bstat-val" id="b-eth">82%</div>
+      <div class="bstat-val" id="b-eth">---</div>
       <div class="bstat-lbl">E85</div>
     </div>
     <div class="bstat" id="bs-mood">
@@ -149,7 +149,7 @@ function applyData(d) {
   const boost = d.boost ?? 0;
   const oil   = d.oil_temp ?? 195;
   const bat   = d.battery  ?? 13.8;
-  const eth   = d.ethanol  ?? 82;
+  const eth   = d.ethanol  ?? null;
   const mood  = (d.mood || 'ready').toUpperCase();
   const msg   = d.archer_msg || '';
   const warn  = d.warning ?? false;
@@ -180,7 +180,13 @@ function applyData(d) {
   color('b-bat', bat < 12.0 ? '#ff3300' : bat < 12.8 ? '#ffaa00' : '#00cc44');
 
   // Ethanol
-  set('b-eth', Math.round(eth) + '%');
+  if (eth !== null && eth > 0) {
+    set('b-eth', Math.round(eth) + '%');
+    color('b-eth', '#4488ff');
+  } else {
+    set('b-eth', '---');
+    color('b-eth', '#444');
+  }
 
   // Mood
   set('b-mood', mood.substring(0, 6));
