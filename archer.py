@@ -843,7 +843,9 @@ def get_weather():
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-    # ── PRIMARY: Visual Crossing (exact temp match in testing, 1000 free calls/day) ──
+    # ── PRIMARY: Visual Crossing temp + NWS Observation condition ──
+    # VC API cloudcover is stale/cached and unreliable for condition labeling.
+    # NWS Observation is a real station sky reading — use it for condition only.
     if _vc_key:
         try:
             vc_url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
@@ -855,20 +857,27 @@ def get_weather():
             temp_f   = int(cur['temp'])
             wind_mph = round(float(cur.get('windspeed') or 0))
             precip   = float(cur.get('precip') or 0)
-            cloud    = int(cur.get('cloudcover') or 0)
-            desc     = (cur.get('conditions') or '').lower()
-            # Use cloudcover % to distinguish Partly/Mostly/Cloudy accurately
-            if any(w in desc for w in ('thunder', 'storm')):     condition = 'Thunderstorm'
-            elif any(w in desc for w in ('snow', 'blizzard')):   condition = 'Snow'
-            elif any(w in desc for w in ('freez', 'sleet', 'ice pellet')): condition = 'Freezing Rain'
-            elif any(w in desc for w in ('fog', 'mist')):        condition = 'Fog'
-            elif 'drizzle' in desc:                              condition = 'Drizzle'
-            elif any(w in desc for w in ('shower', 'rain')):     condition = 'Rain Showers' if 'shower' in desc else 'Rain'
-            elif cloud >= 90:                                    condition = 'Overcast'
-            elif cloud >= 75:                                    condition = 'Cloudy'
-            elif cloud >= 50:                                    condition = 'Mostly Cloudy'
-            elif cloud >= 25:                                    condition = 'Partly Cloudy'
-            else:                                                condition = 'Clear'
+
+            # Condition: NWS Observation station (real sky reading, accurate labels)
+            condition = None
+            if _nws_station_url:
+                try:
+                    obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+                    with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=5) as r:
+                        obs = json.loads(r.read())
+                    text_desc = (obs['properties'].get('textDescription') or '').strip()
+                    if text_desc:
+                        condition = _parse_condition(text_desc)
+                        w = (obs['properties'].get('windSpeed') or {}).get('value') or 0
+                        wind_mph = round(float(w) * 2.237) or wind_mph
+                except Exception:
+                    pass
+
+            # Fallback condition from VC description text if NWS unavailable
+            if condition is None:
+                desc = (cur.get('conditions') or '').lower()
+                condition = _parse_condition(desc) or 'Cloudy'
+
             return {
                 'temp': temp_f, 'condition': condition, 'desc': condition,
                 'wind': wind_mph, 'precip': precip,
@@ -9182,7 +9191,7 @@ def weather_compare_data():
         elif cloud >= 50:                                         cond = 'Mostly Cloudy'
         elif cloud >= 25:                                         cond = 'Partly Cloudy'
         else:                                                     cond = 'Clear'
-        return temp, f'{cond} ({cloud}%)'
+        return temp, cond
 
     sources = [
         ('WUnderground PWS (nearest)', lambda: _fetch_wunderground_pws()),
