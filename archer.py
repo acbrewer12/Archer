@@ -837,8 +837,8 @@ def get_weather():
         elif any(w in desc for w in ('rain','drizzle')):                        return 'Rain'
         elif 'overcast' in desc:                                                return 'Overcast'
         elif 'mostly cloudy' in desc:                                           return 'Mostly Cloudy'
+        elif 'partly cloudy' in desc or 'partly' in desc:                      return 'Partly Cloudy'
         elif 'cloudy' in desc:                                                  return 'Cloudy'
-        elif 'partly' in desc or 'mostly' in desc:                             return 'Partly Cloudy'
         elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
         elif 'fog' in desc or 'mist' in desc:                                  return 'Fog'
         else:                                                                   return (desc[:20] or 'Cloudy').title()
@@ -856,7 +856,7 @@ def get_weather():
             with urllib.request.urlopen(urllib.request.Request(vc_url, headers=hdr), timeout=8) as r:
                 d = json.loads(r.read())
             cur      = d['currentConditions']
-            temp_f   = int(cur['temp'])
+            temp_f   = round(float(cur['temp']))
             wind_mph = round(float(cur.get('windspeed') or 0))
             precip   = float(cur.get('precip') or 0)
 
