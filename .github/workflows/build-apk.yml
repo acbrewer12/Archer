@@ -49,7 +49,7 @@ jobs:
         run: |
           URL="${{ github.event.inputs.archer_url }}"
           if [ -z "$URL" ]; then
-            URL="https://acbrewer12-archer.hf.space"
+            URL="https://aydencatman-archer.hf.space"
           fi
           echo "Building APK for: $URL"
           find android-apk -name "*.java" \
