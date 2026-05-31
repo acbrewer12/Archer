@@ -2840,11 +2840,6 @@ function closeBrowser() {
   document.getElementById('browser-overlay').style.display = 'none';
 }
 
-// Auto-trigger voice when launched from Android assistant (long-press home)
-if (new URLSearchParams(window.location.search).get('assist') === '1') {
-  setTimeout(() => { toggleVoice(); }, 800);
-}
-
 </script>
 </body>
 </html>

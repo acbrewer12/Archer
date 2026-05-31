@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Black fullscreen — exists in every Android framework version -->
+    <!-- Full-screen WebView (normal app launch) -->
     <style name="Theme.Archer" parent="android:Theme.Black.NoTitleBar.Fullscreen">
         <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+    <!-- Voice overlay — dark translucent, no title bar -->
+    <style name="Theme.Archer.Voice" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.85</item>
+        <item name="android:windowIsTranslucent">true</item>
     </style>
 </resources>

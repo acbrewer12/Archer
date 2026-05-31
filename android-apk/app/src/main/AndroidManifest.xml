@@ -13,40 +13,44 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.Archer"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true">
 
+        <!-- ── Normal app launch → full WebView ── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
-            android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize">
-
-            <!-- Normal launcher icon -->
+            android:theme="@style/Theme.Archer"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
 
-            <!--
-                REPLACE GOOGLE ASSISTANT / GEMINI:
-                After install → Settings → Apps → Default Apps → Digital Assistant → Archer
-                Long-press circle/home button will open this instead of Google Assistant.
-            -->
+        <!--
+            ── Voice Assistant (replaces Google Assistant / Gemini) ──
+            After install: Settings → Apps → Default Apps
+                           → Digital assistant app → Archer
+            Long-press circle/home → VoiceActivity opens, mic starts automatically.
+        -->
+        <activity
+            android:name=".VoiceActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Archer.Voice"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-
-            <!-- Voice command intent -->
             <intent-filter>
                 <action android:name="android.intent.action.VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-
         </activity>
+
     </application>
 
 </manifest>
