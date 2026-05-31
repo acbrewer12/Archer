@@ -7775,7 +7775,7 @@ one_time_codes = {}
 # Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
 # devices are registered so he can always get back in.
 import random as _rand_master
-_master_code = str(_rand_master.randint(100000, 999999))
+_master_code = os.environ.get('ARCHER_MASTER_CODE', '250022')
 _master_code_enabled = True   # toggled from Tier 1 dashboard
 
 def _check_master_auto_enable():
