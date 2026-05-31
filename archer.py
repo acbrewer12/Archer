@@ -877,8 +877,9 @@ def get_weather():
                     nws_cond = _parse_condition(text_desc) if text_desc else None
                     w = (props.get('windSpeed') or {}).get('value') or 0
                     wind_mph = round(float(w) * 2.237) or wind_mph
-                    # NWS obs is a real station reading — use it for all conditions when available
-                    if nws_cond:
+                    # NWS obs only overrides when station detects active precip —
+                    # VC forecast model is more accurate for clear/cloudy/partly cloudy
+                    if nws_cond and nws_cond in _PRECIP:
                         condition = nws_cond
                 except Exception:
                     pass
