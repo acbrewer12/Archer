@@ -936,18 +936,28 @@ def get_weather():
         obs_condition, obs_wind_mph = None, 0
         fc_temp_f, fc_condition, fc_wind_mph = None, None, 0
 
-        # Observation → condition + wind
+        # Observation → condition + wind (only use if fresh)
         if _nws_station_url:
             try:
                 obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
                 with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
                     obs = json.loads(r.read())
                 props = obs.get('properties', {})
-                raw_w = (props.get('windSpeed') or {}).get('value') or 0
-                obs_wind_mph = round(float(raw_w) * 2.237)
-                text_desc = (props.get('textDescription') or '').strip()
-                if text_desc:
-                    obs_condition = _parse_condition(text_desc)
+                import datetime as _dt2
+                obs_ts = props.get('timestamp', '')
+                obs_age_min = 999
+                if obs_ts:
+                    try:
+                        obs_dt = _dt2.datetime.fromisoformat(obs_ts.replace('Z', '+00:00'))
+                        obs_age_min = ((_dt2.datetime.now(_dt2.timezone.utc) - obs_dt).total_seconds()) / 60
+                    except Exception:
+                        pass
+                if obs_age_min <= 90:
+                    raw_w = (props.get('windSpeed') or {}).get('value') or 0
+                    obs_wind_mph = round(float(raw_w) * 2.237)
+                    text_desc = (props.get('textDescription') or '').strip()
+                    if text_desc:
+                        obs_condition = _parse_condition(text_desc)
             except Exception:
                 pass
 
@@ -974,9 +984,12 @@ def get_weather():
             except Exception:
                 pass
 
-        # Hybrid: use hourly temp (grid-adjusted for exact coords), obs condition (real station)
+        # Hybrid: forecast temp + condition; obs only overrides for active precip
+        _PRECIP2 = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
         temp_f    = fc_temp_f
-        condition = obs_condition or fc_condition
+        condition = fc_condition
+        if obs_condition and obs_condition in _PRECIP2:
+            condition = obs_condition
         wind_mph  = obs_wind_mph or fc_wind_mph
 
         if temp_f is not None and condition is not None:
