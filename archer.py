@@ -7771,6 +7771,24 @@ DEFAULT_WHITELIST = {
 # Format: 'CODE123': {'tier': 2, 'name': 'Jake', 'used': False, 'expires': timestamp}
 one_time_codes = {}
 
+# ── MASTER SIGN-IN CODE ───────────────────────────────────────────────────────
+# Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
+# devices are registered so he can always get back in.
+import random as _rand_master
+_master_code = str(_rand_master.randint(100000, 999999))
+_master_code_enabled = True   # toggled from Tier 1 dashboard
+
+def _check_master_auto_enable():
+    """Keep master code enabled if no Tier 1 devices are registered."""
+    global _master_code_enabled
+    try:
+        wl = load_mac_whitelist()
+        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
+        if not has_tier1:
+            _master_code_enabled = True
+    except Exception:
+        pass
+
 def generate_one_time_code(name, tier):
     """Generate a 6-digit one-time registration code."""
     import random as _random
@@ -7900,6 +7918,7 @@ def index():
             return get_tier_html(4, name=name)
 
     # 4. Unknown — show fan page (sign in from there)
+    _check_master_auto_enable()
     from flask import redirect as _redir
     return _redir('/fans')
 
@@ -7991,8 +8010,14 @@ def register_mac():
     if not code:
         return jsonify({'success': False, 'error': 'Missing code'})
 
-    # Validate one-time code
-    entry = validate_one_time_code(code)
+    # Check master Tier 1 code first
+    entry = None
+    if _master_code_enabled and _master_code and code == _master_code:
+        entry = {'name': 'Ayden', 'tier': 1}
+
+    # Fall back to one-time code
+    if not entry:
+        entry = validate_one_time_code(code)
     if not entry:
         return jsonify({'success': False, 'error': 'Invalid or expired code'})
 
@@ -8191,6 +8216,51 @@ def revoke_code():
     if code in one_time_codes:
         del one_time_codes[code]
     return jsonify({'success': True})
+
+
+# ── MASTER SIGN-IN CODE API ──────────────────────────────
+@display_app.route('/sign_in_code/status')
+def sign_in_code_status():
+    """Return master code status — Tier 1 only."""
+    _check_master_auto_enable()
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    try:
+        wl = load_mac_whitelist()
+        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
+    except Exception:
+        has_tier1 = False
+    return jsonify({
+        'success': True,
+        'enabled': _master_code_enabled,
+        'code': _master_code if _master_code_enabled else None,
+        'auto_on': not has_tier1,
+    })
+
+@display_app.route('/sign_in_code/toggle', methods=['POST'])
+def sign_in_code_toggle():
+    """Toggle master sign-in code on or off — Tier 1 only."""
+    global _master_code_enabled
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    _master_code_enabled = not _master_code_enabled
+    return jsonify({'success': True, 'enabled': _master_code_enabled})
+
+@display_app.route('/sign_in_code/refresh', methods=['POST'])
+def sign_in_code_refresh():
+    """Generate a new master sign-in code — Tier 1 only."""
+    global _master_code
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    import random as _r
+    _master_code = str(_r.randint(100000, 999999))
+    return jsonify({'success': True, 'code': _master_code})
 
 
 # ── TIER NOTIFICATION SYSTEM ────────────────────────────

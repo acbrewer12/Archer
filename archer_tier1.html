@@ -689,6 +689,7 @@ body.day{background:#0d0d0d}
     <div class="tab" onclick="setTab('map')">MAP</div>
     <div class="tab" onclick="setTab('cams')">CAMS</div>
     <div class="tab" onclick="setTab('music')">MUSIC</div>
+    <div class="tab" onclick="setTab('sys')">SYS</div>
   </div>
 
   <div class="screens">
@@ -1246,6 +1247,41 @@ body.day{background:#0d0d0d}
       </div>
     </div>
 
+    <!-- ══════════ SYS — System Settings ══════════ -->
+    <div class="screen" id="screen-sys" style="gap:10px;padding:10px 6px">
+
+      <!-- SIGN-IN CODE CARD -->
+      <div class="box" style="position:relative">
+        <div class="section-title">SIGN-IN CODE</div>
+        <div style="text-align:center;padding:10px 0 6px">
+          <div id="sys-code-display" style="font-size:40px;letter-spacing:10px;font-family:'Share Tech Mono',monospace;color:#ff0000;text-shadow:0 0 20px rgba(255,0,0,0.5)">––––––</div>
+          <div id="sys-code-status" style="font-size:9px;color:#555;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:4px">LOADING...</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px">
+          <div style="font-size:10px;color:#aaa;letter-spacing:1px;font-family:'Share Tech Mono',monospace">CODE ACTIVE</div>
+          <div id="sys-toggle-btn" onclick="sysToggleCode()" style="width:48px;height:26px;border-radius:13px;background:#1a0000;border:1px solid #440000;cursor:pointer;position:relative;transition:background 0.2s">
+            <div id="sys-toggle-knob" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#333;transition:left 0.2s,background 0.2s"></div>
+          </div>
+        </div>
+        <button onclick="sysRefreshCode()" style="width:100%;margin-top:10px;background:#0a0000;border:1px solid #440000;border-radius:5px;color:#cc0000;font-size:10px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;padding:8px;cursor:pointer">REFRESH CODE</button>
+        <div id="sys-auto-notice" style="display:none;font-size:9px;color:#cc8800;letter-spacing:1px;font-family:'Share Tech Mono',monospace;text-align:center;margin-top:8px;padding:5px;background:#1a1000;border:1px solid #2a1800;border-radius:4px">AUTO-ON: NO TIER 1 REGISTERED</div>
+      </div>
+
+      <!-- INVITE CODES CARD -->
+      <div class="box">
+        <div class="section-title">INVITE CODE</div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <select id="sys-inv-tier" style="flex:1;background:#0d0d0d;border:1px solid #2a2a2a;color:#aaa;border-radius:4px;padding:6px;font-family:'Share Tech Mono',monospace;font-size:10px">
+            <option value="2">Tier 2</option>
+            <option value="3">Tier 3</option>
+          </select>
+          <button onclick="sysGenInvite()" style="background:#0a0000;border:1px solid #440000;border-radius:4px;color:#cc0000;font-size:10px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;padding:6px 12px;cursor:pointer">GENERATE</button>
+        </div>
+        <div id="sys-invite-out" style="margin-top:8px;font-size:12px;color:#ff0000;font-family:'Share Tech Mono',monospace;letter-spacing:3px;text-align:center;display:none"></div>
+      </div>
+
+    </div>
+
   </div>
   <!-- VOICE RESPONSE -->
   <div class="voice-response" id="voice-response">
@@ -1293,7 +1329,7 @@ body.day{background:#0d0d0d}
 // ARCHER v4 — FULL FEATURE JS
 // ═══════════════════════════════════════
 
-const TAB_NAMES = ['drive','dash','perf','live','health','launch','track','race','graphs','build','show','map','cams','music'];
+const TAB_NAMES = ['drive','dash','perf','live','health','launch','track','race','graphs','build','show','map','cams','music','sys'];
 const PARKED_ONLY = ['live','graphs','build','cams'];
 const LOCKED_MOVING = ['perf','health','launch','track','race','show','map'];
 let currentTab = 'drive';
@@ -2839,6 +2875,92 @@ function openBrowser() {
 function closeBrowser() {
   document.getElementById('browser-overlay').style.display = 'none';
 }
+
+// ── SYS TAB — SIGN-IN CODE ──────────────────────────────
+async function sysLoadCode() {
+  try {
+    const r = await fetch(T1BASE + '/sign_in_code/status');
+    const d = await r.json();
+    if (!d.success) return;
+    const disp = document.getElementById('sys-code-display');
+    const status = document.getElementById('sys-code-status');
+    const notice = document.getElementById('sys-auto-notice');
+    const toggle = document.getElementById('sys-toggle-btn');
+    const knob = document.getElementById('sys-toggle-knob');
+    if (d.enabled) {
+      disp.textContent = d.code || '------';
+      disp.style.color = '#ff0000';
+      disp.style.textShadow = '0 0 20px rgba(255,0,0,0.5)';
+      status.textContent = 'CODE ACTIVE — SHARE TO GRANT ACCESS';
+      status.style.color = '#cc4400';
+      toggle.style.background = '#1a0000';
+      toggle.style.borderColor = '#880000';
+      knob.style.left = '24px';
+      knob.style.background = '#ff0000';
+    } else {
+      disp.textContent = '——————';
+      disp.style.color = '#333';
+      disp.style.textShadow = 'none';
+      status.textContent = 'CODE DISABLED';
+      status.style.color = '#444';
+      toggle.style.background = '#111';
+      toggle.style.borderColor = '#2a2a2a';
+      knob.style.left = '3px';
+      knob.style.background = '#333';
+    }
+    if (d.auto_on) {
+      notice.style.display = 'block';
+    } else {
+      notice.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+async function sysToggleCode() {
+  try {
+    await fetch(T1BASE + '/sign_in_code/toggle', {method:'POST'});
+    await sysLoadCode();
+  } catch(e) {}
+}
+
+async function sysRefreshCode() {
+  try {
+    const r = await fetch(T1BASE + '/sign_in_code/refresh', {method:'POST'});
+    const d = await r.json();
+    if (d.success) {
+      const disp = document.getElementById('sys-code-display');
+      disp.textContent = d.code;
+      disp.style.animation = 'none';
+      void disp.offsetWidth;
+      disp.style.animation = '';
+    }
+    await sysLoadCode();
+  } catch(e) {}
+}
+
+async function sysGenInvite() {
+  const tierEl = document.getElementById('sys-inv-tier');
+  const out = document.getElementById('sys-invite-out');
+  try {
+    const r = await fetch(T1BASE + '/generate_code', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name:'Guest', tier: parseInt(tierEl.value)})
+    });
+    const d = await r.json();
+    if (d.success) {
+      out.textContent = d.code;
+      out.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+// Load code when SYS tab opens
+const _origSetTab = setTab;
+setTab = function(name) {
+  _origSetTab(name);
+  if (name === 'sys') sysLoadCode();
+};
 
 </script>
 </body>
