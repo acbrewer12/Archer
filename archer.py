@@ -117,6 +117,36 @@ last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
 
+# ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
+_archer_log_buffer = collections.deque(maxlen=500)
+_archer_log_lock   = threading.Lock()
+
+def _archer_log(level, msg, context=None):
+    """Append a structured log entry to the archer log buffer."""
+    entry = {
+        'ts':      datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'level':   level.upper(),
+        'msg':     msg,
+        'context': context or {},
+    }
+    with _archer_log_lock:
+        _archer_log_buffer.append(entry)
+    # Also emit via Python logging
+    _py_logger = _logging.getLogger('archer')
+    getattr(_py_logger, level.lower(), _py_logger.info)(msg)
+
+def log_info(msg, **ctx):  _archer_log('INFO',  msg, ctx)
+def log_warn(msg, **ctx):  _archer_log('WARN',  msg, ctx)
+def log_error(msg, **ctx): _archer_log('ERROR', msg, ctx)
+
+# Configure Python logging handler
+_logging.basicConfig(
+    level=_logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s — %(message)s',
+    datefmt='%H:%M:%S',
+)
+_logging.getLogger('archer').setLevel(_logging.DEBUG)
+
 obd2_display = {
     'connected': False,
     'mode':      'default',
@@ -778,7 +808,8 @@ music_state = {
 # ── WEATHER ──────────────────────────────
 weather = {
     'temp': 70, 'condition': 'clear', 'raining': False,
-    'freezing': False, 'snowing': False, 'wind': 5, 'last_update': 0,
+    'freezing': False, 'snowing': False, 'wind': 5,
+    'feels_like': 70, 'humidity': 50, 'last_update': 0,
 }
 _nws_station_url  = None  # cached after first lookup
 _nws_forecast_url = None  # cached hourly forecast URL for exact coordinates
@@ -894,9 +925,18 @@ def get_weather():
                 except Exception:
                     pass
 
+            def _wind_chill(T, W):
+                """NWS wind chill formula. T in °F, W in mph. Valid below 50°F and W > 3mph."""
+                if T >= 50 or W <= 3:
+                    return T
+                wc = 35.74 + 0.6215 * T - 35.75 * (W ** 0.16) + 0.4275 * T * (W ** 0.16)
+                return round(wc)
+
+            feels_like = _wind_chill(temp_f, wind_mph)
             return {
                 'temp': temp_f, 'condition': condition, 'desc': condition,
                 'wind': wind_mph, 'precip': precip,
+                'feels_like': feels_like,
                 'raining':  condition in _PRECIP,
                 'freezing': temp_f < 32,
                 'snowing':  condition in ('Snow', 'Snow Showers'),
@@ -906,6 +946,13 @@ def get_weather():
 
     # ── SECONDARY: Weather Underground PWS (nearest personal weather station) ──
     # TWC ingests WUnderground PWS data — actual thermometers in nearby yards.
+    def _wind_chill_calc(T, W):
+        """NWS wind chill formula. T in °F, W in mph."""
+        if T >= 50 or W <= 3:
+            return T
+        wc = 35.74 + 0.6215 * T - 35.75 * (W ** 0.16) + 0.4275 * T * (W ** 0.16)
+        return round(wc)
+
     if _wu_key:
         try:
             wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
@@ -919,9 +966,11 @@ def get_weather():
             precip   = float(imp.get('precipRate') or 0)
             wx_phrase = (obs.get('wxPhrase') or '').strip()
             condition = _parse_condition(wx_phrase) if wx_phrase else 'Cloudy'
+            feels_like = _wind_chill_calc(temp_f, wind_mph)
             return {
                 'temp': temp_f, 'condition': condition, 'desc': condition,
                 'wind': wind_mph, 'precip': precip,
+                'feels_like': feels_like,
                 'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
                 'freezing': temp_f < 32,
                 'snowing':  condition == 'Snow',
@@ -942,9 +991,11 @@ def get_weather():
         condition = _parse_condition(desc_raw) if desc_raw else 'Cloudy'
         _PRECIP_W = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm',
                      'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+        feels_like = _wind_chill_calc(temp_f, wind_mph)
         return {
             'temp': temp_f, 'condition': condition, 'desc': condition,
             'wind': wind_mph, 'precip': precip,
+            'feels_like': feels_like,
             'raining':  condition in _PRECIP_W,
             'freezing': temp_f < 32,
             'snowing':  condition in ('Snow', 'Snow Showers'),
@@ -1398,6 +1449,16 @@ def get_display_data():
         'gps_lat':       location_data.get('lat'),
         'gps_lon':       location_data.get('lon'),
         'gps_name':      location_data.get('location_name', ''),
+        # Trip stats
+        'trip_distance':  round(trip_stats['distance_miles'], 2),
+        'trip_fuel_used': round(trip_stats['fuel_used_gal'], 3),
+        'trip_mpg':       round(trip_stats['avg_mpg'], 1) if trip_stats['avg_mpg'] else None,
+        'trip_mpg_inst':  round(trip_stats['instant_mpg'], 1) if trip_stats['instant_mpg'] else None,
+        # Weather extended
+        'weather_feels_like': weather.get('feels_like', weather['temp']),
+        'weather_wind':       weather.get('wind', 0),
+        # Drive score
+        'drive_score':    awareness.get('drive_quality', 100),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -2016,12 +2077,155 @@ def estimate_speed(rpm, gear=1):
 # ── DIAGNOSTICS / OBD2 CODES ─────────────
 fault_codes = []
 
-def add_fault(code, description):
+# Comprehensive DTC code database — covers powertrain, body, chassis, network
+DTC_DATABASE = {
+    # Fuel / Air Metering
+    'P0100': ('Mass Air Flow Sensor Circuit Malfunction', 'high'),
+    'P0101': ('MAF Sensor Range/Performance Problem', 'medium'),
+    'P0102': ('MAF Sensor Circuit Low Input', 'high'),
+    'P0103': ('MAF Sensor Circuit High Input', 'high'),
+    'P0104': ('MAF Sensor Circuit Intermittent', 'medium'),
+    'P0106': ('MAP Sensor Range/Performance Problem', 'medium'),
+    'P0107': ('MAP Sensor Circuit Low Input', 'high'),
+    'P0108': ('MAP Sensor Circuit High Input', 'high'),
+    'P0111': ('Intake Air Temp Sensor Range/Performance', 'low'),
+    'P0112': ('Intake Air Temp Sensor Circuit Low Input', 'medium'),
+    'P0113': ('Intake Air Temp Sensor Circuit High Input', 'medium'),
+    'P0116': ('Engine Coolant Temp Sensor Range/Performance', 'medium'),
+    'P0117': ('Engine Coolant Temp Sensor Circuit Low', 'high'),
+    'P0118': ('Engine Coolant Temp Sensor Circuit High', 'high'),
+    'P0120': ('Throttle Position Sensor A Circuit Malfunction', 'high'),
+    'P0121': ('TPS Circuit Range/Performance Problem', 'medium'),
+    'P0122': ('Throttle/Pedal Position Sensor A Low Input', 'high'),
+    'P0123': ('Throttle/Pedal Position Sensor A High Input', 'high'),
+    # Fuel System
+    'P0171': ('System Too Lean — Bank 1', 'high'),
+    'P0172': ('System Too Rich — Bank 1', 'high'),
+    'P0174': ('System Too Lean — Bank 2', 'high'),
+    'P0175': ('System Too Rich — Bank 2', 'high'),
+    'P0190': ('Fuel Rail Pressure Sensor Circuit Malfunction', 'high'),
+    'P0191': ('Fuel Rail Pressure Sensor Range/Performance', 'medium'),
+    'P0192': ('Fuel Rail Pressure Sensor Circuit Low', 'high'),
+    'P0193': ('Fuel Rail Pressure Sensor Circuit High', 'high'),
+    'P0200': ('Injector Circuit Malfunction', 'high'),
+    'P0201': ('Injector Circuit Malfunction — Cylinder 1', 'high'),
+    'P0202': ('Injector Circuit Malfunction — Cylinder 2', 'high'),
+    'P0203': ('Injector Circuit Malfunction — Cylinder 3', 'high'),
+    'P0204': ('Injector Circuit Malfunction — Cylinder 4', 'high'),
+    'P0205': ('Injector Circuit Malfunction — Cylinder 5', 'high'),
+    'P0206': ('Injector Circuit Malfunction — Cylinder 6', 'high'),
+    'P0207': ('Injector Circuit Malfunction — Cylinder 7', 'high'),
+    'P0208': ('Injector Circuit Malfunction — Cylinder 8', 'high'),
+    # Misfire
+    'P0300': ('Random/Multiple Cylinder Misfire Detected', 'high'),
+    'P0301': ('Cylinder 1 Misfire Detected', 'high'),
+    'P0302': ('Cylinder 2 Misfire Detected', 'high'),
+    'P0303': ('Cylinder 3 Misfire Detected', 'high'),
+    'P0304': ('Cylinder 4 Misfire Detected', 'high'),
+    'P0305': ('Cylinder 5 Misfire Detected', 'high'),
+    'P0306': ('Cylinder 6 Misfire Detected', 'high'),
+    'P0307': ('Cylinder 7 Misfire Detected', 'high'),
+    'P0308': ('Cylinder 8 Misfire Detected', 'high'),
+    # Catalytic Converter / O2 Sensors
+    'P0420': ('Catalyst System Efficiency Below Threshold — Bank 1', 'medium'),
+    'P0430': ('Catalyst System Efficiency Below Threshold — Bank 2', 'medium'),
+    'P0130': ('O2 Sensor Circuit Malfunction — Bank 1 Sensor 1', 'medium'),
+    'P0131': ('O2 Sensor Circuit Low Voltage — Bank 1 Sensor 1', 'medium'),
+    'P0132': ('O2 Sensor Circuit High Voltage — Bank 1 Sensor 1', 'medium'),
+    'P0133': ('O2 Sensor Circuit Slow Response — Bank 1 Sensor 1', 'medium'),
+    'P0134': ('O2 Sensor Circuit No Activity — Bank 1 Sensor 1', 'medium'),
+    'P0135': ('O2 Sensor Heater Circuit Malfunction — Bank 1 Sensor 1', 'medium'),
+    'P0150': ('O2 Sensor Circuit Malfunction — Bank 2 Sensor 1', 'medium'),
+    'P0155': ('O2 Sensor Heater Circuit Malfunction — Bank 2 Sensor 1', 'medium'),
+    # Ignition
+    'P0351': ('Ignition Coil A Primary/Secondary Circuit', 'high'),
+    'P0352': ('Ignition Coil B Primary/Secondary Circuit', 'high'),
+    'P0353': ('Ignition Coil C Primary/Secondary Circuit', 'high'),
+    'P0354': ('Ignition Coil D Primary/Secondary Circuit', 'high'),
+    'P0355': ('Ignition Coil E Primary/Secondary Circuit', 'high'),
+    'P0356': ('Ignition Coil F Primary/Secondary Circuit', 'high'),
+    'P0357': ('Ignition Coil G Primary/Secondary Circuit', 'high'),
+    'P0358': ('Ignition Coil H Primary/Secondary Circuit', 'high'),
+    # Emissions
+    'P0400': ('Exhaust Gas Recirculation Flow Malfunction', 'medium'),
+    'P0401': ('EGR Flow Insufficient Detected', 'medium'),
+    'P0402': ('EGR Excessive Flow Detected', 'medium'),
+    'P0440': ('Evaporative Emission Control System Malfunction', 'low'),
+    'P0441': ('EVAP Emission Control System Incorrect Purge Flow', 'low'),
+    'P0442': ('EVAP Emission Control System Leak Detected (Small)', 'low'),
+    'P0443': ('EVAP Emission Control System Purge Valve Malfunction', 'low'),
+    'P0446': ('EVAP Emission Control System Vent Control Malfunction', 'low'),
+    'P0455': ('EVAP Emission Control System Leak Detected (Large)', 'medium'),
+    'P0456': ('EVAP Emission Control System Leak Detected (Very Small)', 'low'),
+    # Transmission
+    'P0700': ('Transmission Control System Malfunction', 'high'),
+    'P0706': ('Transmission Range Sensor Circuit Range/Performance', 'medium'),
+    'P0711': ('Transmission Fluid Temp Sensor Range/Performance', 'medium'),
+    'P0712': ('Transmission Fluid Temp Sensor Circuit Low Input', 'medium'),
+    'P0713': ('Transmission Fluid Temp Sensor Circuit High Input', 'medium'),
+    'P0715': ('Input/Turbine Speed Sensor Circuit Malfunction', 'high'),
+    'P0720': ('Output Speed Sensor Circuit Malfunction', 'high'),
+    'P0730': ('Incorrect Gear Ratio', 'high'),
+    'P0731': ('Gear 1 Incorrect Ratio', 'high'),
+    'P0732': ('Gear 2 Incorrect Ratio', 'high'),
+    'P0740': ('Torque Converter Clutch Circuit Malfunction', 'high'),
+    'P0741': ('Torque Converter Clutch Circuit Performance', 'medium'),
+    'P0748': ('Pressure Control Solenoid A Electrical', 'high'),
+    'P0753': ('Shift Solenoid A Electrical', 'high'),
+    'P0758': ('Shift Solenoid B Electrical', 'high'),
+    # GM Specific (U-Codes / Network)
+    'U0073': ('Control Module Communication Bus Off', 'high'),
+    'U0100': ('Lost Communication With ECM/PCM', 'high'),
+    'U0101': ('Lost Communication With TCM', 'high'),
+    'U0121': ('Lost Communication With Anti-Lock Brake System', 'high'),
+    'U0140': ('Lost Communication With Body Control Module', 'medium'),
+    # Charging / Battery
+    'P0562': ('System Voltage Low', 'high'),
+    'P0563': ('System Voltage High', 'high'),
+    'P0620': ('Generator Control Circuit Malfunction', 'high'),
+    # Knock / VVT
+    'P0325': ('Knock Sensor 1 Circuit Malfunction — Bank 1', 'high'),
+    'P0326': ('Knock Sensor 1 Circuit Range/Performance', 'medium'),
+    'P0327': ('Knock Sensor 1 Circuit Low Input — Bank 1', 'high'),
+    'P0328': ('Knock Sensor 1 Circuit High Input — Bank 1', 'high'),
+    'P0330': ('Knock Sensor 2 Circuit Malfunction — Bank 2', 'high'),
+    # AFM / Cylinder Deactivation (GM specific)
+    'P3400': ('Cylinder Deactivation System Bank 1', 'medium'),
+    'P3401': ('Cylinder 1 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3404': ('Cylinder 4 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3411': ('Cylinder 5 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3441': ('Cylinder 7 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    # DEF / Exhaust Aftertreatment (Diesel / Duramax)
+    'P20EE': ('SCR NOx Catalyst Efficiency Below Threshold — Bank 1', 'high'),
+    'P203F': ('Reductant Level Sensor Performance', 'medium'),
+    'P204B': ('Reductant Pump Control Circuit Range/Performance', 'high'),
+    'P2201': ('NOx Sensor Circuit Range/Performance — Bank 1', 'medium'),
+}
+
+def lookup_dtc(code):
+    """Look up a DTC code — returns (description, severity) or None."""
+    code = code.upper().strip()
+    if code in DTC_DATABASE:
+        return DTC_DATABASE[code]
+    # Fuzzy: strip leading zeros in number part
+    return None
+
+def add_fault(code, description=None, severity='medium', status='active'):
+    """Add a fault code. If no description given, auto-look up from DTC_DATABASE."""
+    code = code.upper().strip()
+    if description is None:
+        lookup = DTC_DATABASE.get(code)
+        if lookup:
+            description, severity = lookup[0], lookup[1]
+        else:
+            description = f'Unknown fault — code {code}'
     fault_codes.append({
-        'code':  code,
-        'desc':  description,
-        'time':  datetime.now().strftime('%I:%M %p'),
-        'date':  datetime.now().strftime('%B %d %Y'),
+        'code':     code,
+        'desc':     description,
+        'severity': severity,
+        'status':   status,
+        'time':     datetime.now().strftime('%I:%M %p'),
+        'date':     datetime.now().strftime('%B %d %Y'),
     })
     speak(f'Fault code {code}. {description}')
 
@@ -2036,7 +2240,8 @@ def show_faults():
         return 'No active fault codes.'
     print('\n── FAULT CODES ──────────────────────────')
     for f in fault_codes:
-        print(f'  {f["code"]} — {f["desc"]} — {f["time"]}')
+        sev = f.get('severity', 'medium').upper()
+        print(f'  {f["code"]} [{sev}] — {f["desc"]} — {f["time"]}')
     print('─────────────────────────────────────────\n')
     return f'{len(fault_codes)} active codes.'
 
@@ -2226,11 +2431,46 @@ def update_gforce():
     if len(gforce_history['y']) > 60:
         gforce_history['y'].pop(0)
 
+# ── SENSOR HISTORY RING BUFFERS ────────────────────────────────────────────
+# Stores 1Hz readings per sensor — max 3600 entries (1 hour) per sensor
+_SENSOR_HISTORY_MAX = 3600
+sensor_history: dict = {
+    'rpm':          collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'speed':        collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'coolant_temp': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'oil_temp':     collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'battery_v':    collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'boost_psi':    collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'afr':          collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'throttle_pct': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'oil_pressure': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'trans_temp':   collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'intake_temp':  collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+}
+_sensor_history_lock = threading.Lock()
+_sensor_history_last_append = 0.0
+
+def _append_sensor_history():
+    """Append current sensor readings to history at 1Hz."""
+    global _sensor_history_last_append
+    now = time.time()
+    if now - _sensor_history_last_append < 1.0:
+        return
+    _sensor_history_last_append = now
+    ts = datetime.now().strftime('%H:%M:%S')
+    with _sensor_history_lock:
+        for sensor, deque_ in sensor_history.items():
+            val = sensor_data.get(sensor) or truck_state.get(sensor)
+            if val is not None:
+                deque_.append({'ts': ts, 'v': val, 't': now})
+
 # ── LIVE DATA LOOP ────────────────────────
 def live_data_loop():
     while True:
         update_sensors_from_truck()
         update_gforce()
+        update_trip_stats()
+        _append_sensor_history()
         time.sleep(0.5)
 
 # ══════════════════════════════════════════
@@ -2773,6 +3013,65 @@ def check_heat_soak():
         heat_soak['heat_soak_risk']   = 'low'
         heat_soak['cool_down_needed'] = False
         return f'No heat soak. Intake {intake}F. Ready to run.'
+
+# ══════════════════════════════════════════
+# TRIP STATISTICS TRACKER
+# ══════════════════════════════════════════
+trip_stats = {
+    'distance_miles':  0.0,
+    'fuel_used_gal':   0.0,
+    'avg_mpg':         0.0,
+    'instant_mpg':     0.0,
+    'start_time':      None,
+    'last_update':     None,
+    '_last_speed':     0.0,
+}
+
+def update_trip_stats():
+    """Call approximately every second while engine is running to accumulate trip data."""
+    now = time.time()
+    rpm   = truck_state.get('rpm', 0)
+    speed = truck_state.get('speed', 0)
+
+    if rpm < 400:
+        return  # engine off — don't accumulate
+
+    if trip_stats['start_time'] is None:
+        trip_stats['start_time'] = now
+
+    last = trip_stats.get('last_update') or now
+    dt_hours = (now - last) / 3600.0  # elapsed time in hours
+
+    # Distance: speed (mph) * time (hours)
+    dist_delta = speed * dt_hours
+    trip_stats['distance_miles'] += dist_delta
+
+    # Fuel rate estimate: base idle ~0.3 gph, scales with rpm/speed
+    # Rough approximation: GPH = 0.3 + (rpm/750 - 1) * 0.8 + speed * 0.008
+    gph = max(0.2, 0.3 + (rpm / 750 - 1) * 0.8 + speed * 0.008)
+    fuel_delta = gph * dt_hours
+    trip_stats['fuel_used_gal'] += fuel_delta
+
+    # Instant MPG: speed / GPH (if moving and using fuel)
+    if speed > 5 and gph > 0:
+        trip_stats['instant_mpg'] = min(99.9, speed / gph)
+    elif speed <= 5:
+        trip_stats['instant_mpg'] = 0.0
+
+    # Session avg MPG
+    if trip_stats['fuel_used_gal'] > 0.01:
+        trip_stats['avg_mpg'] = trip_stats['distance_miles'] / trip_stats['fuel_used_gal']
+
+    trip_stats['last_update'] = now
+
+def reset_trip_stats():
+    trip_stats['distance_miles'] = 0.0
+    trip_stats['fuel_used_gal']  = 0.0
+    trip_stats['avg_mpg']        = 0.0
+    trip_stats['instant_mpg']    = 0.0
+    trip_stats['start_time']     = None
+    trip_stats['last_update']    = None
+    return 'Trip stats reset.'
 
 # ══════════════════════════════════════════
 # FUEL LEVEL TRACKER
@@ -3777,46 +4076,90 @@ def drive_summary_ai():
 # DRIVE SCORE / REPORT CARD
 # ══════════════════════════════════════════
 def calculate_drive_score():
+    """Calculate comprehensive vehicle health/drive score (0-100) with letter grade."""
     score   = 100
     details = []
 
-    # Deductions
+    # ── Battery ──────────────────────────────────────────────
+    bat = truck_state.get('battery_main', 13.8)
+    if bat < 11.5:
+        score -= 25
+        details.append(f'-25 critical battery ({bat}V)')
+    elif bat < 12.0:
+        score -= 15
+        details.append(f'-15 low battery ({bat}V)')
+    elif bat < 12.5:
+        score -= 8
+        details.append(f'-8 weak battery ({bat}V)')
+
+    # ── Active DTC Codes — up to 3 count (-15 each) ──────────
+    active_dtcs = [f for f in fault_codes if f.get('status', 'active') == 'active']
+    dtc_penalty = min(3, len(active_dtcs)) * 15
+    if dtc_penalty > 0:
+        score -= dtc_penalty
+        details.append(f'-{dtc_penalty} active DTCs ({len(active_dtcs)} codes)')
+
+    # ── Coolant Temperature ───────────────────────────────────
+    cool = truck_state.get('coolant_temp', 190)
+    if cool > 240:
+        score -= 20
+        details.append(f'-20 overheating coolant ({cool}°F)')
+    elif cool > 220:
+        score -= 10
+        details.append(f'-10 high coolant temp ({cool}°F)')
+    elif cool > 210:
+        score -= 4
+        details.append(f'-4 elevated coolant ({cool}°F)')
+
+    # ── Oil Temperature ───────────────────────────────────────
+    oil = truck_state.get('oil_temp', 195)
+    if oil > 250:
+        score -= 15
+        details.append(f'-15 overheated oil ({oil}°F)')
+    elif oil > 230:
+        score -= 8
+        details.append(f'-8 high oil temp ({oil}°F)')
+
+    # ── Oil Life ──────────────────────────────────────────────
+    oil_life = truck_state.get('oil_life', 100)
+    if oil_life < 10:
+        score -= 15
+        details.append(f'-15 critical oil life ({oil_life}%)')
+    elif oil_life < 20:
+        score -= 8
+        details.append(f'-8 low oil life ({oil_life}%)')
+    elif oil_life < 35:
+        score -= 3
+        details.append(f'-3 oil change soon ({oil_life}%)')
+
+    # ── Knock Events ──────────────────────────────────────────
     knock = sensor_data.get('knock_count', 0)
     if knock > 0:
         deduct = min(20, knock * 4)
         score -= deduct
         details.append(f'-{deduct} knock events')
 
-    oil = truck_state['oil_temp']
-    if oil > 230:
-        score -= 15
-        details.append('-15 overheated oil')
-    elif oil > 220:
-        score -= 5
-        details.append('-5 high oil temp')
-
-    eth = truck_state['ethanol']
-    boost = truck_state['boost']
+    # ── Ethanol / Boost Safety ────────────────────────────────
+    eth   = truck_state.get('ethanol', 0)
+    boost = truck_state.get('boost', 0)
     if eth < 40 and boost > 8:
         score -= 20
         details.append('-20 low ethanol under boost')
 
-    bat = truck_state['battery_main']
-    if bat < 12.0:
-        score -= 10
-        details.append('-10 low battery')
-
-    # Bonuses
+    # ── Bonuses ───────────────────────────────────────────────
     if eth > 75:
         score += 5
-        details.append('+5 good ethanol')
+        details.append('+5 good ethanol mix')
     if knock == 0 and boost > 5:
         score += 5
-        details.append('+5 clean run under boost')
+        details.append('+5 clean boost run')
+    if bat >= 13.5 and len(active_dtcs) == 0:
+        score += 3
+        details.append('+3 all systems nominal')
 
     score = max(0, min(100, score))
     grade = 'A' if score >= 90 else 'B' if score >= 80 else 'C' if score >= 70 else 'D' if score >= 60 else 'F'
-    detail_str = ' '.join(details) if details else 'No issues found.'
+    detail_str = ' | '.join(details) if details else 'No issues found.'
     return score, grade, detail_str
 
 def show_drive_score():
@@ -5175,14 +5518,65 @@ def handle_command(text):
     if 'air horn' in t:
         arduino_send("HORN:AIR"); return "Air horn."
 
+    # ── TRUCK-SPECIFIC STATUS QUERIES ────
+    if any(x in t for x in ['oil life', 'oil percent', 'how much oil life']):
+        oil_life = truck_state.get('oil_life', 100)
+        if oil_life < 15:
+            return f"Oil life is at {oil_life} percent. Change it soon — you are pushing it."
+        elif oil_life < 30:
+            return f"Oil life at {oil_life} percent. Start thinking about a change."
+        return f"Oil life is at {oil_life} percent. Still good."
+
+    if any(x in t for x in ['tire pressure', 'tires', 'psi', 'tpms']) and not any(x in t for x in ['set','change']):
+        fl = tpms.get('fl', {}).get('psi', 0)
+        fr = tpms.get('fr', {}).get('psi', 0)
+        rl = tpms.get('rl', {}).get('psi', 0)
+        rr = tpms.get('rr', {}).get('psi', 0)
+        low = [name for name, psi in [('front left', fl), ('front right', fr), ('rear left', rl), ('rear right', rr)] if psi > 0 and psi < 28]
+        if low:
+            return f"Heads up — {', '.join(low)} is low. Check it when you can."
+        if any(p > 0 for p in [fl, fr, rl, rr]):
+            return f"Tire pressure looks good. FL {fl} FR {fr} RL {rl} RR {rr} PSI."
+        return "TPMS data not available right now."
+
+    if any(x in t for x in ['transmission temp', 'trans temp', 'transmission temperature']):
+        trans = truck_state.get('trans_temp', sensor_data.get('trans_temp', 0))
+        if trans > 220:
+            return f"Transmission is hot — {trans} degrees. Ease up and let it cool."
+        elif trans > 195:
+            return f"Trans temp is elevated at {trans} degrees. Keep an eye on it."
+        elif trans > 0:
+            return f"Transmission temperature is {trans} degrees. Normal range."
+        return "Transmission temperature data not available."
+
+    if any(x in t for x in ['def level', 'diesel exhaust fluid', 'def fluid', 'def tank']):
+        def_level = truck_state.get('def_level', None)
+        if def_level is None:
+            return "DEF level sensor not available on this engine."
+        if def_level < 10:
+            return f"DEF is critically low at {def_level} percent. Fill it before the next start."
+        elif def_level < 25:
+            return f"DEF level at {def_level} percent. Plan a fill-up soon."
+        return f"DEF level is at {def_level} percent."
+
+    if 'tpms' in t and any(x in t for x in ['check','status','all','pressures','read']):
+        fl = tpms.get('fl', {}).get('psi', 0)
+        fr = tpms.get('fr', {}).get('psi', 0)
+        rl = tpms.get('rl', {}).get('psi', 0)
+        rr = tpms.get('rr', {}).get('psi', 0)
+        return f"TPMS readings — Front left {fl}, front right {fr}, rear left {rl}, rear right {rr} PSI."
+
     # ── WEATHER ──────────────────────────
     if any(x in t for x in ['weather','how cold','how hot','raining','outside temp','temperature outside']):
         data = get_weather(); weather.update(data); temp = weather['temp']; condition = weather['condition']
+        feels = weather.get('feels_like', temp)
         if weather['snowing']:  return f"{temp}F and snowing in Salem. 4WD is ready. TC stays on."
         if weather['raining']:  return f"{temp}F and raining. TC locked on. Road will be slick."
         if weather['freezing']: return f"{temp}F. Everything is tighter today. Give me a minute to warm up."
         if temp > 90:           return f"{temp}F outside. Heat is going to build faster today."
-        if temp < 50:           return f"{temp}F. Cold start territory. Oil needs a minute."
+        if temp < 50:
+            feel_str = f" Feels like {feels}" if abs(feels - temp) > 3 else ""
+            return f"{temp}F. Cold start territory. Oil needs a minute.{feel_str}"
         return f"{temp}F in Salem. {condition.title()}. Good day to be out."
 
     # ── ROAD MEMORY ──────────────────────
@@ -7802,6 +8196,68 @@ def system_health_api():
         'failures': system_health['failures'][-10:],
     })
 
+@display_app.route('/logs')
+def logs_endpoint():
+    """Return last 50 structured log entries for the Tier 1 debug panel."""
+    from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    with _archer_log_lock:
+        entries = list(_archer_log_buffer)[-50:]
+    return jsonify({'logs': entries, 'total': len(_archer_log_buffer)})
+
+@display_app.route('/sensor_history')
+def sensor_history_endpoint():
+    """Return historical data for a sensor. ?sensor=rpm&minutes=60"""
+    from flask import request as freq
+    sensor  = freq.args.get('sensor', 'rpm').lower()
+    minutes = min(60, max(1, int(freq.args.get('minutes', 10))))
+    cutoff  = time.time() - (minutes * 60)
+    if sensor not in sensor_history:
+        return jsonify({'error': f'Unknown sensor: {sensor}', 'available': list(sensor_history.keys())}), 400
+    with _sensor_history_lock:
+        entries = [{'timestamp': e['ts'], 'value': e['v']}
+                   for e in sensor_history[sensor] if e.get('t', 0) >= cutoff]
+    return jsonify({'sensor': sensor, 'minutes': minutes, 'data': entries, 'count': len(entries)})
+
+@display_app.route('/trip_stats')
+def trip_stats_endpoint():
+    """Return comprehensive trip statistics since engine start."""
+    rpm     = truck_state.get('rpm', 0)
+    start   = trip_stats.get('start_time')
+    elapsed = (time.time() - start) / 60.0 if start else 0.0  # minutes
+    avg_spd = (trip_stats['distance_miles'] / (elapsed / 60.0)) if elapsed > 0 else 0
+
+    # Peak values from awareness
+    peak_rpm   = awareness.get('peak_rpm', 0)
+    peak_speed = truck_state.get('speed', 0)
+
+    # Count high-RPM events (stored in spike_history)
+    high_rpm_events = sum(1 for r in spike_history.get('rpm', []) if r > 4500)
+
+    # Hard braking events from awareness
+    hard_brake = awareness.get('hard_brake_count', 0)
+
+    score, grade, _ = calculate_drive_score()
+
+    return jsonify({
+        'trip_distance_miles':  round(trip_stats['distance_miles'], 2),
+        'trip_time_minutes':    round(elapsed, 1),
+        'avg_speed_mph':        round(avg_spd, 1),
+        'max_speed_mph':        truck_state.get('peak_speed', peak_speed),
+        'avg_rpm':              round(sum(spike_history.get('rpm', [0])) / max(1, len(spike_history.get('rpm', [1]))), 0),
+        'peak_rpm':             peak_rpm,
+        'fuel_used_gallons':    round(trip_stats['fuel_used_gal'], 3),
+        'avg_mpg':              round(trip_stats['avg_mpg'], 1),
+        'instant_mpg':          round(trip_stats['instant_mpg'], 1),
+        'hard_braking_events':  hard_brake,
+        'high_rpm_events':      high_rpm_events,
+        'engine_running':       rpm > 400,
+        'drive_score':          score,
+        'drive_grade':          grade,
+    })
+
 # ── MAC ADDRESS AUTH SYSTEM ─────────────────────────────
 import json as _json_mac
 
@@ -8073,7 +8529,12 @@ def register_mac():
     # Save MAC if we have one
     if mac and mac != 'UNKNOWN':
         whitelist = load_mac_whitelist()
-        whitelist[mac] = {'tier': tier, 'name': name}
+        whitelist[mac] = {
+            'tier':          tier,
+            'name':          name,
+            'registered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'last_seen':     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
         save_mac_whitelist(whitelist)
         print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
 
@@ -8267,7 +8728,7 @@ def revoke_code():
 # ── MASTER SIGN-IN CODE API ──────────────────────────────
 @display_app.route('/sign_in_code/status')
 def sign_in_code_status():
-    """Return master code status — Tier 1 only."""
+    """Return master code status and registered devices — Tier 1 only."""
     _check_master_auto_enable()
     auth = request.cookies.get('archer_auth', '')
     parts = auth.split(':')
@@ -8277,12 +8738,41 @@ def sign_in_code_status():
         wl = load_mac_whitelist()
         has_tier1 = any(v.get('tier') == 1 for v in wl.values())
     except Exception:
+        wl = {}
         has_tier1 = False
+
+    # Update last_seen for the requesting device's MAC (if known)
+    try:
+        req_mac = get_client_mac(request)
+        if req_mac and req_mac in wl:
+            wl[req_mac]['last_seen'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            save_mac_whitelist(wl)
+    except Exception:
+        pass
+
+    # Build per-tier device counts and devices list
+    tier_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    devices_list = []
+    for mac, info in wl.items():
+        t = info.get('tier', 0)
+        if t in tier_counts:
+            tier_counts[t] += 1
+        devices_list.append({
+            'mac':           mac,
+            'name':          info.get('name', 'Unknown'),
+            'tier':          t,
+            'registered_at': info.get('registered_at', 'Unknown'),
+            'last_seen':     info.get('last_seen', 'Never'),
+        })
+
     return jsonify({
-        'success': True,
-        'enabled': _master_code_enabled,
-        'code': _master_code if _master_code_enabled else None,
-        'auto_on': not has_tier1,
+        'success':     True,
+        'enabled':     _master_code_enabled,
+        'code':        _master_code if _master_code_enabled else None,
+        'auto_on':     not has_tier1,
+        'device_count': len(wl),
+        'tier_counts': tier_counts,
+        'devices':     devices_list,
     })
 
 @display_app.route('/sign_in_code/toggle', methods=['POST'])
@@ -9792,40 +10282,80 @@ def obd_autodetect():
             sim_random_enabled        = False
             print(f'[OBD] Connected on {port_device} — live data active')
 
+            # ── OBD sensor bounds validation ───────────────────
+            def _validate_obd(value, lo, hi, name):
+                """Return value if within bounds, else log and return None."""
+                if value is None:
+                    return None
+                if value < lo or value > hi:
+                    print(f'[OBD] Sensor error: {name}={value} out of bounds [{lo},{hi}] — rejected')
+                    return None
+                return value
+
             # ── Poll loop ──────────────────────────────────────
             while True:
                 try:
                     # RPM — PID 010C: ((A*256)+B)/4
                     b = _obd_bytes(_obd_cmd(ser, '010C'))
                     if len(b) >= 2:
-                        truck_state['rpm'] = ((b[0] * 256) + b[1]) / 4
+                        raw_rpm = ((b[0] * 256) + b[1]) / 4
+                        val = _validate_obd(raw_rpm, 0, 8000, 'RPM')
+                        if val is not None:
+                            truck_state['rpm'] = val
 
                     # Speed — PID 010D: A km/h → mph
                     b = _obd_bytes(_obd_cmd(ser, '010D'))
                     if b:
-                        truck_state['speed'] = round(b[0] * 0.621371)
+                        raw_spd = round(b[0] * 0.621371)
+                        val = _validate_obd(raw_spd, 0, 200, 'speed_mph')
+                        if val is not None:
+                            truck_state['speed'] = val
 
                     # Coolant temp — PID 0105: A-40 °C → °F
                     b = _obd_bytes(_obd_cmd(ser, '0105'))
                     if b:
-                        sensor_data['coolant_temp'] = round((b[0] - 40) * 9 / 5 + 32)
+                        raw_cool = round((b[0] - 40) * 9 / 5 + 32)
+                        val = _validate_obd(raw_cool, -40, 300, 'coolant_temp')
+                        if val is not None:
+                            truck_state['coolant_temp'] = val
+                            sensor_data['coolant_temp'] = val
 
                     # Throttle — PID 0111: A*100/255 %
                     b = _obd_bytes(_obd_cmd(ser, '0111'))
                     if b:
-                        truck_state['throttle'] = round(b[0] * 100 / 255)
+                        raw_thr = round(b[0] * 100 / 255)
+                        val = _validate_obd(raw_thr, 0, 100, 'throttle_pct')
+                        if val is not None:
+                            truck_state['throttle'] = val
 
                     # MAP/boost — PID 010B: A kPa → psi above atmosphere
                     b = _obd_bytes(_obd_cmd(ser, '010B'))
                     if b:
-                        truck_state['boost'] = round((b[0] - 101.325) * 0.145038, 1)
+                        raw_boost = round((b[0] - 101.325) * 0.145038, 1)
+                        # Boost can be negative (vacuum); clamp to reasonable range
+                        val = _validate_obd(raw_boost, -15, 30, 'boost_psi')
+                        if val is not None:
+                            truck_state['boost'] = val
 
                     # Battery voltage — AT command (ELM327 internal)
                     raw_v = _obd_cmd(ser, 'ATRV')
                     try:
-                        truck_state['battery'] = round(float(raw_v.replace('V', '').strip()), 1)
+                        raw_bat = round(float(raw_v.replace('V', '').strip()), 1)
+                        val = _validate_obd(raw_bat, 0, 20, 'battery_v')
+                        if val is not None:
+                            truck_state['battery_main'] = val
+                            sensor_data['battery_v']    = val
                     except ValueError:
                         pass
+
+                    # Oil temp — Mode 22 PID (GM specific: 221318) — if supported
+                    b = _obd_bytes(_obd_cmd(ser, '2201318'))
+                    if len(b) >= 1:
+                        raw_oil = round((b[0] - 40) * 9 / 5 + 32)
+                        val = _validate_obd(raw_oil, -40, 350, 'oil_temp')
+                        if val is not None:
+                            truck_state['oil_temp'] = val
+                            sensor_data['oil_temp'] = val
 
                     system_health['last_obd_update'] = time.time()
 
