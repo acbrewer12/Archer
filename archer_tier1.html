@@ -785,6 +785,8 @@ body.day{background:#0d0d0d}
         <div class="drive-cond">
           <div class="drive-cond-lbl">CONDITIONS</div>
           <div class="drive-cond-val" id="dr-conditions">--°F — --</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px" id="dr-feels-like"></div>
+          <div style="font-size:10px;color:var(--text3)" id="dr-wind-info"></div>
         </div>
       </div>
 
@@ -923,7 +925,12 @@ body.day{background:#0d0d0d}
       <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn" id="hl-trans-val">162°F !</span><span class="hdot dwarn" id="hl-trans-dot"></span></div>
       <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hok" id="hl-fuel-val">-- GAL ✓</span><span class="hdot dok" id="hl-fuel-dot"></span></div>
       <div class="health-item"><span class="health-name">TIRE PRESSURE</span><span class="health-val hok">34/34/34/34 ✓</span><span class="hdot dok"></span></div>
-      <div class="health-item"><span class="health-name">FAULT CODES</span><span class="health-val hok" id="hl-fault-val">NONE ✓</span><span class="hdot dok" id="hl-fault-dot"></span></div>
+      <div class="health-item" style="cursor:pointer" onclick="toggleFaultDetail()">
+        <span class="health-name">FAULT CODES</span>
+        <span class="health-val hok" id="hl-fault-val">NONE ✓</span>
+        <span class="hdot dok" id="hl-fault-dot"></span>
+      </div>
+      <div id="hl-fault-detail" style="display:none;padding:6px 10px;background:#0d0000;border:1px solid #330000;border-radius:4px;margin:0 4px 4px"></div>
       <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok" id="hl-knock-val">NONE ✓</span><span class="hdot dok" id="hl-knock-dot"></span></div>
       <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok" id="hl-afr-val">14.7 ✓</span><span class="hdot dok" id="hl-afr-dot"></span></div>
       <div class="health-item" id="hl-intercooler-row" style="display:none"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hok" id="hl-intercooler-val">OK ✓</span><span class="hdot dok" id="hl-intercooler-dot"></span></div>
@@ -1841,10 +1848,47 @@ async function pollLive() {
     const _coordFallback = _gpsAvail ? `${d.gps_lat.toFixed(2)}°N ${Math.abs(d.gps_lon).toFixed(2)}°W` : '';
     const _locLabel = d.gps_name || _coordFallback || 'Salem, MO';
     set('map-loc-label', _locLabel);
-    if (d.weather && d.road && d.road !== 'None') {
-      set('dr-conditions', d.road + ' — ' + d.weather);
-    } else if (d.weather) {
-      set('dr-conditions', (_gpsAvail ? _locLabel + ' — ' : '') + d.weather);
+
+    // Weather emoji icons
+    const _wxIcon = (cond) => {
+      const c = (cond || '').toLowerCase();
+      if (c.includes('thunder'))            return '⛈';
+      if (c.includes('snow'))               return '🌨';
+      if (c.includes('fog') || c.includes('mist')) return '🌫';
+      if (c.includes('rain') || c.includes('drizzle') || c.includes('shower')) return '🌧';
+      if (c.includes('partly') || c.includes('scattered')) return '⛅';
+      if (c.includes('cloud') || c.includes('overcast'))   return '☁';
+      if (c.includes('clear') || c.includes('sunny') || c.includes('fair')) return '☀';
+      return '🌡';
+    };
+
+    if (d.weather) {
+      const tempMatch = d.weather.match(/^(\d+)F\s+(.+)$/);
+      const tempVal   = tempMatch ? tempMatch[1] : '';
+      const condStr   = tempMatch ? tempMatch[2] : d.weather;
+      const wxEmoji   = _wxIcon(condStr);
+      const locPart   = (_gpsAvail && d.road && d.road !== 'None') ? d.road
+                       : (_gpsAvail ? _locLabel : '');
+      const condDisplay = `${wxEmoji} ${tempVal ? tempVal + '°F' : ''} ${condStr}`;
+      set('dr-conditions', locPart ? `${locPart} — ${condDisplay}` : condDisplay);
+
+      // Feels-like
+      const feelsEl = document.getElementById('dr-feels-like');
+      if (feelsEl && d.weather_feels_like != null && Math.abs(d.weather_feels_like - parseInt(tempVal)) > 3) {
+        feelsEl.textContent = `Feels like ${d.weather_feels_like}°F`;
+        feelsEl.style.display = '';
+      } else if (feelsEl) {
+        feelsEl.style.display = 'none';
+      }
+
+      // Wind info
+      const windEl = document.getElementById('dr-wind-info');
+      if (windEl && d.weather_wind != null && d.weather_wind > 0) {
+        windEl.textContent = `Wind ${d.weather_wind} mph`;
+        windEl.style.display = '';
+      } else if (windEl) {
+        windEl.style.display = 'none';
+      }
     }
 
     // ── LAUNCH tab ───────────────────────────────────────────
