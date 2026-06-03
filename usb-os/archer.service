@@ -1,0 +1,19 @@
+[Unit]
+Description=Archer Truck AI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__ARCHER_USER__
+WorkingDirectory=__ARCHER_DIR__
+Environment=PORT=__ARCHER_PORT__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__ARCHER_DIR__/.venv/bin/python3 __ARCHER_DIR__/archer.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
