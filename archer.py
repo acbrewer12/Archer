@@ -929,10 +929,32 @@ def get_weather():
         except Exception:
             pass
 
-    # ── SECONDARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
-    # NWS Hourly gives the most accurate temp for exact coordinates.
-    # NWS Observation gives the most accurate current condition (real station reading).
+    # ── SECONDARY: wttr.in — sources from Weather.com/TWC, same data as phone weather apps ──
     try:
+        wttr_url = f'https://wttr.in/{lat:.4f},{lon:.4f}?format=j1'
+        with urllib.request.urlopen(urllib.request.Request(wttr_url, headers=hdr), timeout=8) as r:
+            wttr = json.loads(r.read())
+        cur = wttr['current_condition'][0]
+        temp_f   = round(float(cur['temp_F']))
+        wind_mph = round(float(cur.get('windspeedMiles') or 0))
+        precip   = float(cur.get('precipMM') or 0) * 0.0394  # mm → inches
+        desc_raw = (cur.get('weatherDesc') or [{}])[0].get('value', '')
+        condition = _parse_condition(desc_raw) if desc_raw else 'Cloudy'
+        _PRECIP_W = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm',
+                     'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+        return {
+            'temp': temp_f, 'condition': condition, 'desc': condition,
+            'wind': wind_mph, 'precip': precip,
+            'raining':  condition in _PRECIP_W,
+            'freezing': temp_f < 32,
+            'snowing':  condition in ('Snow', 'Snow Showers'),
+        }
+    except Exception:
+        pass
+
+    # ── TERTIARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
+    # NWS Hourly gives the most accurate temp for exact coordinates.
+    # NWS Observation gives the most accurate current condition (real station reading).    try:
         obs_condition, obs_wind_mph = None, 0
         fc_temp_f, fc_condition, fc_wind_mph = None, None, 0
 
