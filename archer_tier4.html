@@ -43,7 +43,9 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 /* SPEED — BIG */
 .speed-section{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--amber);border-radius:8px;padding:14px;text-align:center;position:relative}
 .speed-label{font-size:8px;color:var(--label);letter-spacing:3px;margin-bottom:4px}
-.speed-val{font-family:'Bebas Neue',sans-serif;font-size:clamp(60px,22vw,88px);line-height:1;letter-spacing:0px;color:#fff;transition:color 0.3s,text-shadow 0.3s}
+.speed-val{font-family:'Bebas Neue',sans-serif;font-size:clamp(60px,22vw,88px);line-height:1;letter-spacing:0px;color:#fff;transition:color 0.5s ease,text-shadow 0.5s ease,font-size 0.15s ease;will-change:color}
+.speed-unit{font-size:10px;color:var(--label);letter-spacing:3px;margin-top:2px;transition:color 0.5s ease}
+@keyframes speed-unit-pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 .speed-unit{font-size:10px;color:var(--label);letter-spacing:3px;margin-top:2px}
 .speed-limit-badge{position:absolute;top:10px;right:12px;background:#1a0000;border:1px solid var(--red);border-radius:6px;padding:4px 8px;text-align:center}
 .speed-limit-label{font-size:7px;color:#777;letter-spacing:1px}
@@ -55,14 +57,14 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .rpm-label{font-size:8px;color:var(--label);letter-spacing:2px}
 .rpm-val{font-size:14px;color:#fff;letter-spacing:1px}
 .rpm-bar-bg{background:#111;border-radius:3px;height:10px;overflow:hidden;border:1px solid var(--border)}
-.rpm-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,var(--amber) 60%,var(--red) 85%,#ff0000 100%);transition:width 0.3s,box-shadow 0.3s}
+.rpm-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,var(--amber) 60%,var(--red) 85%,#ff0000 100%);transition:width 0.3s,box-shadow 0.3s;will-change:width;transform:translateZ(0)}
 .rpm-markers{display:flex;justify-content:space-between;font-size:7px;color:#333;margin-top:3px;padding:0 1px}
 
 /* STATS GRID */
 .stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;width:100%}
 .stat-box{background:var(--bg2);border:1px solid #222;border-radius:6px;padding:10px 6px;text-align:center;min-width:0;overflow:hidden}
 .stat-label{font-size:7px;color:#666;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase}
-.stat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:1px}
+.stat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:1px;transition:color 0.3s;will-change:color;transform:translateZ(0)}
 
 /* EVENT LOG */
 .log-section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;flex:1}
@@ -172,27 +174,31 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
     </div>
   </div>
 
-  <!-- STATS -->
+  <!-- STATS with sparklines -->
   <div class="stats-grid">
     <div class="stat-box">
       <div class="stat-label">OIL TEMP</div>
       <div class="stat-val" id="v-oil" style="color:#fff">195F</div>
+      <canvas id="spark-oil" width="80" height="18" style="width:100%;display:block;margin-top:3px;opacity:0.7"></canvas>
     </div>
     <div class="stat-box">
       <div class="stat-label">BATTERY</div>
       <div class="stat-val" id="v-bat" style="color:var(--green)">13.8V</div>
+      <canvas id="spark-bat" width="80" height="18" style="width:100%;display:block;margin-top:3px;opacity:0.7"></canvas>
     </div>
     <div class="stat-box">
       <div class="stat-label">TRACTION</div>
       <div class="stat-val" id="v-tc" style="color:var(--green)">ON</div>
     </div>
     <div class="stat-box">
-      <div class="stat-label">GEAR</div>
-      <div class="stat-val" id="v-gear" style="color:#fff">—</div>
+      <div class="stat-label">COOLANT</div>
+      <div class="stat-val" id="v-coolant" style="color:#fff">190F</div>
+      <canvas id="spark-coolant" width="80" height="18" style="width:100%;display:block;margin-top:3px;opacity:0.7"></canvas>
     </div>
     <div class="stat-box">
-      <div class="stat-label">E85</div>
-      <div class="stat-val" id="v-fuel" style="color:var(--label)">---</div>
+      <div class="stat-label">RPM (AVG)</div>
+      <div class="stat-val" id="v-rpm-avg" style="color:var(--amber)">750</div>
+      <canvas id="spark-rpm" width="80" height="18" style="width:100%;display:block;margin-top:3px;opacity:0.7"></canvas>
     </div>
     <div class="stat-box">
       <div class="stat-label">SESSION MI</div>
@@ -216,13 +222,16 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
     <div class="limit-row"><span class="limit-name">OWNER NOTIFIED</span><span class="limit-val">IF EXCEEDED</span></div>
   </div>
 
-  <!-- EVENT LOG -->
+  <!-- EVENT LOG with filter controls -->
   <div class="log-section">
     <div class="log-header">
       <div class="log-title">ACTIVITY LOG</div>
-      <div class="log-count" id="v-log-count">0 EVENTS</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button id="log-filter-btn" onclick="toggleLogFilter()" style="background:#0a0000;border:1px solid #440000;border-radius:3px;color:#cc0000;font-size:7px;padding:2px 6px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:1px">SHOW: ALL</button>
+        <div class="log-count" id="v-log-count">0 EVENTS</div>
+      </div>
     </div>
-    <div class="log-list" id="v-log-list">
+    <div class="log-list" id="v-log-list" style="max-height:180px;overflow-y:auto">
       <div class="log-empty">NO EVENTS YET</div>
     </div>
   </div>
@@ -244,6 +253,58 @@ let alertCount    = 0;
 let speedAlerted  = false;
 let rpmAlerted    = false;
 
+// ── SPARKLINE ENGINE ──────────────────────────────────────
+const SPARK_LEN = 60;
+const sparkData = {
+  oil:     new Array(SPARK_LEN).fill(195),
+  bat:     new Array(SPARK_LEN).fill(13.8),
+  coolant: new Array(SPARK_LEN).fill(190),
+  rpm:     new Array(SPARK_LEN).fill(750),
+};
+const sparkRanges = {
+  oil:     {min:140, max:250, color:'#ffaa00', warn:220, crit:240},
+  bat:     {min:11,  max:15,  color:'#00cc44', warn:12.5, crit:12.0},
+  coolant: {min:140, max:250, color:'#00aaff', warn:215, crit:230},
+  rpm:     {min:0,   max:5000,color:'#cc0000', warn:3000, crit:4000},
+};
+
+function sparkPush(key, val) {
+  const arr = sparkData[key];
+  if (!arr) return;
+  arr.push(val); if (arr.length > SPARK_LEN) arr.shift();
+}
+
+function drawSparkline(canvasId, data, range) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+  const lo = range.min, hi = range.max, span = hi - lo || 1;
+  const toY = v => h - ((Math.min(hi, Math.max(lo, v)) - lo) / span) * (h - 2) - 1;
+  const toX = i => (i / (data.length - 1)) * w;
+  // Current value determines color
+  const cur  = data[data.length - 1];
+  const color = cur >= range.crit ? '#cc0000' : cur >= range.warn ? '#ffaa00' : range.color;
+  ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  data.forEach((v, i) => { const x = toX(i), y = toY(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+  // Tiny dot at end
+  ctx.beginPath(); ctx.arc(toX(data.length-1), toY(cur), 2, 0, Math.PI*2);
+  ctx.fillStyle = '#ff0000'; ctx.fill();
+}
+
+function updateSparklines() {
+  Object.keys(sparkData).forEach(key => {
+    const rangeKey = key;
+    const canvasId = 'spark-' + key;
+    drawSparkline(canvasId, sparkData[key], sparkRanges[rangeKey]);
+  });
+}
+setInterval(updateSparklines, 2000);
+
 // ── CLOCK ─────────────────────────────────────
 function updateClock() {
   const now = new Date();
@@ -259,35 +320,66 @@ function updateClock() {
 }
 
 // ── EVENT LOG ─────────────────────────────────
+let logFilterWarningsOnly = false;
+let _logAutoScroll = true;
+
+function toggleLogFilter() {
+  logFilterWarningsOnly = !logFilterWarningsOnly;
+  const btn = document.getElementById('log-filter-btn');
+  if (btn) btn.textContent = logFilterWarningsOnly ? 'SHOW: WARN' : 'SHOW: ALL';
+  renderLog();
+}
+
 function logEvent(text, level = 'normal') {
   const now  = new Date();
   const time = now.getHours().toString().padStart(2,'0') + ':' +
                now.getMinutes().toString().padStart(2,'0') + ':' +
                now.getSeconds().toString().padStart(2,'0');
   eventLog.unshift({text, level, time});
-  if (eventLog.length > 50) eventLog.pop();
+  if (eventLog.length > 100) eventLog.pop();
   if (level !== 'normal') alertCount++;
   renderLog();
 }
 
 function renderLog() {
-  const list = document.getElementById('v-log-list');
-  const count = document.getElementById('v-log-count');
+  const list   = document.getElementById('v-log-list');
+  const count  = document.getElementById('v-log-count');
   const alerts = document.getElementById('f-alert-count');
   if (!list) return;
-  if (!eventLog.length) {
-    list.innerHTML = '<div class="log-empty">NO EVENTS YET</div>';
+
+  const filtered = logFilterWarningsOnly
+    ? eventLog.filter(e => e.level === 'warn' || e.level === 'alert')
+    : eventLog;
+
+  if (!filtered.length) {
+    list.innerHTML = logFilterWarningsOnly
+      ? '<div class="log-empty">NO WARNINGS YET</div>'
+      : '<div class="log-empty">NO EVENTS YET</div>';
     return;
   }
-  list.innerHTML = eventLog.map(e => `
-    <div class="log-item">
+
+  const levelColor = {normal:'#888', warn:'#ffaa00', alert:'#cc0000'};
+  list.innerHTML = filtered.slice(0, 50).map(e => `
+    <div class="log-item" style="border-left:2px solid ${levelColor[e.level] || '#333'};padding-left:6px">
       <div class="log-event ${e.level}">${e.text}</div>
-      <div class="log-time">${e.time}</div>
+      <div class="log-time" style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#333;flex-shrink:0;margin-left:6px">${e.time}</div>
     </div>`).join('');
+
   count.textContent  = eventLog.length + ' EVENT' + (eventLog.length !== 1 ? 'S' : '');
   alerts.textContent = alertCount + ' ALERT' + (alertCount !== 1 ? 'S' : '');
   alerts.style.color = alertCount > 0 ? 'var(--red)' : '#222';
+
+  // Auto-scroll to newest (top, since unshifted)
+  if (_logAutoScroll) list.scrollTop = 0;
 }
+
+// Pause auto-scroll when user scrolls manually
+document.addEventListener('DOMContentLoaded', () => {
+  const list = document.getElementById('v-log-list');
+  if (list) list.addEventListener('scroll', () => {
+    _logAutoScroll = list.scrollTop < 10;
+  });
+});
 
 // ── ARCHER COLD RESPONSES ─────────────────────
 const COLD_IDLE = [
@@ -334,22 +426,51 @@ async function poll() {
     const bat   = d.battery  || 13.8;
     const tcOn  = d.tc_on;
 
-    // ── SPEED ──────────────────────────────
-    const speedEl = document.getElementById('v-speed');
+    // ── SPEED — color transitions + unit pulse when speeding ─
+    const speedEl  = document.getElementById('v-speed');
+    const speedUnit = document.querySelector('.speed-unit');
     if (speedEl) {
-      speedEl.textContent = speed;
-      if (speed > 35) {
-        speedEl.style.color      = 'var(--red)';
-        speedEl.style.textShadow = '0 0 20px rgba(204,0,0,0.8), 0 0 40px rgba(204,0,0,0.4)';
+      // Smooth number: lerp displayed value toward actual
+      const displayed = parseInt(speedEl.textContent) || 0;
+      const lerped    = Math.round(displayed + (speed - displayed) * 0.4);
+      speedEl.textContent = lerped;
+
+      if (speed > 80) {
+        // Red above 80 mph — danger zone
+        speedEl.style.color      = '#ff0000';
+        speedEl.style.textShadow = '0 0 30px rgba(255,0,0,0.9), 0 0 60px rgba(255,0,0,0.4)';
         speedEl.classList.add('over-limit');
+        if (speedUnit) { speedUnit.style.color = '#ff0000'; speedUnit.style.animation = 'speed-unit-pulse 0.5s ease-in-out infinite'; }
+        if (!speedAlerted || speed > lastSpeed + 5) {
+          logEvent('🚨 Speed exceeded limit — ' + speed + ' MPH', 'alert');
+          speedAlerted = true;
+        }
+      } else if (speed > 75) {
+        // Deep amber when approaching danger (66-80)
+        speedEl.style.color      = 'var(--amber)';
+        speedEl.style.textShadow = '0 0 20px rgba(255,170,0,0.7)';
+        speedEl.classList.add('over-limit');
+        if (speedUnit) { speedUnit.style.color = 'var(--amber)'; speedUnit.style.animation = 'speed-unit-pulse 0.8s ease-in-out infinite'; }
+        if (!speedAlerted || speed > lastSpeed + 5) {
+          logEvent('⚠ Speed high — ' + speed + ' MPH', 'warn');
+          speedAlerted = true;
+        }
+      } else if (speed > 35) {
+        // Amber 36-65 (above valet limit but below highway warning)
+        speedEl.style.color      = 'var(--amber)';
+        speedEl.style.textShadow = '0 0 12px rgba(255,170,0,0.4)';
+        speedEl.classList.add('over-limit');
+        if (speedUnit) { speedUnit.style.color = 'var(--amber)'; speedUnit.style.animation = ''; }
         if (!speedAlerted || speed > lastSpeed + 5) {
           logEvent('🚨 Speed exceeded limit — ' + speed + ' MPH', 'alert');
           speedAlerted = true;
         }
       } else {
-        speedEl.style.color      = speed > 25 ? 'var(--amber)' : '#fff';
-        speedEl.style.textShadow = speed > 25 ? '0 0 10px rgba(255,170,0,0.4)' : 'none';
+        // White at safe speed
+        speedEl.style.color      = '#ffffff';
+        speedEl.style.textShadow = 'none';
         speedEl.classList.remove('over-limit');
+        if (speedUnit) { speedUnit.style.color = 'var(--label)'; speedUnit.style.animation = ''; }
         if (speedAlerted && speed < 30) speedAlerted = false;
       }
     }
@@ -372,14 +493,34 @@ async function poll() {
     const oilEl = document.getElementById('v-oil');
     if (oilEl) {
       oilEl.textContent = Math.round(oil) + '°F';
-      oilEl.style.color = oil > 225 ? 'var(--red)' : oil > 210 ? 'var(--amber)' : '#fff';
+      oilEl.style.color = oil > 240 ? 'var(--red)' : oil > 220 ? 'var(--amber)' : '#ffffff';
     }
+    sparkPush('oil', oil);
+
+    // ── COOLANT ────────────────────────────
+    const coolant = d.coolant || 190;
+    const coolantEl = document.getElementById('v-coolant');
+    if (coolantEl) {
+      coolantEl.textContent = Math.round(coolant) + '°F';
+      coolantEl.style.color = coolant > 230 ? 'var(--red)' : coolant > 210 ? 'var(--amber)' : '#ffffff';
+    }
+    sparkPush('coolant', coolant);
 
     // ── BATTERY ────────────────────────────
     const batEl = document.getElementById('v-bat');
     if (batEl) {
       batEl.textContent = parseFloat(bat).toFixed(1) + 'V';
-      batEl.style.color = bat < 12 ? 'var(--red)' : bat < 12.8 ? 'var(--amber)' : 'var(--green)';
+      batEl.style.color = bat < 12.0 ? 'var(--red)' : bat < 12.5 ? 'var(--amber)' : 'var(--green)';
+    }
+    sparkPush('bat', bat);
+    sparkPush('rpm', rpm);
+
+    // RPM average display
+    const rpmAvgEl = document.getElementById('v-rpm-avg');
+    if (rpmAvgEl) {
+      const avgRpm = Math.round(sparkData.rpm.reduce((a,b)=>a+b,0)/sparkData.rpm.length);
+      rpmAvgEl.textContent = avgRpm;
+      rpmAvgEl.style.color = avgRpm > 3000 ? 'var(--red)' : avgRpm > 2000 ? 'var(--amber)' : 'var(--green)';
     }
 
     // ── TC ─────────────────────────────────

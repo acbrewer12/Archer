@@ -8435,19 +8435,43 @@ def registration_page(mac=None):
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{{margin:0;padding:0;box-sizing:border-box}}
 html,body{{height:100%;overflow:hidden}}
-body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}}
-.wrap{{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;gap:20px}}
-.logo{{font-family:'Bebas Neue',sans-serif;font-size:52px;letter-spacing:5px;color:#cc0000;line-height:1}}
+body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;position:relative}}
+/* Animated background canvas */
+#bg-canvas{{position:fixed;inset:0;z-index:0;pointer-events:none}}
+/* Radial glow behind card */
+.bg-glow{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;
+  background:radial-gradient(ellipse at center,rgba(180,0,0,0.08) 0%,transparent 70%);
+  border-radius:50%;animation:glowpulse 4s ease-in-out infinite;pointer-events:none;z-index:0}}
+@keyframes glowpulse{{0%,100%{{opacity:0.6;transform:translate(-50%,-50%) scale(1)}}50%{{opacity:1;transform:translate(-50%,-50%) scale(1.15)}}}}
+.wrap{{width:100%;max-width:340px;display:flex;flex-direction:column;align-items:center;gap:20px;position:relative;z-index:1}}
+.logo{{font-family:'Bebas Neue',sans-serif;font-size:56px;letter-spacing:6px;color:#cc0000;line-height:1;text-shadow:0 0 30px rgba(204,0,0,0.4)}}
 .sub{{font-size:10px;color:#555;letter-spacing:3px;text-align:center}}
-.card{{background:#080808;border:1px solid #1a1a1a;border-top:2px solid #cc0000;border-radius:14px;padding:26px 22px;width:100%;display:flex;flex-direction:column;align-items:center;gap:14px}}
-.card-title{{font-family:'Bebas Neue',sans-serif;font-size:16px;color:#888;letter-spacing:3px;text-align:center}}
-.card-hint{{font-size:10px;color:#555;letter-spacing:0.5px;text-align:center;line-height:1.7}}
-.code-input{{background:#0d0d0d;border:1px solid #222;border-radius:10px;padding:18px 14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:10px;outline:none;width:100%;text-align:center;transition:border-color 0.2s,opacity 0.2s}}
-.code-input:focus{{border-color:#cc0000}}
-.code-input::placeholder{{color:#333;letter-spacing:6px;font-size:22px}}
-.submit-btn{{background:#cc0000;border:none;border-radius:8px;padding:14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;cursor:pointer;width:100%;transition:background 0.15s}}
+.card{{background:rgba(8,8,8,0.92);border:1px solid #1a1a1a;border-top:2px solid #cc0000;border-radius:14px;padding:28px 24px;width:100%;display:flex;flex-direction:column;align-items:center;gap:16px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}}
+.card-title{{font-family:'Bebas Neue',sans-serif;font-size:18px;color:#888;letter-spacing:3px;text-align:center}}
+.card-hint{{font-size:11px;color:#555;letter-spacing:0.5px;text-align:center;line-height:1.7}}
+/* Large phone-friendly boxes */
+@media(max-width:420px){{
+  .code-box{{width:46px;height:62px;font-size:32px}}
+  .card{{padding:24px 16px}}
+}}
+/* ── CODE BOXES ─────────────────────────── */
+.code-boxes{{display:flex;gap:10px;justify-content:center;width:100%}}
+.code-box{{width:44px;height:56px;background:#0d0d0d;border:1px solid #222;border-radius:8px;
+  color:#fff;font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:0;outline:none;
+  text-align:center;transition:border-color 0.2s,box-shadow 0.2s,transform 0.15s;
+  caret-color:transparent;-webkit-appearance:none}}
+.code-box:focus{{border-color:#cc0000;box-shadow:0 0 0 2px rgba(204,0,0,0.2)}}
+.code-box.filled{{border-color:#552200;background:#150500}}
+/* Shake animation for wrong code */
+@keyframes codeshake{{0%,100%{{transform:translateX(0)}}15%{{transform:translateX(-8px)}}30%{{transform:translateX(8px)}}45%{{transform:translateX(-6px)}}60%{{transform:translateX(6px)}}75%{{transform:translateX(-3px)}}90%{{transform:translateX(3px)}}}}
+.code-boxes.shake .code-box{{animation:codeshake 0.5s ease-out;border-color:#cc0000}}
+/* Success animation */
+@keyframes codesuccess{{0%{{transform:scale(1)}}40%{{transform:scale(1.12)}}100%{{transform:scale(1)}}}}
+.code-boxes.success .code-box{{animation:codesuccess 0.4s ease-out;border-color:#00cc44;background:#001a00;color:#00cc44}}
+.submit-btn{{background:#cc0000;border:none;border-radius:8px;padding:14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;cursor:pointer;width:100%;transition:background 0.15s,transform 0.1s}}
 .submit-btn:hover{{background:#dd0000}}
-.submit-btn:active{{background:#aa0000}}
+.submit-btn:active{{background:#aa0000;transform:scale(0.98)}}
+.submit-btn:disabled{{background:#440000;cursor:default;opacity:0.6}}
 .error{{color:#cc0000;font-size:10px;letter-spacing:1px;text-align:center;height:14px;opacity:0;transition:opacity 0.25s}}
 .error.on{{opacity:1}}
 .fan-note{{font-size:10px;color:#444;letter-spacing:1px;text-align:center}}
@@ -8455,6 +8479,8 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
 .fan-link:hover{{color:#aaa}}
 </style>
 </head><body>
+<canvas id="bg-canvas"></canvas>
+<div class="bg-glow"></div>
 <div class="wrap">
   <div class="logo">ARCHER</div>
   <div class="sub">2006 GMC SIERRA 2500HD</div>
@@ -8462,41 +8488,153 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
   <div class="card">
     <div class="card-title">ENTER ACCESS CODE</div>
     <div class="card-hint">Ayden will give you a 6-digit code.</div>
-    <input class="code-input" id="code-input" type="password" inputmode="numeric"
-           placeholder="······" maxlength="6" autofocus autocomplete="one-time-code">
+    <div class="code-boxes" id="code-boxes">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="one-time-code" id="cb0">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb1">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb2">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb3">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb4">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb5">
+    </div>
     <div class="error" id="error-msg">Incorrect code — try again</div>
-    <button class="submit-btn" onclick="submitCode()">SIGN IN</button>
+    <button class="submit-btn" id="submit-btn" onclick="submitCode()">SIGN IN</button>
   </div>
 
   <div class="fan-note">Just here for the show? <a href="/fans" class="fan-link">Fan page →</a></div>
 </div>
 
 <script>
-async function submitCode() {{
-  const inp  = document.getElementById('code-input');
-  const code = inp.value.trim();
-  if (code.length !== 6) return;
-  inp.style.opacity = '0.4';
-  const r = await fetch('/register_mac', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{code, mac: '{mac_display}'}})
+// ── ANIMATED BACKGROUND ───────────────────
+(function() {{
+  const canvas = document.getElementById('bg-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+  function resize() {{
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }}
+  resize();
+  window.addEventListener('resize', resize);
+  // Sparse floating particles (dim red)
+  for (let i = 0; i < 30; i++) {{
+    particles.push({{
+      x: Math.random() * 1000,
+      y: Math.random() * 1000,
+      vy: -0.1 - Math.random() * 0.2,
+      vx: (Math.random() - 0.5) * 0.08,
+      r:  0.5 + Math.random() * 1.5,
+      a:  Math.random() * 0.3
+    }});
+  }}
+  function frame() {{
+    ctx.clearRect(0, 0, W, H);
+    particles.forEach(p => {{
+      p.x = (p.x + p.vx * W / 1000) % W;
+      p.y = (p.y + p.vy * H / 1000 + H) % H;
+      ctx.beginPath();
+      ctx.arc(p.x / 1000 * W, p.y / 1000 * H, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(180,0,0,${{p.a.toFixed(2)}})`;
+      ctx.fill();
+    }});
+    requestAnimationFrame(frame);
+  }}
+  frame();
+}})();
+
+// ── 6-BOX CODE INPUT ──────────────────────
+const boxes = Array.from({{length:6}}, (_,i) => document.getElementById('cb'+i));
+const boxWrap = document.getElementById('code-boxes');
+const errMsg  = document.getElementById('error-msg');
+const submitBtn = document.getElementById('submit-btn');
+
+// Auto-focus first box on load
+boxes[0] && boxes[0].focus();
+
+function getCode() {{
+  return boxes.map(b => b.value).join('');
+}}
+
+function clearBoxes() {{
+  boxes.forEach(b => {{ b.value=''; b.classList.remove('filled'); }});
+  boxes[0].focus();
+}}
+
+function setBoxesState(state) {{
+  boxWrap.classList.remove('shake','success');
+  void boxWrap.offsetWidth; // reflow
+  if (state) boxWrap.classList.add(state);
+}}
+
+boxes.forEach((box, i) => {{
+  box.addEventListener('input', e => {{
+    // Allow only digits
+    box.value = box.value.replace(/\D/g,'').slice(-1);
+    box.classList.toggle('filled', box.value !== '');
+    if (box.value && i < 5) {{ boxes[i+1].focus(); }}
+    if (getCode().length === 6) submitCode();
   }});
-  const d = await r.json();
-  inp.style.opacity = '1';
-  if (d.success) {{
-    window.location.href = d.redirect;
-  }} else {{
-    const err = document.getElementById('error-msg');
-    err.classList.add('on');
-    inp.value = '';
-    inp.focus();
-    setTimeout(() => err.classList.remove('on'), 3000);
+
+  box.addEventListener('keydown', e => {{
+    if (e.key === 'Backspace' && !box.value && i > 0) {{
+      boxes[i-1].value = '';
+      boxes[i-1].classList.remove('filled');
+      boxes[i-1].focus();
+      e.preventDefault();
+    }}
+    if (e.key === 'Enter') submitCode();
+    // Left/Right arrow navigation
+    if (e.key === 'ArrowLeft'  && i > 0) {{ boxes[i-1].focus(); e.preventDefault(); }}
+    if (e.key === 'ArrowRight' && i < 5) {{ boxes[i+1].focus(); e.preventDefault(); }}
+  }});
+
+  // Paste support: paste 6 digits across all boxes
+  box.addEventListener('paste', e => {{
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g,'').slice(0,6);
+    text.split('').forEach((ch, j) => {{
+      if (boxes[j]) {{ boxes[j].value = ch; boxes[j].classList.add('filled'); }}
+    }});
+    const nextEmpty = boxes.findIndex(b => !b.value);
+    const focusIdx = nextEmpty === -1 ? 5 : nextEmpty;
+    boxes[focusIdx].focus();
+    if (text.length === 6) submitCode();
+  }});
+}});
+
+async function submitCode() {{
+  const code = getCode();
+  if (code.length !== 6) return;
+  submitBtn.disabled = true;
+  submitBtn.textContent = '...';
+  try {{
+    const r = await fetch('/register_mac', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{code, mac: '{mac_display}'}})
+    }});
+    const d = await r.json();
+    if (d.success) {{
+      setBoxesState('success');
+      submitBtn.textContent = 'OK!';
+      await new Promise(res => setTimeout(res, 600));
+      window.location.href = d.redirect;
+    }} else {{
+      setBoxesState('shake');
+      errMsg.classList.add('on');
+      await new Promise(res => setTimeout(res, 500));
+      clearBoxes();
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'SIGN IN';
+      setTimeout(() => errMsg.classList.remove('on'), 2500);
+    }}
+  }} catch(err) {{
+    setBoxesState('shake');
+    clearBoxes();
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'SIGN IN';
   }}
 }}
-const inp = document.getElementById('code-input');
-inp?.addEventListener('keydown', e => {{ if (e.key === 'Enter') submitCode(); }});
-inp?.addEventListener('input',   e => {{ if (e.target.value.length === 6) submitCode(); }});
 </script>
 </body></html>"""
 
@@ -8904,7 +9042,44 @@ spotify_tokens = {
     'expires_at':    0,
 }
 
-dj_state = {'enabled': False, 'last_track_id': None}
+dj_state = {'enabled': False, 'last_track_id': None, 'intensity_mode': 'auto'}
+
+# Album art URL cache to avoid repeated API calls for the same track
+_art_cache: dict = {}   # track_id -> art_url
+
+def _get_art_cached(track_id, album_images):
+    """Return album art URL, using in-memory cache to avoid repeated lookups."""
+    if track_id and track_id in _art_cache:
+        return _art_cache[track_id]
+    url = album_images[0].get('url', '') if album_images else ''
+    if track_id and url:
+        _art_cache[track_id] = url
+        # Trim cache to 200 entries
+        if len(_art_cache) > 200:
+            oldest = next(iter(_art_cache))
+            del _art_cache[oldest]
+    return url
+
+def _dj_intensity_level():
+    """Return driving intensity level: calm / moderate / aggressive based on live data."""
+    try:
+        rpm   = live_data.get('rpm', 0)
+        speed = live_data.get('speed', 0)
+        boost = live_data.get('boost', 0)
+        if boost > 12 or rpm > 4500 or speed > 85:
+            return 'aggressive'
+        if boost > 4 or rpm > 2800 or speed > 55:
+            return 'moderate'
+        return 'calm'
+    except Exception:
+        return 'calm'
+
+# DJ intensity playlist preferences (playlist name keywords → intensity)
+DJ_PLAYLIST_KEYWORDS = {
+    'aggressive': ['hype', 'wot', 'boost', 'race', 'trap', 'hard', 'heavy', 'metal', 'rage', 'beast'],
+    'moderate':   ['drive', 'road', 'trip', 'cruise', 'mix', 'vibe', 'workout', 'energy'],
+    'calm':       ['chill', 'easy', 'relax', 'mellow', 'acoustic', 'lofi', 'lo-fi', 'coffee'],
+}
 
 def _dj_comment(song, artist):
     def _bg():
@@ -8924,6 +9099,8 @@ def _dj_comment(song, artist):
 
 def _dj_poll_loop():
     time.sleep(15)          # wait for startup before first poll
+    _last_intensity = None
+    _intensity_change_count = 0
     while True:
         time.sleep(6)
         try:
@@ -8935,8 +9112,24 @@ def _dj_poll_loop():
             item     = data.get('item') or {}
             track_id = item.get('id')
             if not track_id or track_id == dj_state['last_track_id']:
+                # Track didn't change — check if intensity shifted significantly
+                current_intensity = _dj_intensity_level()
+                if current_intensity != _last_intensity:
+                    _intensity_change_count += 1
+                    _last_intensity = current_intensity
+                    # After 5 consecutive polls with shifted intensity (~30s), announce the change
+                    if _intensity_change_count >= 5:
+                        _intensity_change_count = 0
+                        song   = item.get('name', '')
+                        artist = ', '.join(a['name'] for a in item.get('artists', []))
+                        if song and current_intensity == 'aggressive':
+                            _dj_comment(song, artist)  # Hype it up during aggressive driving
+                else:
+                    _intensity_change_count = 0
                 continue
             dj_state['last_track_id'] = track_id
+            _last_intensity = _dj_intensity_level()
+            _intensity_change_count = 0
             song   = item.get('name', '')
             artist = ', '.join(a['name'] for a in item.get('artists', []))
             if song:
@@ -9081,20 +9274,29 @@ def spotify_status():
     if not data:
         return jsonify({'connected': True, 'playing': False, 'track': None})
     item = data.get('item', {})
-    artists = ', '.join(a['name'] for a in item.get('artists', []))
-    album   = item.get('album', {})
-    art_url = album.get('images', [{}])[0].get('url', '') if album.get('images') else ''
+    artists   = ', '.join(a['name'] for a in item.get('artists', []))
+    album     = item.get('album', {})
+    track_id  = item.get('id')
+    art_url   = _get_art_cached(track_id, album.get('images', []))
+    progress  = data.get('progress_ms', 0)
+    duration  = item.get('duration_ms', 1) or 1
+    progress_pct = round((progress / duration) * 100, 1)
+    intensity = _dj_intensity_level()
     return jsonify({
-        'connected':  True,
-        'playing':    data.get('is_playing', False),
-        'track':      item.get('name', ''),
-        'artist':     artists,
-        'album':      album.get('name', ''),
-        'art':        art_url,
-        'progress':   data.get('progress_ms', 0),
-        'duration':   item.get('duration_ms', 1),
-        'volume':     data.get('device', {}).get('volume_percent', 50),
-        'device':     data.get('device', {}).get('name', ''),
+        'connected':      True,
+        'playing':        data.get('is_playing', False),
+        'track':          item.get('name', ''),
+        'track_id':       track_id,
+        'artist':         artists,
+        'album':          album.get('name', ''),
+        'art':            art_url,
+        'progress':       progress,
+        'progress_pct':   progress_pct,   # 0-100 percent
+        'duration':       duration,
+        'volume':         data.get('device', {}).get('volume_percent', 50),
+        'device':         data.get('device', {}).get('name', ''),
+        'dj_enabled':     dj_state['enabled'],
+        'dj_intensity':   intensity,       # calm / moderate / aggressive
     })
 
 @display_app.route('/spotify/play', methods=['POST'])
@@ -9126,27 +9328,68 @@ def spotify_volume():
 
 @display_app.route('/spotify/playlists')
 def spotify_playlists():
+    """Return user playlists with optional intensity filter and driving-intensity suggestion."""
+    from flask import request as freq
+    intensity_filter = freq.args.get('intensity')   # 'aggressive' | 'moderate' | 'calm'
+    search_q         = (freq.args.get('q') or '').lower().strip()
     try:
         data = spotify_api('GET', 'me/playlists?limit=50')
         if not data:
-            return jsonify({'playlists': []})
+            return jsonify({'playlists': [], 'suggested': None, 'intensity': _dj_intensity_level()})
         playlists = []
         for p in data.get('items', []):
             try:
-                tracks_obj = p.get('tracks')
+                tracks_obj   = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
+                name_lower   = p['name'].lower()
+                # Tag playlist with detected intensity
+                detected_intensity = None
+                for lvl, keywords in DJ_PLAYLIST_KEYWORDS.items():
+                    if any(kw in name_lower for kw in keywords):
+                        detected_intensity = lvl
+                        break
+                # Apply filters
+                if intensity_filter and detected_intensity != intensity_filter:
+                    continue
+                if search_q and search_q not in name_lower:
+                    continue
                 playlists.append({
-                    'id':     p['id'],
-                    'name':   p['name'],
-                    'tracks': tracks_total,
-                    'art':    p['images'][0]['url'] if p.get('images') else '',
+                    'id':        p['id'],
+                    'name':      p['name'],
+                    'tracks':    tracks_total,
+                    'art':       p['images'][0]['url'] if p.get('images') else '',
+                    'intensity': detected_intensity,
                 })
             except Exception:
                 continue
-        return jsonify({'playlists': playlists})
+
+        # Suggest a playlist that matches current driving intensity
+        current_intensity = _dj_intensity_level()
+        suggested = next(
+            (pl for pl in playlists if pl.get('intensity') == current_intensity),
+            None
+        )
+        return jsonify({
+            'playlists':       playlists,
+            'total':           len(playlists),
+            'intensity':       current_intensity,
+            'suggested':       suggested,
+            'dj_intensity_mode': dj_state.get('intensity_mode', 'auto'),
+        })
     except Exception as e:
         print(f'[SPOTIFY] Playlists error: {e}')
         return jsonify({'error': str(e), 'playlists': []}), 500
+
+
+@display_app.route('/spotify/dj/intensity', methods=['POST'])
+def spotify_dj_intensity():
+    """Override DJ intensity mode: auto | calm | moderate | aggressive."""
+    from flask import request as freq
+    mode = (freq.json or {}).get('mode', 'auto')
+    if mode not in ('auto', 'calm', 'moderate', 'aggressive'):
+        return jsonify({'error': 'Invalid mode'}), 400
+    dj_state['intensity_mode'] = mode
+    return jsonify({'intensity_mode': mode, 'current': _dj_intensity_level()})
 
 @display_app.route('/spotify/play_playlist', methods=['POST'])
 def spotify_play_playlist():

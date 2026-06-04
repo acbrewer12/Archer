@@ -2,91 +2,542 @@
 <html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <meta name="theme-color" content="#000000">
-<title>Archer — Under Maintenance</title>
+<title>Archer — Maintenance</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%}
+html,body{min-height:100%}
 body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  overflow:hidden;padding:20px}
-:root{--red:#cc0000;--amber:#ffaa00;--dim:#1a1a1a}
+  overflow-y:auto;padding:14px 14px 60px;-webkit-overflow-scrolling:touch}
+:root{--red:#cc0000;--amber:#ffaa00;--green:#00cc44;--dim:#1a1a1a;--text2:#888}
 
-.wrap{width:100%;max-width:440px;display:flex;flex-direction:column;align-items:center;gap:0}
+/* HEADER */
+.hdr{text-align:center;margin-bottom:14px;padding:12px 14px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;border-bottom:2px solid #cc0000}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#cc0000}
+.hdr-sub{font-size:9px;letter-spacing:1px;color:#444;margin-top:2px}
 
-/* LOGO */
-.logo-wrap{position:relative;margin-bottom:6px}
-.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);
-  line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.35)}
-.vehicle{font-size:9px;color:#555;letter-spacing:4px;margin-bottom:32px}
+/* MAINTENANCE ITEMS GRID */
+#items-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:14px}
 
-/* MAINTENANCE BOX */
-.maint-box{width:100%;border:1px solid #1a0000;background:#050505;border-radius:4px;
-  padding:24px 20px;display:flex;flex-direction:column;align-items:center;gap:14px}
+/* MAINTENANCE CARD */
+.maint-card{background:#080808;border:1px solid #1a1a1a;border-radius:8px;padding:12px 14px;
+  display:flex;align-items:center;gap:12px;transition:border-color 0.3s;cursor:default}
+.maint-card.priority-high{border-color:#2a0800}
+.maint-card.priority-med{border-color:#1a1500}
+.maint-card.priority-ok{border-color:#0a1a0a}
 
+/* PROGRESS RING */
+.ring-wrap{position:relative;width:52px;height:52px;flex-shrink:0}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:#111;stroke-width:4}
+.ring-fill{fill:none;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset 0.8s cubic-bezier(0.4,0,0.2,1),stroke 0.5s ease;will-change:stroke-dashoffset}
+.ring-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Bebas Neue',sans-serif;font-size:14px;line-height:1;transition:color 0.5s}
+
+/* CARD INFO */
+.card-info{flex:1;min-width:0}
+.card-name{font-size:10px;letter-spacing:2px;color:#aaa;text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-detail{font-size:8px;letter-spacing:1px;color:#555;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-due{font-size:8px;letter-spacing:1px;margin-top:4px;font-family:'Bebas Neue',sans-serif;font-size:13px}
+.card-due.ok{color:#00cc44}
+.card-due.warn{color:#ffaa00}
+.card-due.over{color:#cc0000}
+.card-priority-badge{display:inline-block;font-size:6px;letter-spacing:1px;padding:1px 4px;border-radius:2px;margin-top:3px;text-transform:uppercase}
+.badge-high{background:#2a0000;color:#cc0000;border:1px solid #3a0000}
+.badge-med{background:#1a1200;color:#cc8800;border:1px solid #2a2000}
+.badge-ok{background:#001a00;color:#007722;border:1px solid #003300}
+
+/* SORT/FILTER BAR */
+#sort-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.sort-btn{background:#0d0d0d;border:1px solid #222;color:#555;font-family:'Share Tech Mono',monospace;
+  font-size:8px;letter-spacing:1px;padding:5px 10px;border-radius:4px;cursor:pointer;
+  text-transform:uppercase;transition:all 0.15s}
+.sort-btn:hover{border-color:#cc4400;color:#cc4400}
+.sort-btn.active{border-color:#cc0000;color:#ff6600;background:#1a0500}
+.sort-lbl{font-size:8px;color:#444;letter-spacing:1px}
+
+/* MAINTENANCE OFFLINE MODE */
+#offline-mode{background:#0d0d0d;border:1px solid #1a0000;border-radius:8px;
+  padding:24px 20px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
 .maint-icon{font-size:28px;color:var(--amber);animation:pulse 2s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
-
-.maint-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--amber);text-align:center}
-.maint-sub{font-size:9px;color:#555;letter-spacing:2px;text-align:center;line-height:1.7}
-
-/* Divider */
+.maint-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--amber)}
+.maint-sub{font-size:9px;color:#555;letter-spacing:2px;line-height:1.7}
 .divider{width:100%;height:1px;background:#0d0d0d;margin:2px 0}
-
-/* Countdown */
 .countdown-wrap{display:flex;flex-direction:column;align-items:center;gap:4px}
 .countdown-label{font-size:8px;color:#555;letter-spacing:2px}
 .countdown{font-size:11px;color:#666;letter-spacing:3px}
 
-/* Corner accents */
-.corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5}
+/* HISTORY SECTION */
+#history-section{margin-top:4px}
+.section-label{font-size:9px;letter-spacing:2px;color:#995500;margin-bottom:8px;text-transform:uppercase;border-left:2px solid #cc0000;padding-left:7px;display:flex;align-items:center;justify-content:space-between}
+#btn-add-record{background:#0a1a0a;border:1px solid #006622;color:#00cc44;font-family:'Share Tech Mono',monospace;
+  font-size:8px;letter-spacing:1px;padding:4px 10px;border-radius:4px;cursor:pointer;text-transform:uppercase;transition:all 0.15s}
+#btn-add-record:hover{background:#0d2a0d;box-shadow:0 0 8px rgba(0,204,68,0.2)}
+
+/* ADD RECORD FORM */
+#add-form{background:#080808;border:1px solid #1a2a1a;border-radius:8px;padding:14px;margin-bottom:10px;display:none}
+#add-form.open{display:block}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.form-field{display:flex;flex-direction:column;gap:4px}
+.form-field label{font-size:8px;letter-spacing:1px;color:#555;text-transform:uppercase}
+.form-field input,.form-field select,.form-field textarea{
+  background:#050505;border:1px solid #1a1a1a;color:#aaa;font-family:'Share Tech Mono',monospace;
+  font-size:10px;padding:6px 8px;border-radius:4px;outline:none;width:100%;transition:border-color 0.2s}
+.form-field input:focus,.form-field select:focus,.form-field textarea:focus{border-color:#006622}
+.form-field select option{background:#050505;color:#aaa}
+.form-field textarea{resize:none;height:52px}
+.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+.btn-save{background:#0a1a0a;border:1px solid #00cc44;color:#00cc44;font-family:'Share Tech Mono',monospace;
+  font-size:9px;letter-spacing:1px;padding:6px 16px;border-radius:4px;cursor:pointer;text-transform:uppercase;transition:all 0.15s}
+.btn-save:hover{background:#0d2a0d}
+.btn-cancel{background:#1a0a0a;border:1px solid #330000;color:#883300;font-family:'Share Tech Mono',monospace;
+  font-size:9px;letter-spacing:1px;padding:6px 12px;border-radius:4px;cursor:pointer;text-transform:uppercase;transition:all 0.15s}
+.btn-cancel:hover{background:#2a0800}
+
+/* HISTORY LOG */
+#history-log{display:flex;flex-direction:column;gap:6px}
+.hist-entry{background:#060606;border:1px solid #111;border-left:3px solid #333;border-radius:4px;padding:8px 12px;
+  display:flex;align-items:flex-start;gap:10px;transition:border-color 0.3s}
+.hist-entry:hover{border-color:#2a0000;background:#080808}
+.hist-date{font-size:8px;color:#555;letter-spacing:1px;flex-shrink:0;min-width:72px}
+.hist-type{font-family:'Bebas Neue',sans-serif;font-size:15px;color:#cc4400;letter-spacing:1px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist-note{font-size:8px;color:#666;margin-top:2px;letter-spacing:1px}
+.hist-mi{font-size:8px;color:#555;letter-spacing:1px;flex-shrink:0}
+.hist-del{background:none;border:none;color:#3a0000;cursor:pointer;font-size:12px;padding:0 0 0 6px;transition:color 0.2s;flex-shrink:0}
+.hist-del:hover{color:#cc0000}
+.hist-empty{font-size:9px;color:#444;letter-spacing:2px;text-align:center;padding:16px}
+
+/* CORNER + FOOTER */
+.corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5;z-index:10}
 .corner.tl{top:12px;left:12px;border-width:1px 0 0 1px}
 .corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
 .corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
 .corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
-.ver{position:fixed;bottom:10px;font-size:8px;color:#333;letter-spacing:2px}
+.ver{position:fixed;bottom:5px;left:50%;transform:translateX(-50%);font-size:7px;color:#222;letter-spacing:2px;white-space:nowrap}
 </style>
 </head>
 <body>
 <div class="corner tl"></div><div class="corner tr"></div>
 <div class="corner bl"></div><div class="corner br"></div>
 
-<div class="wrap">
-  <div class="logo-wrap">
-    <div class="logo">ARCHER</div>
-  </div>
-  <div class="vehicle">2006 GMC SIERRA 2500HD</div>
+<div class="hdr">
+  <div class="hdr-title">MAINTENANCE</div>
+  <div class="hdr-sub">2006 GMC SIERRA 2500HD — SERVICE TRACKER</div>
+</div>
 
-  <div class="maint-box">
-    <div class="maint-icon">⚙</div>
-    <div class="maint-title">UNDER MAINTENANCE</div>
-    <div class="divider"></div>
-    <div class="maint-sub">
-      SYSTEMS ARE TEMPORARILY OFFLINE<br>
-      UPDATES IN PROGRESS — CHECK BACK SHORTLY
+<!-- Sort bar -->
+<div id="sort-bar">
+  <span class="sort-lbl">SORT:</span>
+  <button class="sort-btn active" id="sort-priority" onclick="setSortMode('priority')">PRIORITY</button>
+  <button class="sort-btn" id="sort-due" onclick="setSortMode('due')">DUE SOONEST</button>
+  <button class="sort-btn" id="sort-pct" onclick="setSortMode('pct')">% USED</button>
+  <button class="sort-btn" id="sort-name" onclick="setSortMode('name')">NAME</button>
+</div>
+
+<!-- Items grid (populated by JS) -->
+<div id="items-grid"></div>
+
+<!-- Maintenance History -->
+<div id="history-section">
+  <div class="section-label">
+    <span>SERVICE HISTORY</span>
+    <button id="btn-add-record" onclick="toggleAddForm()">+ ADD RECORD</button>
+  </div>
+
+  <!-- Add Record Form -->
+  <div id="add-form">
+    <div class="form-row">
+      <div class="form-field">
+        <label>Service Type</label>
+        <select id="f-type">
+          <option value="Oil Change">Oil Change</option>
+          <option value="Trans Fluid">Trans Fluid</option>
+          <option value="Air Filter">Air Filter</option>
+          <option value="Fuel Filter">Fuel Filter</option>
+          <option value="Coolant Flush">Coolant Flush</option>
+          <option value="Spark Plugs">Spark Plugs</option>
+          <option value="Diff Fluid">Diff Fluid</option>
+          <option value="Tire Rotation">Tire Rotation</option>
+          <option value="Brake Fluid">Brake Fluid</option>
+          <option value="Serpentine Belt">Serpentine Belt</option>
+          <option value="DEF Top-off">DEF Top-off</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Mileage</label>
+        <input type="number" id="f-mi" placeholder="e.g. 145200" inputmode="numeric">
+      </div>
     </div>
-    <div class="divider"></div>
-    <div class="countdown-wrap">
-      <div class="countdown-label">AUTO-RETRY IN</div>
-      <div class="countdown" id="cd">0:30</div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Date</label>
+        <input type="date" id="f-date">
+      </div>
+      <div class="form-field">
+        <label>Cost ($)</label>
+        <input type="number" id="f-cost" placeholder="0.00" step="0.01" inputmode="decimal">
+      </div>
     </div>
+    <div class="form-field" style="margin-bottom:8px">
+      <label>Notes</label>
+      <textarea id="f-notes" placeholder="Shop, parts used, observations..."></textarea>
+    </div>
+    <div class="form-actions">
+      <button class="btn-cancel" onclick="toggleAddForm()">CANCEL</button>
+      <button class="btn-save" onclick="saveRecord()">SAVE RECORD</button>
+    </div>
+  </div>
+
+  <div id="history-log"></div>
+</div>
+
+<!-- Fallback offline panel (shown when server unreachable) -->
+<div id="offline-mode" style="display:none">
+  <div class="maint-icon">⚙</div>
+  <div class="maint-title">UNDER MAINTENANCE</div>
+  <div class="divider"></div>
+  <div class="maint-sub">
+    SYSTEMS ARE TEMPORARILY OFFLINE<br>
+    UPDATES IN PROGRESS — CHECK BACK SHORTLY
+  </div>
+  <div class="divider"></div>
+  <div class="countdown-wrap">
+    <div class="countdown-label">AUTO-RETRY IN</div>
+    <div class="countdown" id="cd">0:30</div>
   </div>
 </div>
 
-<div class="ver">ARCHER AI v2.0 — AYDEN BREWER</div>
+<div class="ver">ARCHER OS v2.0 — AYDEN BREWER</div>
 
 <script>
+// ── CONSTANTS ──────────────────────────────────────────────
+const RING_R  = 22;           // SVG circle radius
+const RING_C  = 2 * Math.PI * RING_R;   // circumference ≈ 138.2
+
+// Fallback static maintenance items (shown when server doesn't return a list)
+const DEFAULT_ITEMS = [
+  {id:'oil',       name:'Oil Change',        interval_mi:5000,  last_mi:0,  current_mi:0,  interval_days:90,  last_days:0},
+  {id:'tranny',    name:'Trans Fluid',        interval_mi:30000, last_mi:0,  current_mi:0,  interval_days:730, last_days:0},
+  {id:'air',       name:'Air Filter',         interval_mi:15000, last_mi:0,  current_mi:0,  interval_days:365, last_days:0},
+  {id:'fuel',      name:'Fuel Filter',        interval_mi:25000, last_mi:0,  current_mi:0,  interval_days:548, last_days:0},
+  {id:'coolant',   name:'Coolant Flush',      interval_mi:60000, last_mi:0,  current_mi:0,  interval_days:730, last_days:0},
+  {id:'plugs',     name:'Spark Plugs',        interval_mi:100000,last_mi:0,  current_mi:0,  interval_days:1095,last_days:0},
+  {id:'diff',      name:'Diff Fluid',         interval_mi:30000, last_mi:0,  current_mi:0,  interval_days:730, last_days:0},
+  {id:'tires',     name:'Tire Rotation',      interval_mi:7500,  last_mi:0,  current_mi:0,  interval_days:180, last_days:0},
+  {id:'brake',     name:'Brake Fluid',        interval_mi:0,     last_mi:0,  current_mi:0,  interval_days:730, last_days:0},
+  {id:'belt',      name:'Serpentine Belt',    interval_mi:60000, last_mi:0,  current_mi:0,  interval_days:1460,last_days:0},
+  {id:'def',       name:'DEF Top-off',        interval_mi:5000,  last_mi:0,  current_mi:0,  interval_days:90,  last_days:0},
+  {id:'pcv',       name:'PCV Valve',          interval_mi:30000, last_mi:0,  current_mi:0,  interval_days:730, last_days:0},
+];
+
+let _items = [];
+let _sortMode = 'priority';
+let _displayData = {};
+
+// ── RING HELPERS ───────────────────────────────────────────
+function ringColor(pct) {
+  // 0% = green, 75% = amber, 100%+ = red
+  if (pct < 60)  return '#00cc44';
+  if (pct < 80)  return '#88cc00';
+  if (pct < 90)  return '#ffaa00';
+  if (pct < 100) return '#ff6600';
+  return '#cc0000';
+}
+
+function priorityLevel(pct) {
+  if (pct >= 95)  return 'high';
+  if (pct >= 70)  return 'med';
+  return 'ok';
+}
+
+function prioritySort(a, b) {
+  const pa = itemPct(a), pb = itemPct(b);
+  return pb - pa; // highest % first
+}
+
+function itemPct(item) {
+  // Use miles if interval_mi > 0, else use days
+  if (item.interval_mi > 0 && item.current_mi > 0) {
+    const driven = item.current_mi - item.last_mi;
+    return Math.min(120, Math.round((driven / item.interval_mi) * 100));
+  }
+  if (item.interval_days > 0 && item.last_days >= 0) {
+    return Math.min(120, Math.round((item.last_days / item.interval_days) * 100));
+  }
+  return 0;
+}
+
+function dueLabel(item) {
+  const pct = itemPct(item);
+  if (item.interval_mi > 0 && item.current_mi > 0) {
+    const remaining = item.interval_mi - (item.current_mi - item.last_mi);
+    if (remaining <= 0) return {text: 'OVERDUE', cls:'over'};
+    if (remaining < 500) return {text: remaining + ' MI', cls:'warn'};
+    return {text: remaining + ' MI', cls:'ok'};
+  }
+  if (item.interval_days > 0) {
+    const remaining = item.interval_days - item.last_days;
+    if (remaining <= 0) return {text: 'OVERDUE', cls:'over'};
+    if (remaining < 30) return {text: remaining + 'd', cls:'warn'};
+    return {text: remaining + 'd', cls:'ok'};
+  }
+  return {text: '---', cls:'ok'};
+}
+
+// ── RENDER CARD ────────────────────────────────────────────
+function buildCard(item) {
+  const pct   = itemPct(item);
+  const color = ringColor(pct);
+  const level = priorityLevel(pct);
+  const due   = dueLabel(item);
+
+  // ring dashoffset: full circle = 0% used, 0 = 100% used
+  const filled  = Math.min(1, pct / 100);
+  const offset  = RING_C * (1 - filled);
+
+  const badgeClass = level === 'high' ? 'badge-high' : level === 'med' ? 'badge-med' : 'badge-ok';
+  const badgeText  = level === 'high' ? 'URGENT' : level === 'med' ? 'SOON' : 'OK';
+
+  const card = document.createElement('div');
+  card.className = `maint-card priority-${level}`;
+  card.id = 'mcard-' + item.id;
+  card.innerHTML = `
+    <div class="ring-wrap">
+      <svg width="52" height="52" viewBox="0 0 52 52">
+        <circle class="ring-bg" cx="26" cy="26" r="${RING_R}"/>
+        <circle class="ring-fill" id="rf-${item.id}"
+          cx="26" cy="26" r="${RING_R}"
+          stroke-dasharray="${RING_C}"
+          stroke-dashoffset="${RING_C}"
+          stroke="${color}"/>
+      </svg>
+      <div class="ring-pct" id="rp-${item.id}" style="color:${color}">--</div>
+    </div>
+    <div class="card-info">
+      <div class="card-name">${item.name}</div>
+      <div class="card-detail" id="cd-det-${item.id}">--</div>
+      <div class="card-due ${due.cls}" id="cd-due-${item.id}">${due.text}</div>
+      <span class="card-priority-badge ${badgeClass}" id="cd-badge-${item.id}">${badgeText}</span>
+    </div>
+  `;
+  return card;
+}
+
+function updateCardValues(item) {
+  const pct    = itemPct(item);
+  const color  = ringColor(pct);
+  const level  = priorityLevel(pct);
+  const due    = dueLabel(item);
+  const filled = Math.min(1, pct / 100);
+  const offset = RING_C * (1 - filled);
+
+  const rf    = document.getElementById('rf-' + item.id);
+  const rp    = document.getElementById('rp-' + item.id);
+  const cdet  = document.getElementById('cd-det-' + item.id);
+  const cdue  = document.getElementById('cd-due-' + item.id);
+  const cbadge= document.getElementById('cd-badge-' + item.id);
+  const card  = document.getElementById('mcard-' + item.id);
+
+  if (rf)  { rf.style.strokeDashoffset = offset; rf.style.stroke = color; }
+  if (rp)  { rp.textContent = pct + '%'; rp.style.color = color; }
+  if (cdet){ cdet.textContent = item.interval_mi > 0 ? 'every ' + item.interval_mi.toLocaleString() + ' mi' : 'every ' + item.interval_days + ' days'; }
+  if (cdue){ cdue.textContent = due.text; cdue.className = 'card-due ' + due.cls; }
+  if (card){ card.className = `maint-card priority-${level}`; }
+
+  const badgeClass = level === 'high' ? 'badge-high' : level === 'med' ? 'badge-med' : 'badge-ok';
+  const badgeText  = level === 'high' ? 'URGENT' : level === 'med' ? 'SOON' : 'OK';
+  if (cbadge){ cbadge.className = 'card-priority-badge ' + badgeClass; cbadge.textContent = badgeText; }
+}
+
+// ── SORT ──────────────────────────────────────────────────
+function setSortMode(mode) {
+  _sortMode = mode;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('sort-' + mode);
+  if (btn) btn.classList.add('active');
+  renderGrid();
+}
+
+function sortedItems() {
+  const copy = [..._items];
+  switch (_sortMode) {
+    case 'due':      return copy.sort((a,b) => itemPct(b) - itemPct(a));
+    case 'pct':      return copy.sort((a,b) => itemPct(b) - itemPct(a));
+    case 'name':     return copy.sort((a,b) => a.name.localeCompare(b.name));
+    case 'priority': default: return copy.sort(prioritySort);
+  }
+}
+
+// ── RENDER GRID ───────────────────────────────────────────
+function renderGrid() {
+  const grid = document.getElementById('items-grid');
+  const sorted = sortedItems();
+  // Clear and re-append in sorted order
+  grid.innerHTML = '';
+  sorted.forEach(item => {
+    const card = buildCard(item);
+    grid.appendChild(card);
+    // Animate ring in on next frame
+    requestAnimationFrame(() => {
+      const rf = document.getElementById('rf-' + item.id);
+      const rp = document.getElementById('rp-' + item.id);
+      const pct    = itemPct(item);
+      const color  = ringColor(pct);
+      const filled = Math.min(1, pct / 100);
+      const offset = RING_C * (1 - filled);
+      if (rf) { rf.style.strokeDashoffset = offset; rf.style.stroke = color; }
+      if (rp) { rp.textContent = pct + '%'; rp.style.color = color; }
+      // Populate detail
+      const cdet = document.getElementById('cd-det-' + item.id);
+      if (cdet) cdet.textContent = item.interval_mi > 0 ? 'every ' + item.interval_mi.toLocaleString() + ' mi' : 'every ' + item.interval_days + ' days';
+    });
+  });
+}
+
+// ── FETCH DATA ────────────────────────────────────────────
+async function fetchMaintenance() {
+  try {
+    const [dispR, maintR] = await Promise.all([
+      fetch('/display_data').then(r=>r.json()).catch(()=>({})),
+      fetch('/maintenance').then(r=>r.json()).catch(()=>null)
+    ]);
+    _displayData = dispR;
+
+    if (maintR && Array.isArray(maintR.items)) {
+      _items = maintR.items;
+    } else {
+      // Enrich default items with mileage from display_data
+      const currentMi = dispR.trip_stats?.total_distance_mi || 0;
+      _items = DEFAULT_ITEMS.map(it => ({...it, current_mi: Math.round(currentMi)}));
+    }
+
+    document.getElementById('items-grid').style.display = '';
+    document.getElementById('offline-mode').style.display = 'none';
+    renderGrid();
+  } catch(e) {
+    // Show offline splash
+    document.getElementById('items-grid').style.display = 'none';
+    document.getElementById('offline-mode').style.display = '';
+  }
+}
+
+// ── OFFLINE COUNTDOWN ─────────────────────────────────────
 let secs = 30;
 const cdEl = document.getElementById('cd');
-const tick = setInterval(() => {
+const countTick = setInterval(() => {
   secs--;
   const m = Math.floor(secs / 60);
   const s = secs % 60;
-  cdEl.textContent = m + ':' + String(s).padStart(2, '0');
+  if (cdEl) cdEl.textContent = m + ':' + String(s).padStart(2, '0');
   if (secs <= 0) {
-    clearInterval(tick);
-    window.location.href = '/';
+    clearInterval(countTick);
+    fetchMaintenance();
+    secs = 30;
   }
 }, 1000);
+
+fetchMaintenance();
+setInterval(fetchMaintenance, 30000);
+
+// ── MAINTENANCE HISTORY (localStorage) ───────────────────
+const HIST_KEY = 'archer_maint_history';
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch(_){ return []; }
+}
+function saveHistory(arr) {
+  localStorage.setItem(HIST_KEY, JSON.stringify(arr));
+}
+
+function renderHistory() {
+  const log   = document.getElementById('history-log');
+  const items = loadHistory();
+  if (!log) return;
+  if (items.length === 0) {
+    log.innerHTML = '<div class="hist-empty">NO SERVICE RECORDS — ADD ONE ABOVE</div>';
+    return;
+  }
+  // Sort by date desc
+  const sorted = [...items].sort((a,b) => new Date(b.date) - new Date(a.date));
+  log.innerHTML = '';
+  sorted.forEach(rec => {
+    const el  = document.createElement('div');
+    el.className = 'hist-entry';
+    const dateStr = rec.date ? new Date(rec.date + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    const costStr = rec.cost ? '$' + parseFloat(rec.cost).toFixed(2) : '';
+    const miStr   = rec.mi   ? rec.mi.toLocaleString() + ' mi' : '';
+    el.innerHTML = `
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <div class="hist-type">${rec.type}</div>
+          ${costStr ? `<div class="hist-mi">${costStr}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:10px;margin-top:2px">
+          <div class="hist-date">${dateStr}</div>
+          ${miStr ? `<div class="hist-mi">${miStr}</div>` : ''}
+        </div>
+        ${rec.notes ? `<div class="hist-note">${rec.notes}</div>` : ''}
+      </div>
+      <button class="hist-del" title="Delete" onclick="deleteRecord('${rec.id}')">✕</button>
+    `;
+    log.appendChild(el);
+  });
+}
+
+function toggleAddForm() {
+  const form = document.getElementById('add-form');
+  const isOpen = form.classList.toggle('open');
+  if (isOpen) {
+    // Pre-fill date with today
+    const today = new Date().toISOString().slice(0,10);
+    document.getElementById('f-date').value = today;
+    // Pre-fill mileage from display_data if available
+    const mi = _displayData.trip_stats?.total_distance_mi;
+    if (mi) document.getElementById('f-mi').value = Math.round(mi);
+  }
+}
+
+function saveRecord() {
+  const type  = document.getElementById('f-type').value.trim();
+  const mi    = document.getElementById('f-mi').value;
+  const date  = document.getElementById('f-date').value;
+  const cost  = document.getElementById('f-cost').value;
+  const notes = document.getElementById('f-notes').value.trim();
+
+  if (!type || !date) { alert('Please fill in Service Type and Date.'); return; }
+
+  const rec = {
+    id:    Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    type,
+    date,
+    mi:    mi    ? parseInt(mi)    : null,
+    cost:  cost  ? parseFloat(cost): null,
+    notes: notes || null
+  };
+
+  const hist = loadHistory();
+  hist.push(rec);
+  saveHistory(hist);
+
+  // Reset form
+  document.getElementById('f-mi').value    = '';
+  document.getElementById('f-cost').value  = '';
+  document.getElementById('f-notes').value = '';
+  document.getElementById('add-form').classList.remove('open');
+
+  renderHistory();
+}
+
+function deleteRecord(id) {
+  const hist = loadHistory().filter(r => r.id !== id);
+  saveHistory(hist);
+  renderHistory();
+}
+
+// Initial history render
+renderHistory();
 </script>
 </body></html>

@@ -1018,16 +1018,79 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ RACE ══════════ -->
     <div class="screen" id="screen-race">
-      <div class="race-dial">11.80</div>
-      <div class="race-dial-lbl">DIAL-IN (seconds)</div>
-      <div class="race-timers">
-        <div class="race-timer-box"><div class="race-timer-val" style="color:var(--text)">0.00</div><div class="race-timer-lbl">60 FT</div></div>
-        <div class="race-timer-box"><div class="race-timer-val" style="color:var(--text)">0.000</div><div class="race-timer-lbl">ET</div></div>
+      <!-- Dial-In (editable) -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div style="flex:1;text-align:center">
+          <div style="font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px">DIAL-IN (s)</div>
+          <input id="race-dial-input" type="number" step="0.01" value="11.80" inputmode="decimal"
+            style="background:#0a0a0a;border:1px solid #cc0000;border-radius:6px;color:var(--red);font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:4px;text-align:center;width:100%;outline:none;padding:4px 0"
+            oninput="raceUpdateSlip()">
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px">RUN ET (s)</div>
+          <input id="race-run-et" type="number" step="0.01" value="0.000" inputmode="decimal"
+            style="background:#0a0a0a;border:1px solid #333;border-radius:6px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:4px;text-align:center;width:100%;outline:none;padding:4px 0"
+            oninput="raceUpdateSlip()">
+        </div>
       </div>
+
+      <!-- ET Slip Calculator -->
+      <div style="background:#080808;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;margin-bottom:8px;font-family:'Share Tech Mono',monospace">
+        <div style="font-size:8px;color:var(--label);letter-spacing:2px;margin-bottom:6px">ET SLIP CALCULATOR</div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="text-align:center">
+            <div style="font-size:8px;color:#555;letter-spacing:1px">DIAL</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--red)" id="slip-dial">11.800</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:8px;color:#555;letter-spacing:1px">ACTUAL ET</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:#fff" id="slip-et">0.000</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:8px;color:#555;letter-spacing:1px">SLIP</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:22px" id="slip-val" style="color:#fff">--</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-size:8px;color:#555;letter-spacing:1px">RESULT</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:2px" id="slip-result">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reaction Time -->
+      <div style="background:#080808;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:8px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:6px">REACTION TIME</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="flex:1;text-align:center">
+            <div id="rt-display" style="font-family:'Bebas Neue',sans-serif;font-size:40px;color:#fff;line-height:1;transition:color 0.3s">--</div>
+            <div style="font-size:8px;color:#444;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px">SECONDS</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+            <button id="rt-arm-btn" onclick="rtArm()" style="background:#0a1a00;border:1px solid #336600;border-radius:5px;color:#00cc44;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;padding:6px 14px;cursor:pointer;text-transform:uppercase">ARM</button>
+            <button onclick="rtReset()" style="background:#1a0000;border:1px solid #440000;border-radius:5px;color:#cc0000;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;padding:6px 14px;cursor:pointer;text-transform:uppercase">RESET</button>
+          </div>
+        </div>
+        <div id="rt-hint" style="font-size:9px;color:#555;text-align:center;letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-top:6px">Tap ARM then touch anywhere to start timer</div>
+      </div>
+
+      <!-- Trap Speed + Records -->
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <div style="flex:1;background:#080808;border:1px solid #1a1a1a;border-radius:6px;padding:8px;text-align:center">
+          <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">TRAP MPH</div>
+          <input id="race-trap-mph" type="number" step="0.1" value="112.0" inputmode="decimal"
+            style="background:transparent;border:none;color:var(--yellow);font-family:'Bebas Neue',sans-serif;font-size:30px;text-align:center;width:100%;outline:none">
+        </div>
+        <div style="flex:1;background:#080808;border:1px solid #1a1a1a;border-radius:6px;padding:8px;text-align:center">
+          <div style="font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace">60 FT</div>
+          <input id="race-60ft" type="number" step="0.01" value="1.48" inputmode="decimal"
+            style="background:transparent;border:none;color:var(--text);font-family:'Bebas Neue',sans-serif;font-size:30px;text-align:center;width:100%;outline:none">
+        </div>
+      </div>
+
       <div class="race-records">
-        <div class="race-rec"><div class="race-rec-val">11.42</div><div class="race-rec-lbl">BEST ET</div></div>
-        <div class="race-rec"><div class="race-rec-val">1.48</div><div class="race-rec-lbl">BEST 60FT</div></div>
-        <div class="race-rec"><div class="race-rec-val">112</div><div class="race-rec-lbl">TRAP MPH</div></div>
+        <div class="race-rec"><div class="race-rec-val" id="race-best-et">11.42</div><div class="race-rec-lbl">BEST ET</div></div>
+        <div class="race-rec"><div class="race-rec-val" id="race-best-60">1.48</div><div class="race-rec-lbl">BEST 60FT</div></div>
+        <div class="race-rec"><div class="race-rec-val" id="race-best-trap">112</div><div class="race-rec-lbl">TRAP MPH</div></div>
       </div>
       <div class="rival-box">
         <div class="rival-name">RIVAL: RED CAMARO</div>
@@ -1374,6 +1437,29 @@ body.day{background:#0d0d0d}
           <div style="font-size:10px;color:#444;font-family:'Share Tech Mono',monospace;letter-spacing:1px">Loading devices...</div>
         </div>
         <button onclick="sysLoadDevices()" style="width:100%;margin-top:8px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:4px;color:#666;font-size:9px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;padding:6px;cursor:pointer">↺ REFRESH</button>
+      </div>
+
+      <!-- SYSTEM LOGS CARD -->
+      <div class="box">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">
+          <span>SYSTEM LOG</span>
+          <div style="display:flex;gap:5px;align-items:center">
+            <span id="log-autoscroll-btn" onclick="logToggleAutoscroll()" style="font-size:8px;letter-spacing:1px;padding:2px 7px;border-radius:3px;border:1px solid #336600;background:#0a1a00;color:#00cc44;cursor:pointer;font-family:'Share Tech Mono',monospace">▼ AUTO</span>
+            <span onclick="logDownload()" style="font-size:8px;letter-spacing:1px;padding:2px 7px;border-radius:3px;border:1px solid #224400;background:#0a1000;color:#669900;cursor:pointer;font-family:'Share Tech Mono',monospace">↓ DL</span>
+          </div>
+        </div>
+        <!-- Filter bar -->
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+          <button id="lf-all"   onclick="logSetFilter('all')"   style="background:#111;border:1px solid #cc0000;color:#cc0000;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;padding:3px 8px;border-radius:3px;cursor:pointer">ALL</button>
+          <button id="lf-error" onclick="logSetFilter('error')" style="background:#111;border:1px solid #333;color:#555;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;padding:3px 8px;border-radius:3px;cursor:pointer">ERROR</button>
+          <button id="lf-warn"  onclick="logSetFilter('warn')"  style="background:#111;border:1px solid #333;color:#555;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;padding:3px 8px;border-radius:3px;cursor:pointer">WARN</button>
+          <button id="lf-info"  onclick="logSetFilter('info')"  style="background:#111;border:1px solid #333;color:#555;font-family:'Share Tech Mono',monospace;font-size:8px;letter-spacing:1px;padding:3px 8px;border-radius:3px;cursor:pointer">INFO</button>
+          <input id="log-search" type="text" placeholder="search..." oninput="logApplyFilter()"
+            style="flex:1;min-width:80px;background:#0d0d0d;border:1px solid #222;border-radius:3px;color:#aaa;font-family:'Share Tech Mono',monospace;font-size:9px;padding:3px 8px;outline:none">
+        </div>
+        <!-- Log output -->
+        <div id="sys-log-out" style="margin-top:6px;height:180px;overflow-y:auto;background:#030303;border:1px solid #0d0d0d;border-radius:4px;padding:6px;font-family:'Share Tech Mono',monospace;font-size:9px;line-height:1.6;display:flex;flex-direction:column;gap:0"></div>
+        <button onclick="sysLoadLog()" style="width:100%;margin-top:6px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:4px;color:#666;font-size:9px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;padding:6px;cursor:pointer">↺ REFRESH LOGS</button>
       </div>
 
     </div>
@@ -2444,6 +2530,115 @@ function _pf060Update(speed) {
   }
   _060prevSpeed = speed;
 }
+
+// ─── RACE TAB — SLIP CALCULATOR + REACTION TIME ─────────────────
+function raceUpdateSlip() {
+  const dial   = parseFloat(document.getElementById('race-dial-input')?.value) || 0;
+  const runEt  = parseFloat(document.getElementById('race-run-et')?.value)    || 0;
+
+  const dialEl   = document.getElementById('slip-dial');
+  const etEl     = document.getElementById('slip-et');
+  const slipEl   = document.getElementById('slip-val');
+  const resultEl = document.getElementById('slip-result');
+
+  if (dialEl)   dialEl.textContent   = dial.toFixed(3);
+  if (etEl)     etEl.textContent     = runEt.toFixed(3);
+
+  if (runEt > 0 && dial > 0 && slipEl && resultEl) {
+    const slip = runEt - dial;
+    slipEl.textContent = (slip >= 0 ? '+' : '') + slip.toFixed(3);
+    if (slip < 0) {
+      // Break-out: ran under dial
+      slipEl.style.color = '#cc0000';
+      resultEl.textContent = 'BREAK-OUT';
+      resultEl.style.color = '#cc0000';
+    } else if (slip < 0.1) {
+      slipEl.style.color = '#00cc44';
+      resultEl.textContent = 'WIN ZONE';
+      resultEl.style.color = '#00cc44';
+    } else if (slip < 0.3) {
+      slipEl.style.color = '#ffaa00';
+      resultEl.textContent = 'CLOSE';
+      resultEl.style.color = '#ffaa00';
+    } else {
+      slipEl.style.color = '#888';
+      resultEl.textContent = 'OFF PACE';
+      resultEl.style.color = '#888';
+    }
+  } else if (slipEl) {
+    slipEl.textContent = '--';
+    slipEl.style.color = '#555';
+    if (resultEl) { resultEl.textContent = '--'; resultEl.style.color = '#555'; }
+  }
+}
+
+// Reaction time
+let _rtState   = 'idle'; // idle | armed | waiting | running | done
+let _rtStart   = 0;
+let _rtResult  = null;
+
+function rtArm() {
+  _rtState = 'waiting';
+  const btn  = document.getElementById('rt-arm-btn');
+  const disp = document.getElementById('rt-display');
+  const hint = document.getElementById('rt-hint');
+  if (btn)  { btn.textContent = 'WAIT...'; btn.style.borderColor = '#ffaa00'; btn.style.color = '#ffaa00'; }
+  if (disp) { disp.textContent = 'ARM'; disp.style.color = '#ffaa00'; }
+  if (hint) hint.textContent = 'Touch anywhere when the light goes green!';
+
+  // Random delay 1.5s–3.5s before "go"
+  const delay = 1500 + Math.random() * 2000;
+  setTimeout(() => {
+    if (_rtState !== 'waiting') return;
+    _rtState = 'running';
+    _rtStart = performance.now();
+    if (disp) { disp.textContent = 'GO!'; disp.style.color = '#00cc44'; }
+    if (btn)  { btn.textContent = 'TOUCH!'; btn.style.borderColor = '#00cc44'; btn.style.color = '#00cc44'; btn.style.background = '#001a00'; }
+  }, delay);
+}
+
+function rtTouch(e) {
+  if (_rtState === 'running') {
+    const rt = ((performance.now() - _rtStart) / 1000);
+    _rtResult = rt;
+    _rtState  = 'done';
+    const disp = document.getElementById('rt-display');
+    const btn  = document.getElementById('rt-arm-btn');
+    const hint = document.getElementById('rt-hint');
+    if (disp) { disp.textContent = rt.toFixed(3); disp.style.color = rt < 0.5 ? '#00cc44' : rt < 0.7 ? '#ffaa00' : '#cc0000'; }
+    if (btn)  { btn.textContent = 'ARM'; btn.style.borderColor = '#336600'; btn.style.color = '#00cc44'; btn.style.background = '#0a1a00'; }
+    if (hint) hint.textContent = rt < 0.5 ? 'Pro reaction!' : rt < 0.7 ? 'Good — keep practicing' : 'Slow — work on your cut';
+    e.preventDefault();
+  } else if (_rtState === 'waiting') {
+    // Red-light: touched too early
+    _rtState = 'done';
+    const disp = document.getElementById('rt-display');
+    if (disp) { disp.textContent = 'RED!'; disp.style.color = '#cc0000'; }
+    const hint = document.getElementById('rt-hint');
+    if (hint) hint.textContent = 'Red light! You jumped the start.';
+    rtReset();
+  }
+}
+
+function rtReset() {
+  _rtState = 'idle';
+  const btn  = document.getElementById('rt-arm-btn');
+  const disp = document.getElementById('rt-display');
+  const hint = document.getElementById('rt-hint');
+  if (btn)  { btn.textContent = 'ARM'; btn.style.borderColor = '#336600'; btn.style.color = '#00cc44'; btn.style.background = '#0a1a00'; }
+  if (disp) { disp.textContent = _rtResult !== null ? _rtResult.toFixed(3) : '--'; disp.style.color = '#fff'; }
+  if (hint) hint.textContent = 'Tap ARM then touch anywhere to start timer';
+}
+
+// Attach touch/click listener to the whole screen for reaction time
+document.addEventListener('DOMContentLoaded', () => {
+  const raceScreen = document.getElementById('screen-race');
+  if (raceScreen) {
+    raceScreen.addEventListener('touchstart', rtTouch, {passive:false});
+    raceScreen.addEventListener('mousedown',  rtTouch);
+  }
+  raceUpdateSlip();
+});
 
 function requestGPS() {
   if (!navigator.geolocation) return;
@@ -3517,8 +3712,123 @@ async function sysLoadDevices() {
 const _origSetTab = setTab;
 setTab = function(name) {
   _origSetTab(name);
-  if (name === 'sys') { sysLoadCode(); sysLoadDevices(); }
+  if (name === 'sys') { sysLoadCode(); sysLoadDevices(); sysLoadLog(); }
 };
+
+// ─── SYSTEM LOGS ──────────────────────────────────────────
+let _logRaw       = [];
+let _logFilter    = 'all';
+let _logAutoScroll = true;
+let _logSearchTerm = '';
+
+function logLevelColor(lvl) {
+  switch((lvl||'').toLowerCase()) {
+    case 'error': case 'critical': return '#cc3300';
+    case 'warn':  case 'warning':  return '#ffaa00';
+    case 'info':  return '#00cc44';
+    default:      return '#555';
+  }
+}
+function logLevelBg(lvl) {
+  switch((lvl||'').toLowerCase()) {
+    case 'error': case 'critical': return 'rgba(80,0,0,0.2)';
+    case 'warn':  case 'warning':  return 'rgba(50,35,0,0.2)';
+    case 'info':  return 'rgba(0,40,10,0.15)';
+    default:      return 'transparent';
+  }
+}
+
+function logSetFilter(f) {
+  _logFilter = f;
+  // Update button styles
+  ['all','error','warn','info'].forEach(k => {
+    const btn = document.getElementById('lf-' + k);
+    if (!btn) return;
+    const active = k === f;
+    const colors = {all:'#cc0000',error:'#cc3300',warn:'#ffaa00',info:'#00cc44'};
+    const col = colors[k] || '#cc0000';
+    btn.style.borderColor = active ? col : '#333';
+    btn.style.color       = active ? col : '#555';
+    btn.style.background  = active ? 'rgba(0,0,0,0.4)' : '#111';
+  });
+  logApplyFilter();
+}
+
+function logApplyFilter() {
+  _logSearchTerm = (document.getElementById('log-search')?.value || '').toLowerCase();
+  const out = document.getElementById('sys-log-out');
+  if (!out) return;
+  out.innerHTML = '';
+  const filtered = _logRaw.filter(entry => {
+    const lvl = (entry.level || '').toLowerCase();
+    const matchLevel = _logFilter === 'all'
+      || (_logFilter === 'error' && (lvl === 'error' || lvl === 'critical'))
+      || (_logFilter === 'warn'  && (lvl === 'warn'  || lvl === 'warning'))
+      || (_logFilter === 'info'  && lvl === 'info');
+    const matchSearch = !_logSearchTerm || (entry.message || '').toLowerCase().includes(_logSearchTerm) || lvl.includes(_logSearchTerm);
+    return matchLevel && matchSearch;
+  });
+
+  if (filtered.length === 0) {
+    out.innerHTML = '<div style="color:#333;font-size:9px;padding:8px 0;text-align:center;letter-spacing:2px">NO LOG ENTRIES</div>';
+    return;
+  }
+  filtered.forEach(entry => {
+    const div  = document.createElement('div');
+    const col  = logLevelColor(entry.level);
+    const bg   = logLevelBg(entry.level);
+    const ts   = entry.ts ? entry.ts.split('T').pop().split('.')[0] : '';
+    const lvl  = (entry.level || 'info').toUpperCase().slice(0,5).padEnd(5,' ');
+    div.style.cssText = `padding:1px 4px;border-left:2px solid ${col};margin-bottom:1px;background:${bg};border-radius:1px`;
+    div.innerHTML = `<span style="color:#333;margin-right:4px">${ts}</span><span style="color:${col};margin-right:5px">[${lvl}]</span><span style="color:#888">${_escHtml(entry.message || '')}</span>`;
+    out.appendChild(div);
+  });
+  if (_logAutoScroll) out.scrollTop = out.scrollHeight;
+}
+
+function _escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function sysLoadLog() {
+  try {
+    const r = await fetch('/logs');
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    _logRaw = Array.isArray(d.logs) ? d.logs : [];
+    logApplyFilter();
+  } catch(e) {
+    _logRaw = [{level:'warn',message:'Could not fetch logs — ' + e,ts:''}];
+    logApplyFilter();
+  }
+}
+
+function logToggleAutoscroll() {
+  _logAutoScroll = !_logAutoScroll;
+  const btn = document.getElementById('log-autoscroll-btn');
+  if (btn) {
+    btn.style.borderColor = _logAutoScroll ? '#336600' : '#444';
+    btn.style.color       = _logAutoScroll ? '#00cc44' : '#555';
+    btn.style.background  = _logAutoScroll ? '#0a1a00' : '#111';
+    btn.textContent       = (_logAutoScroll ? '▼ ' : '— ') + 'AUTO';
+  }
+  if (_logAutoScroll) {
+    const out = document.getElementById('sys-log-out');
+    if (out) out.scrollTop = out.scrollHeight;
+  }
+}
+
+function logDownload() {
+  const lines = _logRaw.map(e => `[${e.ts||''}] [${(e.level||'').toUpperCase()}] ${e.message||''}`).join('\n');
+  const blob = new Blob([lines], {type:'text/plain'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'archer_log_' + new Date().toISOString().slice(0,10) + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
 
 </script>
 </body>
