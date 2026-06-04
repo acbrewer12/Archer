@@ -25,7 +25,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .header{background:#000;border-bottom:2px solid var(--amber);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 .header-left{display:flex;flex-direction:column;gap:1px}
 .header-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:5px;color:var(--amber)}
-.header-sub{font-size:8px;color:#555;letter-spacing:3px}
+.header-sub{font-size:8px;color:#777;letter-spacing:3px}
 .header-right{text-align:right}
 .header-time{font-size:16px;color:var(--amber);letter-spacing:2px}
 .recording-badge{background:#1a0000;border:1px solid var(--red);border-radius:4px;padding:2px 8px;font-size:8px;color:var(--red);letter-spacing:2px;display:flex;align-items:center;gap:4px;margin-top:2px;justify-content:flex-end}
@@ -58,12 +58,12 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .rpm-val{font-size:14px;color:#fff;letter-spacing:1px}
 .rpm-bar-bg{background:#111;border-radius:3px;height:10px;overflow:hidden;border:1px solid var(--border)}
 .rpm-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 40%,var(--amber) 60%,var(--red) 85%,#ff0000 100%);transition:width 0.3s,box-shadow 0.3s;will-change:width;transform:translateZ(0)}
-.rpm-markers{display:flex;justify-content:space-between;font-size:7px;color:#333;margin-top:3px;padding:0 1px}
+.rpm-markers{display:flex;justify-content:space-between;font-size:7px;color:#555;margin-top:3px;padding:0 1px}
 
 /* STATS GRID */
 .stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;width:100%}
 .stat-box{background:var(--bg2);border:1px solid #222;border-radius:6px;padding:10px 6px;text-align:center;min-width:0;overflow:hidden}
-.stat-label{font-size:7px;color:#666;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase}
+.stat-label{font-size:7px;color:#777;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase}
 .stat-val{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:1px;transition:color 0.3s;will-change:color;transform:translateZ(0)}
 
 /* EVENT LOG */
@@ -77,8 +77,8 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .log-event{color:var(--text2);letter-spacing:0.5px;flex:1}
 .log-event.warn{color:var(--amber)}
 .log-event.alert{color:var(--red)}
-.log-time{color:#333;letter-spacing:1px;flex-shrink:0;margin-left:8px;font-size:8px}
-.log-empty{font-size:10px;color:#444;text-align:center;padding:12px 0;letter-spacing:2px}
+.log-time{color:#555;letter-spacing:1px;flex-shrink:0;margin-left:8px;font-size:8px}
+.log-empty{font-size:10px;color:#666;text-align:center;padding:12px 0;letter-spacing:2px}
 
 /* ARCHER MESSAGE */
 .archer-section{background:#050505;border:1px solid #2a1a00;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
@@ -91,12 +91,12 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 .limits-title{font-size:8px;color:var(--amber);letter-spacing:3px;margin-bottom:8px}
 .limit-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #111;font-size:9px;gap:8px}
 .limit-row:last-child{border-bottom:none}
-.limit-name{color:#666;letter-spacing:1px;flex:1}
+.limit-name{color:#777;letter-spacing:1px;flex:1}
 .limit-val{color:var(--amber);letter-spacing:1px;text-align:right;white-space:nowrap;font-weight:bold}
 
 /* FOOTER */
 .footer{background:#000;border-top:1px solid #111;padding:5px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-.footer-item{font-size:8px;color:#444;letter-spacing:1px}
+.footer-item{font-size:8px;color:#666;letter-spacing:1px}
 .footer-item.hot{color:var(--red)}
 
 /* OVER LIMIT FLASH */
@@ -362,7 +362,7 @@ function renderLog() {
   list.innerHTML = filtered.slice(0, 50).map(e => `
     <div class="log-item" style="border-left:2px solid ${levelColor[e.level] || '#333'};padding-left:6px">
       <div class="log-event ${e.level}">${e.text}</div>
-      <div class="log-time" style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#333;flex-shrink:0;margin-left:6px">${e.time}</div>
+      <div class="log-time" style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#555;flex-shrink:0;margin-left:6px">${e.time}</div>
     </div>`).join('');
 
   count.textContent  = eventLog.length + ' EVENT' + (eventLog.length !== 1 ? 'S' : '');

@@ -268,6 +268,14 @@ body.day{background:#0d0d0d}
 .hok{color:var(--green)}.hwarn{color:var(--yellow)}.hbad{color:var(--red)}
 .hdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-left:6px}
 .dok{background:var(--green)}.dwarn{background:var(--yellow)}.dbad{background:var(--red)}
+/* TPMS four-wheel cells */
+.tpms-cell{display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-family:'Share Tech Mono',monospace}
+.tpms-pos{font-size:8px;color:var(--text3);letter-spacing:1px;width:14px;flex-shrink:0}
+.tpms-psi{font-size:13px;color:var(--green);font-family:'Bebas Neue',sans-serif;letter-spacing:1px;transition:color 0.3s;will-change:color}
+.tpms-unit{font-size:7px;color:var(--label);letter-spacing:1px;align-self:flex-end;padding-bottom:1px}
+.tpms-cell.tpms-warn .tpms-psi{color:var(--yellow)}
+.tpms-cell.tpms-low  .tpms-psi{color:var(--red);animation:tpms-blink 1s step-end infinite}
+@keyframes tpms-blink{0%,100%{opacity:1}50%{opacity:0.3}}
 
 /* ═══════════════════════════════════════
    SCREEN: RACE
@@ -373,10 +381,20 @@ body.day{background:#0d0d0d}
    SCREEN: CAMS
 ═══════════════════════════════════════ */
 .cam-feed{background:var(--bg3);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative}
-.cam-overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:6px 8px;pointer-events:none}
-.cam-label{font-size:8px;color:#fff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px;display:inline-block}
-.cam-status{font-size:7px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px;display:inline-block;align-self:flex-end}
-.cam-placeholder{width:100%;height:100px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px}
+.cam-overlay{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:5px 7px;pointer-events:none}
+.cam-overlay-top{display:flex;justify-content:space-between;align-items:flex-start}
+.cam-overlay-bot{display:flex;justify-content:space-between;align-items:flex-end}
+.cam-label{font-size:8px;color:#fff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.65);padding:2px 6px;border-radius:2px;display:inline-block}
+.cam-status{font-size:7px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;background:rgba(0,0,0,0.65);padding:2px 5px;border-radius:2px;display:inline-block}
+.cam-placeholder{width:100%;height:100%;min-height:80px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px}
+/* Camera action buttons (shown on hover via pointer-events:all) */
+.cam-actions{display:flex;gap:4px;pointer-events:all}
+.cam-btn{background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.15);border-radius:3px;color:#fff;font-size:9px;padding:3px 7px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:1px;transition:background 0.15s;line-height:1}
+.cam-btn:hover{background:rgba(204,0,0,0.7);border-color:rgba(204,0,0,0.5)}
+/* Snapshot flash animation */
+@keyframes snapflash{0%,100%{opacity:0}30%{opacity:0.9}70%{opacity:0.6}}
+.cam-snap-flash{position:absolute;inset:0;background:#fff;pointer-events:none;opacity:0}
+.cam-snap-flash.active{animation:snapflash 0.4s ease-out}
 .cam-icon{font-size:28px;opacity:0.3}
 .cam-offline{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
 .cam-grid-small{display:grid;grid-template-columns:1fr 1fr;gap:3px}
@@ -603,6 +621,27 @@ body.day{background:#0d0d0d}
   .sensor-grid { grid-template-columns: repeat(8, 1fr); }
   .row2 { grid-template-columns: repeat(6, 1fr); }
 }
+/* ── EASTER EGG OVERLAY ───────────────────────────────────────── */
+#ee-overlay{position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;pointer-events:none;opacity:0;transform:scale(1.04);transition:opacity 0.35s ease,transform 0.35s ease}
+#ee-overlay.active{opacity:1;transform:scale(1);pointer-events:all}
+#ee-glow{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(204,0,0,0.35) 0%,transparent 70%);animation:ee-pulse 1.2s ease-in-out infinite;pointer-events:none}
+@keyframes ee-pulse{0%,100%{opacity:0.6}50%{opacity:1}}
+#ee-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(48px,14vw,96px);letter-spacing:10px;color:#cc0000;text-shadow:0 0 40px rgba(204,0,0,0.8),0 0 80px rgba(204,0,0,0.4);animation:ee-flicker 2s ease-in-out infinite}
+@keyframes ee-flicker{0%,90%,100%{opacity:1}92%{opacity:0.85}95%{opacity:1}97%{opacity:0.9}}
+#ee-sub{font-family:'Share Tech Mono',monospace;font-size:clamp(10px,2.5vw,14px);letter-spacing:4px;color:#888;text-align:center;line-height:1.8}
+#ee-ver{font-family:'Share Tech Mono',monospace;font-size:clamp(8px,2vw,11px);letter-spacing:6px;color:#cc0000;margin-top:8px;opacity:0.7}
+#ee-close{margin-top:24px;background:transparent;border:1px solid #333;border-radius:4px;color:#555;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:3px;padding:8px 24px;cursor:pointer;transition:border-color 0.2s,color 0.2s}
+#ee-close:hover{border-color:#cc0000;color:#fff}
+#ee-scanlines{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.12) 2px,rgba(0,0,0,0.12) 4px);pointer-events:none}
+/* ── KEYBOARD SHORTCUTS HINT OVERLAY ──────────────────────────── */
+#kb-hint{position:fixed;bottom:60px;right:12px;z-index:9000;background:rgba(10,10,10,0.93);border:1px solid #333;border-radius:8px;padding:10px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:#999;line-height:1.8;pointer-events:none;opacity:0;transform:translateY(6px) scale(0.97);transition:opacity 0.18s,transform 0.18s;will-change:opacity,transform;max-width:200px}
+#kb-hint.visible{opacity:1;transform:translateY(0) scale(1)}
+#kb-hint .kb-row{display:flex;justify-content:space-between;gap:12px}
+#kb-hint .kb-key{background:#222;border:1px solid #444;border-radius:3px;padding:0 5px;color:#ccc;font-size:9px;letter-spacing:1px}
+#kb-hint .kb-sep{border-top:1px solid #2a2a2a;margin:5px 0}
+#kb-toggle{position:fixed;bottom:60px;right:12px;z-index:8999;background:rgba(10,10,10,0.7);border:1px solid #333;border-radius:4px;color:#555;font-family:'Share Tech Mono',monospace;font-size:9px;padding:3px 7px;cursor:pointer;letter-spacing:1px;display:none}
+#kb-toggle:hover{color:#aaa;border-color:#555}
+@media(min-width:800px){#kb-toggle{display:block}}
 </style>
 </head>
 <body>
@@ -654,6 +693,29 @@ body.day{background:#0d0d0d}
 
   <!-- SPEED LOCK BANNER -->
   <div class="speed-lock" id="speed-lock">⚠ MOVING — TAB SWITCHING LOCKED — EYES ON ROAD</div>
+
+  <!-- EASTER EGG OVERLAY -->
+  <div id="ee-overlay">
+    <div id="ee-glow"></div>
+    <div id="ee-scanlines"></div>
+    <div id="ee-title">ARCHER</div>
+    <div id="ee-sub">TRUCK AI SYSTEM<br>AYDEN BREWER — 2026</div>
+    <div id="ee-ver">ARCHER OS v1.0</div>
+    <button id="ee-close" onclick="eeClose()">[ DISMISS ]</button>
+  </div>
+
+  <!-- KEYBOARD SHORTCUT HINT OVERLAY (desktop only) -->
+  <button id="kb-toggle" onclick="kbHintToggle()" title="Keyboard shortcuts">⌨ KB</button>
+  <div id="kb-hint">
+    <div style="color:#cc0000;letter-spacing:2px;font-size:9px;margin-bottom:6px">KEYBOARD SHORTCUTS</div>
+    <div class="kb-row"><span><span class="kb-key">D</span> Drive</span><span><span class="kb-key">H</span> Health</span></div>
+    <div class="kb-row"><span><span class="kb-key">P</span> Perf</span><span><span class="kb-key">L</span> Live</span></div>
+    <div class="kb-row"><span><span class="kb-key">M</span> Music</span><span><span class="kb-key">C</span> Cams</span></div>
+    <div class="kb-row"><span><span class="kb-key">V</span> Voice</span><span><span class="kb-key">R</span> Race</span></div>
+    <div class="kb-sep"></div>
+    <div class="kb-row"><span><span class="kb-key">←</span><span class="kb-key">→</span> Prev/Next tab</span></div>
+    <div class="kb-row"><span><span class="kb-key">Esc</span> Close hints</span></div>
+  </div>
 
   <!-- TIER 2 REQUEST BANNER -->
   <div class="t2-notify" id="t2-notify">
@@ -938,7 +1000,20 @@ body.day{background:#0d0d0d}
       <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok" id="hl-clt-val">190°F ✓</span><span class="hdot dok" id="hl-clt-dot"></span></div>
       <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn" id="hl-trans-val">162°F !</span><span class="hdot dwarn" id="hl-trans-dot"></span></div>
       <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hok" id="hl-fuel-val">-- GAL ✓</span><span class="hdot dok" id="hl-fuel-dot"></span></div>
-      <div class="health-item"><span class="health-name">TIRE PRESSURE</span><span class="health-val hok">34/34/34/34 ✓</span><span class="hdot dok"></span></div>
+      <!-- TPMS — four-wheel live display -->
+      <div class="health-item" id="hl-tpms-row" style="flex-direction:column;align-items:stretch;gap:4px;padding-bottom:6px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="health-name">TIRE PRESSURE</span>
+          <span class="health-val hok" id="hl-tpms-summary">-- / -- / -- / --</span>
+          <span class="hdot dok" id="hl-tpms-dot"></span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:0 2px">
+          <div class="tpms-cell" id="tpms-fl"><span class="tpms-pos">FL</span><span class="tpms-psi" id="tpms-fl-val">--</span><span class="tpms-unit">PSI</span></div>
+          <div class="tpms-cell" id="tpms-fr"><span class="tpms-pos">FR</span><span class="tpms-psi" id="tpms-fr-val">--</span><span class="tpms-unit">PSI</span></div>
+          <div class="tpms-cell" id="tpms-rl"><span class="tpms-pos">RL</span><span class="tpms-psi" id="tpms-rl-val">--</span><span class="tpms-unit">PSI</span></div>
+          <div class="tpms-cell" id="tpms-rr"><span class="tpms-pos">RR</span><span class="tpms-psi" id="tpms-rr-val">--</span><span class="tpms-unit">PSI</span></div>
+        </div>
+      </div>
       <div class="health-item" style="cursor:pointer" onclick="toggleFaultDetail()">
         <span class="health-name">FAULT CODES</span>
         <span class="health-val hok" id="hl-fault-val">NONE ✓</span>
@@ -1296,38 +1371,69 @@ body.day{background:#0d0d0d}
     <!-- ══════════ CAMS ══════════ -->
     <div class="screen" id="screen-cams">
       <!-- Main cam - large -->
-      <div class="cam-feed" style="height:140px">
+      <div class="cam-feed" id="cam-front" style="height:140px">
         <div class="cam-placeholder">
           <div class="cam-icon">📷</div>
           <div class="cam-offline">FRONT CAM — OFFLINE</div>
           <div style="font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:2px">Connect Pi camera to activate</div>
         </div>
+        <div class="cam-snap-flash" id="flash-front"></div>
         <div class="cam-overlay">
-          <span class="cam-label">FRONT — WIDE</span>
-          <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+          <div class="cam-overlay-top">
+            <span class="cam-label">FRONT — WIDE</span>
+            <span class="cam-status" id="cstat-front" style="color:var(--red)">● OFFLINE</span>
+          </div>
+          <div class="cam-overlay-bot">
+            <span style="font-size:7px;color:rgba(255,255,255,0.4);font-family:'Share Tech Mono',monospace">MJPEG /cam/front</span>
+            <div class="cam-actions">
+              <button class="cam-btn" onclick="camSnapshot('front')">SNAP</button>
+              <button class="cam-btn" onclick="camPiP('front')">PiP</button>
+              <button class="cam-btn" onclick="camFullscreen('front')">FS</button>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Small cam grid -->
       <div class="cam-grid-small">
-        <div class="cam-feed" style="height:90px">
+        <div class="cam-feed" id="cam-rear" style="height:90px">
           <div class="cam-placeholder">
             <div class="cam-icon" style="font-size:20px">📷</div>
             <div class="cam-offline" style="font-size:7px">REAR — OFFLINE</div>
           </div>
+          <div class="cam-snap-flash" id="flash-rear"></div>
           <div class="cam-overlay">
-            <span class="cam-label">REAR</span>
-            <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+            <div class="cam-overlay-top">
+              <span class="cam-label">REAR</span>
+              <span class="cam-status" id="cstat-rear" style="color:var(--red)">● OFFLINE</span>
+            </div>
+            <div class="cam-overlay-bot">
+              <span></span>
+              <div class="cam-actions">
+                <button class="cam-btn" onclick="camSnapshot('rear')">SNAP</button>
+                <button class="cam-btn" onclick="camFullscreen('rear')">FS</button>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="cam-feed" style="height:90px">
+        <div class="cam-feed" id="cam-cabin" style="height:90px">
           <div class="cam-placeholder">
             <div class="cam-icon" style="font-size:20px">📷</div>
             <div class="cam-offline" style="font-size:7px">CABIN — OFFLINE</div>
           </div>
+          <div class="cam-snap-flash" id="flash-cabin"></div>
           <div class="cam-overlay">
-            <span class="cam-label">CABIN</span>
-            <span class="cam-status" style="color:var(--red)">● OFFLINE</span>
+            <div class="cam-overlay-top">
+              <span class="cam-label">CABIN</span>
+              <span class="cam-status" id="cstat-cabin" style="color:var(--red)">● OFFLINE</span>
+            </div>
+            <div class="cam-overlay-bot">
+              <span></span>
+              <div class="cam-actions">
+                <button class="cam-btn" onclick="camSnapshot('cabin')">SNAP</button>
+                <button class="cam-btn" onclick="camFullscreen('cabin')">FS</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1361,28 +1467,64 @@ body.day{background:#0d0d0d}
         <button onclick="t1ConnectSpotify()" style="background:#1db954;border:none;border-radius:24px;padding:12px 28px;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:2px;font-family:monospace;margin-top:4px;box-shadow:0 0 20px rgba(29,185,84,0.4)">CONNECT SPOTIFY</button>
       </div>
       <div id="t1-spotify-connected" style="display:none;flex-direction:column;gap:6px">
-        <div class="box" style="display:flex;align-items:center;gap:10px">
-          <img id="t1-np-art" src="" style="width:48px;height:48px;border-radius:5px;object-fit:cover;display:none;border:1px solid var(--border);flex-shrink:0">
-          <div id="t1-np-disc" style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle,#330000,#0a0000);border:2px solid var(--red);flex-shrink:0"></div>
-          <div style="flex:1;min-width:0">
-            <div id="t1-np-title" style="font-size:12px;color:var(--text);font-family:'Share Tech Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Loading...</div>
-            <div id="t1-np-artist" style="font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
-            <div style="background:var(--bg3);border-radius:2px;height:3px;overflow:hidden;margin-top:5px"><div id="t1-np-fill" style="height:100%;background:var(--red);width:0%;transition:width 0.5s"></div></div>
-            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:2px"><span id="t1-np-cur">0:00</span><span id="t1-np-dur">0:00</span></div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-            <div style="display:flex;gap:5px">
-              <button onclick="t1SpotifyPrev()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 8px;cursor:pointer;font-size:12px">⏮</button>
-              <button id="t1-play-btn" onclick="t1SpotifyToggle()" style="background:var(--red);border:none;color:#fff;border-radius:3px;padding:5px 12px;cursor:pointer;font-size:14px">▶</button>
-              <button onclick="t1SpotifyNext()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 8px;cursor:pointer;font-size:12px">⏭</button>
+
+        <!-- NOW PLAYING — art + info -->
+        <div class="box" style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <!-- Album Art (large) -->
+            <div style="position:relative;flex-shrink:0">
+              <img id="t1-np-art" src="" style="width:72px;height:72px;border-radius:6px;object-fit:cover;display:none;border:1px solid var(--border)">
+              <div id="t1-np-disc" style="width:72px;height:72px;border-radius:50%;background:radial-gradient(circle,#330000,#0a0000);border:2px solid var(--red)"></div>
             </div>
-            <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:100%;accent-color:#cc0000">
+            <!-- Track info + waveform -->
+            <div style="flex:1;min-width:0">
+              <div id="t1-np-title" style="font-size:13px;color:var(--text);font-family:'Share Tech Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Loading...</div>
+              <div id="t1-np-artist" style="font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
+              <div id="t1-np-album" style="font-size:8px;color:#444;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'Share Tech Mono',monospace;letter-spacing:1px"></div>
+              <!-- Waveform visualization -->
+              <div id="t1-waveform" style="display:flex;align-items:flex-end;gap:2px;height:20px;margin-top:6px;opacity:0.8"></div>
+            </div>
+            <!-- Controls -->
+            <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;align-items:center">
+              <div style="display:flex;gap:4px">
+                <button onclick="t1SpotifyPrev()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 7px;cursor:pointer;font-size:12px">⏮</button>
+                <button id="t1-play-btn" onclick="t1SpotifyToggle()" style="background:var(--red);border:none;color:#fff;border-radius:3px;padding:5px 10px;cursor:pointer;font-size:14px">▶</button>
+                <button onclick="t1SpotifyNext()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text3);border-radius:3px;padding:5px 7px;cursor:pointer;font-size:12px">⏭</button>
+              </div>
+              <input type="range" id="t1-vol" min="0" max="100" value="50" oninput="t1SpotifyVolume(this.value)" style="width:80px;accent-color:#cc0000">
+            </div>
+          </div>
+
+          <!-- Progress bar with time -->
+          <div>
+            <div style="background:var(--bg3);border-radius:2px;height:4px;overflow:hidden;cursor:pointer" onclick="t1SeekSpotify(event, this)">
+              <div id="t1-np-fill" style="height:100%;background:linear-gradient(90deg,var(--red),#ff6600);width:0%;transition:width 0.8s linear;will-change:width"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--label);font-family:'Share Tech Mono',monospace;margin-top:3px">
+              <span id="t1-np-cur">0:00</span>
+              <span id="t1-np-pct" style="color:#555">0%</span>
+              <span id="t1-np-dur">0:00</span>
+            </div>
           </div>
         </div>
+
+        <!-- Lyrics placeholder -->
+        <div class="box">
+          <div class="section-title" style="display:flex;justify-content:space-between">
+            <span>LYRICS</span>
+            <span style="font-size:8px;color:#444;font-family:'Share Tech Mono',monospace;letter-spacing:1px">PLACEHOLDER</span>
+          </div>
+          <div id="t1-lyrics" style="font-size:11px;color:#555;line-height:1.8;font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-top:6px;min-height:48px;font-style:italic">
+            Lyrics integration requires LRC/Musixmatch API.<br>Connect to enable real-time sync.
+          </div>
+        </div>
+
+        <!-- DJ + disconnect -->
         <div style="display:flex;justify-content:space-between;align-items:center;padding:0 2px 2px">
           <div id="t1-dj-btn" onclick="t1ToggleDJ()" style="background:#0d0000;border:1px solid var(--red);border-radius:3px;padding:4px 10px;color:var(--red);font-size:9px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:2px">🎙 ARCHER DJ: OFF</div>
           <button onclick="t1SpotifyDisconnect()" style="background:none;border:1px solid #333;border-radius:3px;padding:2px 8px;color:#555;font-size:9px;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:1px">DISCONNECT</button>
         </div>
+
         <div class="box">
           <div class="section-title">PLAYLISTS</div>
           <div id="t1-playlist-list" style="font-size:10px;color:var(--label);font-family:'Share Tech Mono',monospace">Loading...</div>
@@ -1575,6 +1717,62 @@ function autoForceDrive() {
     showVoiceResponse('Moving. Switching to drive screen.');
   }
 }
+
+// ─── KEYBOARD SHORTCUTS ──────────────────────────────────────────
+const KB_MAP = {
+  'd': 'drive',
+  'h': 'health',
+  'p': 'perf',
+  'l': 'live',
+  'm': 'music',
+  'c': 'cams',
+  'v': null,          // open voice input
+  'r': 'race',
+  's': 'sys',
+  'g': 'graphs',
+};
+let _kbHintVisible = false;
+
+function kbHintToggle(forceState) {
+  const panel = document.getElementById('kb-hint');
+  if (!panel) return;
+  _kbHintVisible = (forceState !== undefined) ? forceState : !_kbHintVisible;
+  panel.classList.toggle('visible', _kbHintVisible);
+}
+
+function kbTabByOffset(delta) {
+  const idx = TAB_NAMES.indexOf(currentTab);
+  if (idx < 0) return;
+  const next = (idx + delta + TAB_NAMES.length) % TAB_NAMES.length;
+  setTab(TAB_NAMES[next]);
+}
+
+document.addEventListener('keydown', function(e) {
+  // Ignore when typing in an input/textarea
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+
+  if (e.key === 'Escape') {
+    kbHintToggle(false);
+    return;
+  }
+  if (e.key === 'ArrowRight') { e.preventDefault(); kbTabByOffset(+1); return; }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); kbTabByOffset(-1); return; }
+  if (e.key === '?')          { kbHintToggle(); return; }
+
+  const key = e.key.toLowerCase();
+  if (!(key in KB_MAP)) return;
+
+  if (key === 'v') {
+    // Focus voice input
+    const vi = document.getElementById('voice-input');
+    if (vi) { vi.focus(); vi.select(); }
+    return;
+  }
+
+  const tab = KB_MAP[key];
+  if (tab) setTab(tab);
+});
 
 // ─── NIGHT MODE SYSTEM ───
 // Modes: 'auto' | 'day' | 'night' | 'red'
@@ -2157,6 +2355,30 @@ async function pollLive() {
           }).join('') + (codes.length > 8 ? `<div style="font-size:9px;color:#555;margin-top:3px">+${codes.length - 8} more codes</div>` : '');
         }
       }
+    }
+
+    // ── HEALTH tab — TPMS ────────────────────────────────────
+    if (d.tpms) {
+      const wheels = ['fl','fr','rl','rr'];
+      let anyLow = false, anyWarn = false;
+      const psiVals = [];
+      wheels.forEach(w => {
+        const info = d.tpms[w] || {};
+        const psi  = info.psi != null ? Math.round(info.psi) : null;
+        const cell = document.getElementById('tpms-' + w);
+        const valEl= document.getElementById('tpms-' + w + '-val');
+        if (valEl) valEl.textContent = psi != null ? psi : '--';
+        if (cell) {
+          cell.classList.remove('tpms-warn','tpms-low');
+          if (psi != null && psi < 28)      { cell.classList.add('tpms-low');  anyLow  = true; }
+          else if (psi != null && psi < 32) { cell.classList.add('tpms-warn'); anyWarn = true; }
+        }
+        psiVals.push(psi != null ? psi : '--');
+      });
+      const sumEl = document.getElementById('hl-tpms-summary');
+      const dotEl = document.getElementById('hl-tpms-dot');
+      if (sumEl) { sumEl.textContent = psiVals.join('/'); sumEl.className = 'health-val ' + (anyLow ? 'hbad' : anyWarn ? 'hwarn' : 'hok'); }
+      if (dotEl) dotEl.className = 'hdot ' + (anyLow ? 'dbad' : anyWarn ? 'dwarn' : 'dok');
     }
 
     // ── HEALTH tab — INTERCOOLER (Phase 2+ only) ─────────────
@@ -3046,22 +3268,98 @@ async function t1PollSpotify() {
   try { const r = await fetch(T1BASE+'/spotify/status'); const d = await r.json(); if(d.connected) t1UpdateNP(d); } catch(e) {}
 }
 function t1Fmt(s) { const m=Math.floor(s/60); return m+':'+(s%60<10?'0':'')+s%60; }
+
+// ── WAVEFORM VISUALIZATION ────────────────────────────────
+let _waveformRAF = null;
+let _waveformPlaying = false;
+const WAVEFORM_BARS = 20;
+
+function t1InitWaveform() {
+  const wrap = document.getElementById('t1-waveform');
+  if (!wrap || wrap.children.length === WAVEFORM_BARS) return;
+  wrap.innerHTML = '';
+  for (let i = 0; i < WAVEFORM_BARS; i++) {
+    const bar = document.createElement('div');
+    bar.style.cssText = 'width:3px;background:var(--red);border-radius:1px;transition:height 0.1s;min-height:2px;';
+    bar.style.height = '4px';
+    wrap.appendChild(bar);
+  }
+}
+
+function t1AnimateWaveform(playing) {
+  _waveformPlaying = playing;
+  const wrap = document.getElementById('t1-waveform');
+  if (!wrap) return;
+  if (_waveformRAF) { cancelAnimationFrame(_waveformRAF); _waveformRAF = null; }
+  if (!playing) {
+    Array.from(wrap.children).forEach(b => { b.style.height = '3px'; b.style.opacity = '0.3'; });
+    return;
+  }
+  const bars = Array.from(wrap.children);
+  const phases = bars.map((_, i) => Math.random() * Math.PI * 2);
+  const speeds = bars.map(() => 2 + Math.random() * 3);
+  const amps   = bars.map(() => 5 + Math.random() * 13);
+  let t = 0;
+  function frame() {
+    if (!_waveformPlaying) return;
+    bars.forEach((bar, i) => {
+      const h = 3 + amps[i] * Math.abs(Math.sin(t * speeds[i] + phases[i]));
+      bar.style.height = h.toFixed(1) + 'px';
+      bar.style.opacity = '0.8';
+    });
+    t += 0.04;
+    _waveformRAF = requestAnimationFrame(frame);
+  }
+  _waveformRAF = requestAnimationFrame(frame);
+}
+
 function t1UpdateNP(d) {
   if (!d.track) {
     document.getElementById('t1-np-title').textContent = '— nothing playing —';
     document.getElementById('t1-np-artist').textContent = 'Open Spotify on your phone first';
     document.getElementById('t1-play-btn').textContent = '▶';
+    t1AnimateWaveform(false);
     return;
   }
   document.getElementById('t1-np-title').textContent = d.track;
   document.getElementById('t1-np-artist').textContent = d.artist;
+  const albumEl = document.getElementById('t1-np-album');
+  if (albumEl && d.album) albumEl.textContent = d.album.toUpperCase();
   document.getElementById('t1-play-btn').textContent = d.playing ? '⏸' : '▶';
-  const pct = d.duration > 0 ? (d.progress/d.duration)*100 : 0;
-  document.getElementById('t1-np-fill').style.width = pct + '%';
+  const pct = d.progress_pct ?? (d.duration > 0 ? (d.progress/d.duration)*100 : 0);
+  document.getElementById('t1-np-fill').style.width = pct.toFixed(1) + '%';
   document.getElementById('t1-np-cur').textContent = t1Fmt(Math.floor(d.progress/1000));
   document.getElementById('t1-np-dur').textContent = t1Fmt(Math.floor(d.duration/1000));
-  if (d.art) { document.getElementById('t1-np-art').src=d.art; document.getElementById('t1-np-art').style.display='block'; document.getElementById('t1-np-disc').style.display='none'; }
+  const pctEl = document.getElementById('t1-np-pct');
+  if (pctEl) pctEl.textContent = pct.toFixed(0) + '%';
+  if (d.art) {
+    const artEl = document.getElementById('t1-np-art');
+    const discEl = document.getElementById('t1-np-disc');
+    if (artEl.src !== d.art) artEl.src = d.art;
+    artEl.style.display = 'block';
+    if (discEl) discEl.style.display = 'none';
+  }
   document.getElementById('t1-vol').value = d.volume||50;
+  t1InitWaveform();
+  t1AnimateWaveform(d.playing);
+}
+
+async function t1SeekSpotify(event, barEl) {
+  const rect = barEl.getBoundingClientRect();
+  const pct  = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  // Get current duration from DOM
+  const durEl = document.getElementById('t1-np-dur');
+  // duration text is m:ss — convert back to seconds
+  const parts = (durEl?.textContent || '0:00').split(':');
+  const durSec = parseInt(parts[0]||0)*60 + parseInt(parts[1]||0);
+  const posSec = Math.round(pct * durSec);
+  try {
+    await fetch(T1BASE + '/spotify/seek', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({position_ms: posSec * 1000})
+    });
+  } catch(e) {}
 }
 async function t1SpotifyToggle() {
   const p = document.getElementById('t1-play-btn').textContent==='⏸';
@@ -3828,6 +4126,85 @@ function logDownload() {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+/* ── CAMERA FUNCTIONS ──────────────────────────────────────────── */
+function camFullscreen(camId) {
+  const feed = document.getElementById('cam-' + camId);
+  if (!feed) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    feed.requestFullscreen().catch(err => {
+      console.warn('Fullscreen not supported:', err);
+    });
+  }
+}
+
+function camSnapshot(camId) {
+  const feed  = document.getElementById('cam-' + camId);
+  const flash = document.getElementById('flash-' + camId);
+  if (!feed) return;
+
+  // Trigger flash animation
+  if (flash) {
+    flash.classList.remove('active');
+    void flash.offsetWidth; // reflow to restart animation
+    flash.classList.add('active');
+    setTimeout(() => flash.classList.remove('active'), 500);
+  }
+
+  // Try to snapshot from a video element inside the feed
+  const video = feed.querySelector('video');
+  const canvas = document.createElement('canvas');
+  if (video && video.readyState >= 2) {
+    canvas.width  = video.videoWidth  || 640;
+    canvas.height = video.videoHeight || 360;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+  } else {
+    // Snapshot the placeholder as a blank image with label
+    canvas.width  = 320;
+    canvas.height = 180;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#444';
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(camId.toUpperCase() + ' CAM — OFFLINE', canvas.width/2, canvas.height/2);
+  }
+
+  canvas.toBlob(blob => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = 'archer_' + camId + '_' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.png';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }, 'image/png');
+}
+
+async function camPiP(camId) {
+  const feed  = document.getElementById('cam-' + camId);
+  if (!feed) return;
+  const video = feed.querySelector('video');
+  if (!video) {
+    // No video element — inform user
+    const btn = feed.querySelector('.cam-btn');
+    if (btn) { btn.textContent = 'NO SRC'; setTimeout(() => { btn.textContent = 'PiP'; }, 1500); }
+    return;
+  }
+  try {
+    if (document.pictureInPictureElement) {
+      await document.exitPictureInPicture();
+    } else {
+      await video.requestPictureInPicture();
+    }
+  } catch(e) {
+    console.warn('PiP not supported:', e);
+  }
 }
 
 </script>

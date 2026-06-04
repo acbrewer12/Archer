@@ -8196,6 +8196,90 @@ def system_health_api():
         'failures': system_health['failures'][-10:],
     })
 
+@display_app.route('/health')
+def health_endpoint():
+    """Comprehensive system health snapshot consumed by archer_init.html fetchVersionInfo().
+    Returns: build_ts, git_hash, uptime_seconds, obd_status, gps_fix,
+             weather_age_s, active_dtc_count, memory_mb, overall_status.
+    No auth required (boot page uses it before session is established).
+    """
+    import resource as _resource
+    now = time.time()
+    uptime_s = round(now - system_health['start_time'], 1)
+
+    # OBD status
+    if obd2_display.get('connected'):
+        obd_status = 'live'
+    elif beamng_state.get('connected'):
+        obd_status = 'beamng'
+    elif sim_random_enabled:
+        obd_status = 'sim'
+    else:
+        obd_status = 'offline'
+
+    # GPS fix quality
+    gps_lat = location_data.get('lat')
+    gps_lon = location_data.get('lon')
+    gps_fix = bool(gps_lat and gps_lon)
+
+    # Last OBD update age
+    last_obd_age = round(now - system_health.get('last_obd_update', now), 1)
+
+    # Weather data age
+    wx_last = weather.get('last_update', 0)
+    weather_age_s = round(now - wx_last, 0) if wx_last else None
+
+    # Active DTC count
+    active_dtc_count = sum(1 for f in fault_codes if f.get('status', 'active') == 'active')
+
+    # Process memory (RSS) in MB — graceful fallback
+    try:
+        mem_mb = round(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except Exception:
+        mem_mb = None
+
+    # Build metadata from env / git
+    build_ts  = os.environ.get('ARCHER_BUILD_TS', '')
+    git_hash  = os.environ.get('ARCHER_GIT_HASH', '')
+    if not git_hash:
+        try:
+            import subprocess as _sp
+            git_hash = _sp.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                stderr=_sp.DEVNULL, timeout=2
+            ).decode().strip()
+        except Exception:
+            git_hash = 'unknown'
+
+    # Overall status determination
+    issues = get_system_status()
+    if any(f.get('severity') == 'critical' for f in fault_codes if f.get('status') == 'active'):
+        overall = 'critical'
+    elif issues or active_dtc_count > 0:
+        overall = 'degraded'
+    else:
+        overall = 'ok'
+
+    return jsonify({
+        'overall':         overall,
+        'uptime_seconds':  uptime_s,
+        'obd_status':      obd_status,
+        'last_obd_age_s':  last_obd_age,
+        'gps_fix':         gps_fix,
+        'gps_lat':         gps_lat,
+        'gps_lon':         gps_lon,
+        'weather_age_s':   weather_age_s,
+        'weather_temp':    weather.get('temp'),
+        'weather_cond':    weather.get('condition'),
+        'active_dtc_count': active_dtc_count,
+        'memory_mb':       mem_mb,
+        'build_ts':        build_ts,
+        'git_hash':        git_hash,
+        'issues':          issues,
+        'maintenance':     system_health.get('maintenance', False),
+    })
+
+
 @display_app.route('/logs')
 def logs_endpoint():
     """Return last 50 structured log entries for the Tier 1 debug panel."""
@@ -9326,6 +9410,14 @@ def spotify_volume():
     spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
     return jsonify({'ok': True})
 
+@display_app.route('/spotify/seek', methods=['POST'])
+def spotify_seek():
+    """Seek to a position in the current track."""
+    from flask import request as freq
+    pos_ms = int((freq.json or {}).get('position_ms', 0))
+    spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
+    return jsonify({'ok': True})
+
 @display_app.route('/spotify/playlists')
 def spotify_playlists():
     """Return user playlists with optional intensity filter and driving-intensity suggestion."""
@@ -9724,6 +9816,75 @@ def boot_page():
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
+
+
+@display_app.route('/tpms', methods=['GET', 'POST'])
+def tpms_endpoint():
+    """GET  → return current TPMS data for all four wheels.
+    POST → update one or more wheel pressures.
+           Body: {"fl": 35.5, "fr": 35.0, "rl": 36.0, "rr": 36.0}
+           or:   {"wheel": "fl", "psi": 35.5}
+    """
+    from flask import request as _req
+    ok, tier = require_tier1(_req)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
+
+    if _req.method == 'POST':
+        body = _req.get_json(silent=True) or {}
+        wheels = ['fl', 'fr', 'rl', 'rr']
+        updated = {}
+        # Support both {"wheel":"fl","psi":35} and {"fl":35,"fr":35,...}
+        single_wheel = body.get('wheel', '').lower()
+        if single_wheel in wheels and 'psi' in body:
+            try:
+                psi = float(body['psi'])
+                psi = max(0.0, min(120.0, psi))
+                tpms[single_wheel]['psi'] = psi
+                if psi < 28:
+                    tpms[single_wheel]['status'] = 'critical'
+                elif psi < 32:
+                    tpms[single_wheel]['status'] = 'low'
+                else:
+                    tpms[single_wheel]['status'] = 'ok'
+                updated[single_wheel] = psi
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid psi value'}), 400
+        else:
+            for w in wheels:
+                if w in body:
+                    try:
+                        psi = float(body[w])
+                        psi = max(0.0, min(120.0, psi))
+                        tpms[w]['psi'] = psi
+                        tpms[w]['status'] = 'critical' if psi < 28 else ('low' if psi < 32 else 'ok')
+                        updated[w] = psi
+                    except (ValueError, TypeError):
+                        pass
+        if updated:
+            save_state()
+        return jsonify({'updated': updated, 'tpms': tpms})
+
+    # GET — return current readings with status codes
+    target = TARGET_PSI.get(truck_state.get('mode', 'street'), 35)
+    result = {}
+    for w, data in tpms.items():
+        psi = data['psi']
+        delta = round(psi - target, 1)
+        result[w] = {
+            'psi':    psi,
+            'temp':   data.get('temp', 75),
+            'status': data.get('status', 'ok'),
+            'target': target,
+            'delta':  delta,
+        }
+    any_low  = any(v['psi'] < 28 for v in result.values())
+    any_warn = any(v['psi'] < 32 for v in result.values())
+    return jsonify({
+        'tpms':    result,
+        'target':  target,
+        'overall': 'critical' if any_low else ('warn' if any_warn else 'ok'),
+    })
 
 
 @display_app.route('/maintenance')
@@ -10535,52 +10696,93 @@ def obd_autodetect():
                     return None
                 return value
 
-            # ── Poll loop ──────────────────────────────────────
+            # ── Adaptive PID registry ──────────────────────────
+            # Each entry: (cmd, name, parser_fn, validator args)
+            # parser_fn(raw_bytes) -> float|None
+            def _parse_rpm(b):
+                return ((b[0] * 256) + b[1]) / 4 if len(b) >= 2 else None
+            def _parse_speed(b):
+                return round(b[0] * 0.621371) if b else None
+            def _parse_coolant(b):
+                return round((b[0] - 40) * 9 / 5 + 32) if b else None
+            def _parse_throttle(b):
+                return round(b[0] * 100 / 255) if b else None
+            def _parse_map(b):
+                return round((b[0] - 101.325) * 0.145038, 1) if b else None
+            def _parse_oil_gm(b):
+                return round((b[0] - 40) * 9 / 5 + 32) if b else None
+
+            # PID table: (cmd, name, lo, hi, truck_state_key, sensor_data_key, parser, extra_bytes)
+            PID_TABLE = [
+                ('010C', 'RPM',       0,    8000, 'rpm',          None,           _parse_rpm,      None),
+                ('010D', 'speed',     0,    200,  'speed',        None,           _parse_speed,    None),
+                ('0105', 'coolant',   -40,  300,  'coolant_temp', 'coolant_temp', _parse_coolant,  None),
+                ('0111', 'throttle',  0,    100,  'throttle',     None,           _parse_throttle, None),
+                ('010B', 'boost',     -15,  30,   'boost',        None,           _parse_map,      None),
+                ('2201318','oil_gm',  -40,  350,  'oil_temp',     'oil_temp',     _parse_oil_gm,   None),
+            ]
+
+            # Adaptive timing state per PID
+            _pid_stats = {
+                cmd: {'avg_ms': 300.0, 'failures': 0, 'blacklisted': False, 'blacklisted_at': 0.0}
+                for cmd, *_ in PID_TABLE
+            }
+            _BLACKLIST_FAILURES = 3        # failures before disabling
+            _BLACKLIST_RETEST_S = 300.0    # 5 minutes before retesting
+
+            def _pid_order():
+                """Return PIDs sorted fastest-first, excluding currently-blacklisted ones."""
+                now = time.time()
+                active = []
+                for row in PID_TABLE:
+                    cmd = row[0]
+                    st  = _pid_stats[cmd]
+                    if st['blacklisted']:
+                        # Re-enable after retest period
+                        if now - st['blacklisted_at'] >= _BLACKLIST_RETEST_S:
+                            st['blacklisted'] = False
+                            st['failures']    = 0
+                            print(f'[OBD] Re-testing previously blacklisted PID {cmd}')
+                        else:
+                            continue  # still blacklisted
+                    active.append(row)
+                # Sort by average response time (fastest first)
+                return sorted(active, key=lambda r: _pid_stats[r[0]]['avg_ms'])
+
+            def _obd_cmd_timed(ser, cmd):
+                """Run OBD command, record response time, update PID stats."""
+                t0  = time.time()
+                raw = _obd_cmd(ser, cmd, timeout=1.5)
+                ms  = (time.time() - t0) * 1000
+                st  = _pid_stats[cmd]
+                has_data = bool(_obd_bytes(raw)) or (cmd == 'ATRV' and 'V' in raw)
+                if has_data:
+                    # Exponential moving average of response time
+                    st['avg_ms']  = st['avg_ms'] * 0.85 + ms * 0.15
+                    st['failures'] = 0
+                else:
+                    st['failures'] += 1
+                    if st['failures'] >= _BLACKLIST_FAILURES:
+                        st['blacklisted']    = True
+                        st['blacklisted_at'] = time.time()
+                        print(f'[OBD] PID {cmd} blacklisted after {_BLACKLIST_FAILURES} failures (avg {st["avg_ms"]:.0f}ms)')
+                return raw
+
+            # ── Poll loop (adaptive) ───────────────────────────
             while True:
                 try:
-                    # RPM — PID 010C: ((A*256)+B)/4
-                    b = _obd_bytes(_obd_cmd(ser, '010C'))
-                    if len(b) >= 2:
-                        raw_rpm = ((b[0] * 256) + b[1]) / 4
-                        val = _validate_obd(raw_rpm, 0, 8000, 'RPM')
+                    for row in _pid_order():
+                        cmd, name, lo, hi, ts_key, sd_key, parser, _ = row
+                        raw = _obd_cmd_timed(ser, cmd)
+                        b   = _obd_bytes(raw)
+                        val = parser(b)
+                        val = _validate_obd(val, lo, hi, name)
                         if val is not None:
-                            truck_state['rpm'] = val
+                            truck_state[ts_key] = val
+                            if sd_key:
+                                sensor_data[sd_key] = val
 
-                    # Speed — PID 010D: A km/h → mph
-                    b = _obd_bytes(_obd_cmd(ser, '010D'))
-                    if b:
-                        raw_spd = round(b[0] * 0.621371)
-                        val = _validate_obd(raw_spd, 0, 200, 'speed_mph')
-                        if val is not None:
-                            truck_state['speed'] = val
-
-                    # Coolant temp — PID 0105: A-40 °C → °F
-                    b = _obd_bytes(_obd_cmd(ser, '0105'))
-                    if b:
-                        raw_cool = round((b[0] - 40) * 9 / 5 + 32)
-                        val = _validate_obd(raw_cool, -40, 300, 'coolant_temp')
-                        if val is not None:
-                            truck_state['coolant_temp'] = val
-                            sensor_data['coolant_temp'] = val
-
-                    # Throttle — PID 0111: A*100/255 %
-                    b = _obd_bytes(_obd_cmd(ser, '0111'))
-                    if b:
-                        raw_thr = round(b[0] * 100 / 255)
-                        val = _validate_obd(raw_thr, 0, 100, 'throttle_pct')
-                        if val is not None:
-                            truck_state['throttle'] = val
-
-                    # MAP/boost — PID 010B: A kPa → psi above atmosphere
-                    b = _obd_bytes(_obd_cmd(ser, '010B'))
-                    if b:
-                        raw_boost = round((b[0] - 101.325) * 0.145038, 1)
-                        # Boost can be negative (vacuum); clamp to reasonable range
-                        val = _validate_obd(raw_boost, -15, 30, 'boost_psi')
-                        if val is not None:
-                            truck_state['boost'] = val
-
-                    # Battery voltage — AT command (ELM327 internal)
+                    # Battery voltage — AT command outside PID table (no bytes to parse)
                     raw_v = _obd_cmd(ser, 'ATRV')
                     try:
                         raw_bat = round(float(raw_v.replace('V', '').strip()), 1)
@@ -10591,22 +10793,13 @@ def obd_autodetect():
                     except ValueError:
                         pass
 
-                    # Oil temp — Mode 22 PID (GM specific: 221318) — if supported
-                    b = _obd_bytes(_obd_cmd(ser, '2201318'))
-                    if len(b) >= 1:
-                        raw_oil = round((b[0] - 40) * 9 / 5 + 32)
-                        val = _validate_obd(raw_oil, -40, 350, 'oil_temp')
-                        if val is not None:
-                            truck_state['oil_temp'] = val
-                            sensor_data['oil_temp'] = val
-
                     system_health['last_obd_update'] = time.time()
 
                 except Exception as e:
                     print(f'[OBD] read error: {e}')
                     break
 
-                time.sleep(0.2)
+                time.sleep(0.15)
 
         except Exception as e:
             print(f'[OBD] connection error on {port_device}: {e}')
