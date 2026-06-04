@@ -111,7 +111,8 @@ apt-get update -qq
 apt-get install -y -qq \
     debootstrap parted kpartx \
     grub-pc-bin grub-efi-amd64-bin grub2-common \
-    dosfstools e2fsprogs git curl python3 python3-pip python3-venv
+    dosfstools e2fsprogs git curl python3 python3-pip python3-venv \
+    gcc libc6-dev make
 
 step "Creating ${IMG_SIZE_MB}MB disk image..."
 rm -rf "$WORK" "$IMG"
@@ -180,6 +181,13 @@ chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
     flask edge-tts SpeechRecognition requests pyserial
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
+step "Compiling archer_init (custom PID 1 — replaces systemd)..."
+gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
+    -o "$MOUNT/sbin/archer_init" \
+    "$(dirname "$0")/init/archer_init.c"
+chmod 755 "$MOUNT/sbin/archer_init"
+log "archer_init installed ($(stat -c%s "$MOUNT/sbin/archer_init") bytes)"
+
 step "Installing Archer systemd service and enabling services..."
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
     "$MOUNT/etc/systemd/system/archer.service"
@@ -193,7 +201,7 @@ GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
 EOF
 
 chroot "$MOUNT" grub-install --target=x86_64-efi \

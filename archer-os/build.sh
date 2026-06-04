@@ -115,7 +115,8 @@ apt-get install -y -qq \
     debootstrap parted kpartx \
     grub-pc-bin grub-efi-amd64-bin grub2-common \
     dosfstools e2fsprogs \
-    python3 python3-pip git curl squashfs-tools
+    python3 python3-pip git curl squashfs-tools \
+    gcc libc6-dev make
 
 # ── 2. Create disk image ─────────────────────────────────────────
 step "Creating ${IMG_SIZE_MB}MB disk image..."
@@ -208,8 +209,21 @@ chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
 
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
-# ── 7. Archer systemd service ────────────────────────────────────
+# ── 7. Compile and install Archer custom init (PID 1) ────────────
+step "Compiling archer_init (custom PID 1 — replaces systemd)..."
+# Compile statically on the build host — no deps needed in the target image
+gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
+    -o "$MOUNT/sbin/archer_init" \
+    "$(dirname "$0")/init/archer_init.c"
+chmod 755 "$MOUNT/sbin/archer_init"
+
+# Tell GRUB to use our init instead of systemd
+# This is set below in the GRUB config step — kept here as a note
+log "archer_init installed at /sbin/archer_init ($(stat -c%s "$MOUNT/sbin/archer_init") bytes)"
+
+# ── 8. Archer systemd service ────────────────────────────────────
 step "Installing Archer systemd service and enabling services..."
+# We still install the systemd service as a fallback (if init= is removed from cmdline)
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
     "$MOUNT/etc/systemd/system/archer.service"
 
@@ -230,7 +244,7 @@ GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=0"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 GRUB_TERMINAL=console
 EOF
