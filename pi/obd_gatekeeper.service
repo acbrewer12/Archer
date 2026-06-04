@@ -1,0 +1,15 @@
+[Unit]
+Description=Archer OBD2 Port Gatekeeper
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/archer/obd_gatekeeper.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

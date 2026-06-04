@@ -226,6 +226,19 @@ chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
 rm -f "$MOUNT/etc/resolv.conf"
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
+# Embed OBD2 auth key if one has been generated (see archer-os/obd-auth/keygen.sh).
+# The key is in .gitignore and must be generated separately and kept secret.
+KEY_SRC="$(dirname "$0")/obd-auth/obd_auth.key"
+if [ -f "$KEY_SRC" ]; then
+    mkdir -p "$MOUNT/etc/archer"
+    chmod 700 "$MOUNT/etc/archer"
+    cp "$KEY_SRC" "$MOUNT/etc/archer/obd_auth.key"
+    chmod 600 "$MOUNT/etc/archer/obd_auth.key"
+    log "OBD2 auth key installed"
+else
+    log "No OBD2 auth key found — run archer-os/obd-auth/keygen.sh to generate one"
+fi
+
 step "Compiling archer_init (custom PID 1 — replaces systemd)..."
 gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
     -o "$MOUNT/sbin/archer_init" \

@@ -416,7 +416,46 @@ static void start_services(void)
     /* Small delay: let NetworkManager initialize before Archer tries to use the network */
     sleep(2);
 
-    /* 5. Archer Flask app — the truck AI */
+    /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
+     *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
+     *    Non-blocking: if the Pi isn't present or auth fails, Archer still starts
+     *    (just without OBD data). Result written to /run/archer_obd_auth for archer.py. */
+    {
+        char *argv[] = {
+            ARCHER_VENV,
+            "/opt/archer/archer-os/obd-auth/obd_auth_client.py",
+            NULL
+        };
+        pid_t pid = fork();
+        if (pid == 0) {
+            int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+            if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+            execv(ARCHER_VENV, argv);
+            _exit(1);
+        }
+        if (pid > 0) {
+            /* Wait up to 10 seconds — don't stall boot forever */
+            int waited = 0;
+            int auth_status = -1;
+            while (waited < 10) {
+                pid_t r = waitpid(pid, &auth_status, WNOHANG);
+                if (r == pid) break;
+                sleep(1); waited++;
+            }
+            if (waited >= 10) {
+                WARN("OBD2 auth: timeout — killing auth process");
+                kill(pid, SIGKILL);
+                waitpid(pid, NULL, 0);
+            }
+            int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
+            int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
+            if (ok) LOG("OBD2 authentication successful — port unlocked");
+            else    WARN("OBD2 authentication skipped or failed");
+        }
+    }
+
+    /* 6. Archer Flask app — the truck AI */
     {
         char *argv[] = { ARCHER_VENV, ARCHER_APP, NULL };
         char *env[]  = {
