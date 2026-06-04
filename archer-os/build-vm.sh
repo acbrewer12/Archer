@@ -190,6 +190,7 @@ chroot "$MOUNT" usermod -aG audio,dialout,sudo archer
 chroot "$MOUNT" passwd -d root
 
 # Give archer passwordless sudo for console convenience
+mkdir -p "$MOUNT/etc/sudoers.d"
 echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
 chmod 440 "$MOUNT/etc/sudoers.d/archer"
 
