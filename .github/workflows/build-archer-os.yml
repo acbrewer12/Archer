@@ -21,7 +21,9 @@ jobs:
       - name: Build Archer OS VM image
         run: |
           chmod +x archer-os/build-vm.sh
-          sudo bash archer-os/build-vm.sh
+          # Pass the already-checked-out workspace so the build script
+          # doesn't need to re-clone from GitHub (sudo strips network env).
+          sudo ARCHER_LOCAL_SRC="$GITHUB_WORKSPACE" bash archer-os/build-vm.sh
 
       - name: Upload VMware VMDK artifact
         uses: actions/upload-artifact@v4
