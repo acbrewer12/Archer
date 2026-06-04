@@ -352,7 +352,7 @@ static void start_services(void)
         pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
         if (pid > 0) {
             LOG("dbus-daemon started");
-            sleep(1);  /* give D-Bus a moment to open its socket */
+            sleep(2);  /* wait for D-Bus socket to be ready before NM connects */
         } else {
             WARN("dbus-daemon failed — NetworkManager may not work");
         }
@@ -641,6 +641,13 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         /* Auto-restart Archer if it died */
         if (pid_archer <= 0) {
             restart_archer();
+        }
+
+        /* Auto-restart NetworkManager if it died (e.g. D-Bus wasn't ready at boot) */
+        if (pid_network <= 0) {
+            char *nm_argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
+            pid_network = spawn("/usr/sbin/NetworkManager", nm_argv, "/", 0, 0);
+            if (pid_network > 0) LOG("NetworkManager restarted");
         }
 
         /* Update status file every 10 seconds */
