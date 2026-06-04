@@ -360,6 +360,42 @@ static void start_services(void)
         /* non-critical, no warning if it fails */
     }
 
+    /* 3. Getty on tty1 — gives us an interactive login shell on the console.
+     *    --autologin archer: no password prompt, logs straight in as archer.
+     *    Without this, keystrokes appear on screen but nothing processes them
+     *    because our init doesn't run bash by default.
+     *    We open /dev/tty1 explicitly so stdout/stderr go there, not /dev/kmsg. */
+    {
+        pid_t pid = fork();
+        if (pid == 0) {
+            /* Open tty1 as stdin/stdout/stderr for the getty process */
+            int tty = open("/dev/tty1", O_RDWR | O_NOCTTY);
+            if (tty >= 0) {
+                dup2(tty, STDIN_FILENO);
+                dup2(tty, STDOUT_FILENO);
+                dup2(tty, STDERR_FILENO);
+                if (tty > STDERR_FILENO) close(tty);
+            }
+            /* setsid: make this process a session leader so it can control tty1 */
+            setsid();
+            /* TIOCSCTTY: claim tty1 as our controlling terminal */
+            ioctl(STDIN_FILENO, TIOCSCTTY, 1);
+
+            char *argv[] = {
+                "/sbin/agetty",
+                "--autologin", "archer",
+                "--noclear",
+                "tty1",
+                "linux",
+                NULL
+            };
+            execv("/sbin/agetty", argv);
+            _exit(1);
+        }
+        if (pid > 0)
+            LOG("getty started on tty1");
+    }
+
     /* Small delay: let NetworkManager initialize before Archer tries to use the network */
     sleep(2);
 
