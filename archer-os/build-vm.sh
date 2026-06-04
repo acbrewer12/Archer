@@ -184,7 +184,14 @@ ln -sf /usr/share/zoneinfo/America/Chicago "$MOUNT/etc/localtime"
 
 # Auto-login archer user on tty1
 chroot "$MOUNT" useradd -m -s /bin/bash archer
-chroot "$MOUNT" usermod -aG audio,dialout archer
+chroot "$MOUNT" usermod -aG audio,dialout,sudo archer
+
+# Unlock root (empty password) so 'su root' works from console
+chroot "$MOUNT" passwd -d root
+
+# Give archer passwordless sudo for console convenience
+echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
+chmod 440 "$MOUNT/etc/sudoers.d/archer"
 
 mkdir -p "$MOUNT/etc/systemd/system/getty@tty1.service.d"
 cat > "$MOUNT/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<EOF
