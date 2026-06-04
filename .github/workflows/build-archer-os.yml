@@ -23,9 +23,16 @@ jobs:
           chmod +x archer-os/build-vm.sh
           sudo bash archer-os/build-vm.sh
 
-      - name: Upload image artifact
+      - name: Upload VMware VMDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archer-os
+          name: archer-os-vmdk
+          path: archer-os.vmdk
+          retention-days: 14
+
+      - name: Upload raw image artifact (fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: archer-os-raw-gz
           path: archer-os.img.gz
           retention-days: 14

@@ -112,7 +112,7 @@ apt-get install -y -qq \
     debootstrap parted kpartx \
     grub-pc-bin grub-efi-amd64-bin grub2-common \
     dosfstools e2fsprogs git curl python3 python3-pip python3-venv \
-    gcc libc6-dev make
+    gcc libc6-dev make qemu-utils
 
 step "Creating ${IMG_SIZE_MB}MB disk image..."
 rm -rf "$WORK" "$IMG"
@@ -220,12 +220,23 @@ cat > "$MOUNT/etc/motd" <<'EOF'
 
 EOF
 
-step "Unmounting and compressing VM image..."
+step "Unmounting and converting VM image..."
 umount "$MOUNT/boot/efi"
 umount "$MOUNT"
 losetup -d "$LOOP"
 rm -rf "$WORK"
 
+# Convert raw image to VMDK for VMware Workstation Pro
+if command -v qemu-img &>/dev/null; then
+    log "Converting to VMDK for VMware Workstation Pro..."
+    qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse "$IMG" "${IMG%.img}.vmdk"
+    VMDK_SIZE=$(( $(stat -c%s "${IMG%.img}.vmdk" 2>/dev/null || echo "0") / 1024 / 1024 ))
+    log "VMDK created: ${IMG%.img}.vmdk (${VMDK_SIZE} MB)"
+else
+    log "qemu-img not found — skipping VMDK conversion (install qemu-utils to get it)"
+fi
+
+# Also keep a compressed raw image as backup
 gzip -f "$IMG"
 
 # ── Final stats ───────────────────────────────────────────────────
@@ -234,27 +245,37 @@ ELAPSED=$(( BUILD_END - BUILD_START ))
 ELAPSED_FMT="${ELAPSED}s"
 [ $ELAPSED -ge 60 ] && ELAPSED_FMT="$((ELAPSED/60))m $((ELAPSED%60))s"
 
+VMDK="${IMG%.img}.vmdk"
+VMDK_SIZE_MB=$(( $(stat -c%s "$VMDK" 2>/dev/null || echo "0") / 1024 / 1024 ))
 IMG_GZ="${IMG}.gz"
 IMG_GZ_SIZE=$(( $(stat -c%s "$IMG_GZ" 2>/dev/null || echo "0") / 1024 / 1024 ))
 
-echo -e "\n${GREEN}  Computing SHA256 checksum of compressed image...${NC}"
-SHA256=$(sha256sum "$IMG_GZ" | awk '{print $1}')
-echo "$SHA256  $IMG_GZ" > "${IMG_GZ}.sha256"
+echo -e "\n${GREEN}  Computing SHA256 checksums...${NC}"
+SHA256_VMDK=$(sha256sum "$VMDK" 2>/dev/null | awk '{print $1}')
+SHA256_GZ=$(sha256sum "$IMG_GZ" 2>/dev/null | awk '{print $1}')
+[ -n "$SHA256_VMDK" ] && echo "$SHA256_VMDK  $VMDK" > "${VMDK}.sha256"
+echo "$SHA256_GZ  $IMG_GZ" > "${IMG_GZ}.sha256"
 
 echo ""
 echo -e "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
 echo -e "  ${BOLD}${GREEN}║        ARCHER OS VM BUILD COMPLETE                   ║${NC}"
 echo -e "  ${BOLD}${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
-echo -e "  ${BOLD}${GREEN}║${NC}  Image:   ${BOLD}$(pwd)/${IMG_GZ}${NC}"
-echo -e "  ${BOLD}${GREEN}║${NC}  Size:    ${BOLD}${IMG_GZ_SIZE} MB${NC} (compressed)"
-echo -e "  ${BOLD}${GREEN}║${NC}  SHA256:  ${SHA256:0:32}..."
+echo -e "  ${BOLD}${GREEN}║${NC}  VMDK:    ${BOLD}$(pwd)/${VMDK}${NC}  (${VMDK_SIZE_MB} MB)"
+echo -e "  ${BOLD}${GREEN}║${NC}  RAW.GZ:  ${BOLD}$(pwd)/${IMG_GZ}${NC}  (${IMG_GZ_SIZE} MB)"
 echo -e "  ${BOLD}${GREEN}║${NC}  Elapsed: ${BOLD}${ELAPSED_FMT}${NC}"
 echo -e "  ${BOLD}${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
-echo -e "  ${BOLD}${GREEN}║${NC}  VirtualBox:"
-echo -e "  ${BOLD}${GREEN}║${NC}    1. New VM → Linux 64-bit → skip ISO"
-echo -e "  ${BOLD}${GREEN}║${NC}    2. gunzip ${IMG_GZ} first"
-echo -e "  ${BOLD}${GREEN}║${NC}    3. Storage → Add Disk → Use Existing → archer-os.img"
-echo -e "  ${BOLD}${GREEN}║${NC}  VMware:"
-echo -e "  ${BOLD}${GREEN}║${NC}    File → Open → archer-os.img.gz"
+echo -e "  ${BOLD}${GREEN}║${NC}  VMware Workstation Pro:"
+echo -e "  ${BOLD}${GREEN}║${NC}    1. File → New Virtual Machine → Custom"
+echo -e "  ${BOLD}${GREEN}║${NC}    2. Hardware compatibility → Workstation 17"
+echo -e "  ${BOLD}${GREEN}║${NC}    3. 'I will install OS later' → Linux → Debian 12 64-bit"
+echo -e "  ${BOLD}${GREEN}║${NC}    4. RAM: 2048 MB minimum, CPUs: 2"
+echo -e "  ${BOLD}${GREEN}║${NC}    5. Disk → Use an existing virtual disk → archer-os.vmdk"
+echo -e "  ${BOLD}${GREEN}║${NC}    6. Power on → Archer boots in ~5 seconds"
+echo -e "  ${BOLD}${GREEN}║${NC}    7. Get IP:  ip addr show  (or check DHCP leases)"
+echo -e "  ${BOLD}${GREEN}║${NC}    8. Open:    http://<VM_IP>:5000"
+echo -e "  ${BOLD}${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
+echo -e "  ${BOLD}${GREEN}║${NC}  Verify archer_init is PID 1 (in VM terminal):"
+echo -e "  ${BOLD}${GREEN}║${NC}    ps aux | head -5"
+echo -e "  ${BOLD}${GREEN}║${NC}    cat /run/archer_init.log"
 echo -e "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
