@@ -6,6 +6,8 @@ on:
     branches: [claude/archer-truck-ai-system-TlfGE]
     paths:
       - 'archer-os/**'
+      - 'usb-os/**'
+      - 'pi/**'
       - 'archer.py'
       - 'archer_*.html'
       - 'requirements.txt'
