@@ -238,66 +238,6 @@ static void bring_up_loopback(void)
     close(sock);
 }
 
-/* ── ethernet interface ──────────────────────────────────────────────
- *
- * NetworkManager handles WiFi and USB tethering, but it depends on
- * D-Bus being fully ready. For wired ethernet we use dhclient directly —
- * it's simpler, faster, and doesn't need D-Bus at all.
- *
- * We scan /sys/class/net/ for the first interface that has a 'device'
- * symlink (meaning it's a physical NIC, not a virtual one like lo or
- * a bridge). Then we set IFF_UP via ioctl and hand off to dhclient.
- */
-static void bring_up_ethernet(void)
-{
-    char iface[IFNAMSIZ] = {0};
-
-    DIR *d = opendir("/sys/class/net");
-    if (!d) { WARN("ethernet: cannot open /sys/class/net"); return; }
-
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.') continue;
-        if (strcmp(e->d_name, "lo") == 0) continue;
-        char devpath[256];
-        snprintf(devpath, sizeof(devpath), "/sys/class/net/%s/device", e->d_name);
-        if (access(devpath, F_OK) == 0) {
-            strncpy(iface, e->d_name, IFNAMSIZ - 1);
-            break;
-        }
-    }
-    closedir(d);
-
-    if (iface[0] == '\0') { WARN("ethernet: no physical interface found"); return; }
-
-    char msg[80];
-    snprintf(msg, sizeof(msg), "ethernet: bringing up %s", iface);
-    LOG(msg);
-
-    /* Set IFF_UP on the interface */
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock >= 0) {
-        struct ifreq ifr;
-        memset(&ifr, 0, sizeof(ifr));
-        strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
-        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
-            ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-            ioctl(sock, SIOCSIFFLAGS, &ifr);
-        }
-        close(sock);
-    }
-
-    /* dhclient configures the IP and default route, then exits */
-    char *argv[] = { "/sbin/dhclient", "-v", iface, NULL };
-    pid_t pid = spawn("/sbin/dhclient", argv, "/", 0, 0);
-    if (pid > 0) {
-        snprintf(msg, sizeof(msg), "dhclient started on %s (pid %d)", iface, pid);
-        LOG(msg);
-    } else {
-        WARN("dhclient failed — no IP on wired interface");
-    }
-}
-
 /* ── spawn a service ─────────────────────────────────────────────── */
 
 /*
@@ -362,6 +302,63 @@ static pid_t spawn(const char *path, char *const argv[], const char *workdir, ui
 
     /* ── we are the parent ── */
     return pid;
+}
+
+/* ── ethernet interface ──────────────────────────────────────────────
+ *
+ * NetworkManager handles WiFi and USB tethering, but it depends on
+ * D-Bus being fully ready. For wired ethernet we use dhclient directly —
+ * simpler, faster, no D-Bus dependency. Scans /sys/class/net/ for the
+ * first physical NIC (has a 'device' symlink), sets IFF_UP, runs dhclient.
+ */
+static void bring_up_ethernet(void)
+{
+    char iface[IFNAMSIZ] = {0};
+
+    DIR *d = opendir("/sys/class/net");
+    if (!d) { WARN("ethernet: cannot open /sys/class/net"); return; }
+
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        if (strcmp(e->d_name, "lo") == 0) continue;
+        char devpath[256];
+        snprintf(devpath, sizeof(devpath), "/sys/class/net/%s/device", e->d_name);
+        if (access(devpath, F_OK) == 0) {
+            strncpy(iface, e->d_name, IFNAMSIZ - 1);
+            break;
+        }
+    }
+    closedir(d);
+
+    if (iface[0] == '\0') { WARN("ethernet: no physical interface found"); return; }
+
+    char msg[80];
+    snprintf(msg, sizeof(msg), "ethernet: bringing up %s", iface);
+    LOG(msg);
+
+    /* Set IFF_UP on the interface */
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+            ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+            ioctl(sock, SIOCSIFFLAGS, &ifr);
+        }
+        close(sock);
+    }
+
+    /* dhclient sets the IP address and default route, then exits */
+    char *argv[] = { "/sbin/dhclient", "-v", iface, NULL };
+    pid_t pid = spawn("/sbin/dhclient", argv, "/", 0, 0);
+    if (pid > 0) {
+        snprintf(msg, sizeof(msg), "dhclient started on %s (pid %d)", iface, pid);
+        LOG(msg);
+    } else {
+        WARN("dhclient failed — no IP on wired interface");
+    }
 }
 
 /* ── get uid/gid for a username ─────────────────────────────────── */
