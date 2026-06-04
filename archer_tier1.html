@@ -1774,6 +1774,35 @@ document.addEventListener('keydown', function(e) {
   if (tab) setTab(tab);
 });
 
+// ─── EASTER EGG — type "ARCHER" anywhere to trigger ──────────────
+const EE_SEQ = ['a','r','c','h','e','r'];
+let _eeTyped = [];
+
+function eeOpen() {
+  const el = document.getElementById('ee-overlay');
+  if (el) el.classList.add('active');
+}
+function eeClose() {
+  const el = document.getElementById('ee-overlay');
+  if (el) el.classList.remove('active');
+  _eeTyped = [];
+}
+
+document.addEventListener('keydown', function(e) {
+  // Only track single-char keys when not in an input
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+  if (e.key === 'Escape') { eeClose(); return; }
+  if (e.key.length !== 1) return;
+
+  _eeTyped.push(e.key.toLowerCase());
+  if (_eeTyped.length > EE_SEQ.length) _eeTyped.shift();
+  if (_eeTyped.join('') === EE_SEQ.join('')) {
+    _eeTyped = [];
+    eeOpen();
+  }
+});
+
 // ─── NIGHT MODE SYSTEM ───
 // Modes: 'auto' | 'day' | 'night' | 'red'
 let currentMode = 'auto';
