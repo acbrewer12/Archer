@@ -149,10 +149,26 @@ step "Bootstrapping Debian $DEBIAN_RELEASE (this takes ~5 minutes)..."
 debootstrap \
     --arch=amd64 \
     --include=systemd,systemd-sysv,udev,linux-image-amd64,grub-pc,grub-efi-amd64,\
-python3,python3-pip,python3-venv,ffmpeg,git,curl,alsa-utils,\
-network-manager,avahi-daemon,openssh-server \
+python3,python3-pip,python3-venv,ffmpeg,git,curl,alsa-utils \
     --exclude=man-db,manpages,info,vim-common,nano \
     "$DEBIAN_RELEASE" "$MOUNT" http://deb.debian.org/debian
+
+# Mount virtual filesystems so chroot apt-get postinstall scripts work
+mount --bind /proc    "$MOUNT/proc"
+mount --bind /sys     "$MOUNT/sys"
+mount --bind /dev     "$MOUNT/dev"
+mount --bind /dev/pts "$MOUNT/dev/pts"
+
+cat > "$MOUNT/usr/sbin/policy-rc.d" <<'POLICY'
+#!/bin/sh
+exit 101
+POLICY
+chmod +x "$MOUNT/usr/sbin/policy-rc.d"
+
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    network-manager avahi-daemon dbus openssh-server
+
+rm -f "$MOUNT/usr/sbin/policy-rc.d"
 
 # ── 5. System configuration ──────────────────────────────────────
 step "Configuring Archer OS hostname, locale, and networking..."
@@ -274,6 +290,10 @@ EOF
 step "Writing MOTD and finalizing filesystem..."
 
 # ── 10. Cleanup + unmount ────────────────────────────────────────
+umount "$MOUNT/dev/pts" 2>/dev/null || true
+umount "$MOUNT/dev"     2>/dev/null || true
+umount "$MOUNT/sys"     2>/dev/null || true
+umount "$MOUNT/proc"    2>/dev/null || true
 umount "$MOUNT/boot/efi"
 umount "$MOUNT"
 losetup -d "$LOOP"

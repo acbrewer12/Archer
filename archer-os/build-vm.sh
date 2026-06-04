@@ -139,9 +139,31 @@ debootstrap \
     --arch=amd64 \
     --include=systemd,systemd-sysv,udev,linux-image-amd64,\
 grub-pc,grub-efi-amd64,python3,python3-pip,python3-venv,\
-ffmpeg,git,curl,network-manager,avahi-daemon \
+ffmpeg,git,curl \
     --exclude=man-db,manpages,info \
     "$DEBIAN_RELEASE" "$MOUNT" http://deb.debian.org/debian
+
+# Mount virtual filesystems — kept mounted for all subsequent chroot operations.
+# grub-install, systemctl, and apt postinstall scripts all need these.
+mount --bind /proc    "$MOUNT/proc"
+mount --bind /sys     "$MOUNT/sys"
+mount --bind /dev     "$MOUNT/dev"
+mount --bind /dev/pts "$MOUNT/dev/pts"
+
+# policy-rc.d returning 101 prevents service start attempts during chroot apt-get.
+# Without this, NetworkManager/avahi postinstall scripts try to run systemctl
+# which fails (no running systemd in the chroot) and aborts the install.
+cat > "$MOUNT/usr/sbin/policy-rc.d" <<'POLICY'
+#!/bin/sh
+exit 101
+POLICY
+chmod +x "$MOUNT/usr/sbin/policy-rc.d"
+
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    network-manager avahi-daemon dbus
+
+# Remove policy override — on real boot services start normally
+rm -f "$MOUNT/usr/sbin/policy-rc.d"
 
 step "Configuring Archer OS system settings..."
 echo "archer" > "$MOUNT/etc/hostname"
@@ -221,6 +243,11 @@ cat > "$MOUNT/etc/motd" <<'EOF'
 EOF
 
 step "Unmounting and converting VM image..."
+# Tear down bind mounts before unmounting the image filesystem
+umount "$MOUNT/dev/pts" 2>/dev/null || true
+umount "$MOUNT/dev"     2>/dev/null || true
+umount "$MOUNT/sys"     2>/dev/null || true
+umount "$MOUNT/proc"    2>/dev/null || true
 umount "$MOUNT/boot/efi"
 umount "$MOUNT"
 losetup -d "$LOOP"
