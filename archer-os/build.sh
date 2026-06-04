@@ -214,15 +214,17 @@ step "Setting up Archer user, cloning repo, installing Python deps..."
 chroot "$MOUNT" useradd -m -s /bin/bash archer
 chroot "$MOUNT" usermod -aG audio,video,dialout archer
 
-# Clone Archer into the OS
-chroot "$MOUNT" git clone --branch "$ARCHER_BRANCH" --depth 1 \
-    "$ARCHER_REPO" /opt/archer
+# Clone on the host — chroot has no DNS/resolv.conf
+git clone --branch "$ARCHER_BRANCH" --depth 1 \
+    "$ARCHER_REPO" "$MOUNT/opt/archer"
 
-# Python venv + deps
+cp /etc/resolv.conf "$MOUNT/etc/resolv.conf"
+
 chroot "$MOUNT" python3 -m venv /opt/archer/.venv
 chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
     flask edge-tts SpeechRecognition requests pyserial
 
+rm -f "$MOUNT/etc/resolv.conf"
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
 # ── 7. Compile and install Archer custom init (PID 1) ────────────

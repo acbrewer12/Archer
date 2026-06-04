@@ -194,13 +194,22 @@ ExecStart=-/sbin/agetty --autologin archer --noclear %I \$TERM
 EOF
 
 step "Cloning Archer repo and installing Python deps..."
-chroot "$MOUNT" git clone \
+# Clone on the HOST (has DNS/network) directly into the image mount point.
+# Cloning inside the chroot fails because the chroot has no /etc/resolv.conf.
+git clone \
     --branch "$ARCHER_BRANCH" --depth 1 \
-    "$ARCHER_REPO" /opt/archer
+    "$ARCHER_REPO" "$MOUNT/opt/archer"
+
+# pip also needs network — run it on the host against the chroot's Python venv.
+# We bind-resolve.conf so pip's TLS/DNS work, then remove it afterward.
+cp /etc/resolv.conf "$MOUNT/etc/resolv.conf"
 
 chroot "$MOUNT" python3 -m venv /opt/archer/.venv
 chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
     flask edge-tts SpeechRecognition requests pyserial
+
+# Remove the host resolv.conf — the OS will get its own DNS from NetworkManager
+rm -f "$MOUNT/etc/resolv.conf"
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
 step "Compiling archer_init (custom PID 1 — replaces systemd)..."
