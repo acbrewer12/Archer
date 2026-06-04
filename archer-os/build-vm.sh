@@ -160,7 +160,7 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus
+    network-manager avahi-daemon dbus sudo
 
 # Remove policy override — on real boot services start normally
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
