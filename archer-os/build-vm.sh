@@ -186,8 +186,8 @@ ln -sf /usr/share/zoneinfo/America/Chicago "$MOUNT/etc/localtime"
 chroot "$MOUNT" useradd -m -s /bin/bash archer
 chroot "$MOUNT" usermod -aG audio,dialout,sudo archer
 
-# Unlock root (empty password) so 'su root' works from console
-chroot "$MOUNT" passwd -d root
+# Set root password to 'archer' for console debugging
+chroot "$MOUNT" bash -c "echo 'root:archer' | chpasswd"
 
 # Give archer passwordless sudo for console convenience
 mkdir -p "$MOUNT/etc/sudoers.d"
