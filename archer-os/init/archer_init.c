@@ -341,7 +341,24 @@ static void start_services(void)
     gid_t archer_gid = 1000;
     get_uid_gid(ARCHER_USER, &archer_uid, &archer_gid);
 
-    /* 1. NetworkManager — manages WiFi and USB tethering */
+    /* 1. D-Bus system daemon — must start BEFORE NetworkManager.
+     *    NetworkManager uses D-Bus for all inter-process communication.
+     *    Without it, NM starts but can't manage interfaces. */
+    {
+        /* Create the D-Bus runtime directory if missing */
+        mkdir("/run/dbus", 0755);
+        char *argv[] = { "/usr/bin/dbus-daemon", "--system", "--nofork",
+                         "--nopidfile", NULL };
+        pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
+        if (pid > 0) {
+            LOG("dbus-daemon started");
+            sleep(1);  /* give D-Bus a moment to open its socket */
+        } else {
+            WARN("dbus-daemon failed — NetworkManager may not work");
+        }
+    }
+
+    /* 2. NetworkManager — manages WiFi and USB tethering */
     {
         char *argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
         pid_network = spawn("/usr/sbin/NetworkManager", argv, "/", 0, 0);
@@ -351,7 +368,7 @@ static void start_services(void)
             WARN("NetworkManager failed to start");
     }
 
-    /* 2. Avahi daemon — mDNS, makes archer.local work on the LAN */
+    /* 3. Avahi daemon — mDNS, makes archer.local work on the LAN */
     {
         char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
         pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
@@ -360,7 +377,7 @@ static void start_services(void)
         /* non-critical, no warning if it fails */
     }
 
-    /* 3. Getty on tty1 — gives us an interactive login shell on the console.
+    /* 4. Getty on tty1 — gives us an interactive login shell on the console.
      *    --autologin archer: no password prompt, logs straight in as archer.
      *    Without this, keystrokes appear on screen but nothing processes them
      *    because our init doesn't run bash by default.
@@ -399,7 +416,7 @@ static void start_services(void)
     /* Small delay: let NetworkManager initialize before Archer tries to use the network */
     sleep(2);
 
-    /* 3. Archer Flask app — the truck AI */
+    /* 5. Archer Flask app — the truck AI */
     {
         char *argv[] = { ARCHER_VENV, ARCHER_APP, NULL };
         char *env[]  = {
