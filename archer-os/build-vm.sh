@@ -193,13 +193,13 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin archer --noclear %I \$TERM
 EOF
 
-step "Cloning Archer repo and installing Python deps..."
-# Prefer a local copy (set ARCHER_LOCAL_SRC in env) to avoid needing network
-# inside or outside the chroot.  Falls back to a real git clone when building
-# on a dev machine where ARCHER_LOCAL_SRC is not set.
-if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC" ]; then
-    log "Using local source: $ARCHER_LOCAL_SRC"
-    cp -a "$ARCHER_LOCAL_SRC" "$MOUNT/opt/archer"
+step "Installing Archer source and Python deps..."
+mkdir -p "$MOUNT/opt/archer"
+if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC/.git" ]; then
+    # CI: extract only git-tracked files — skips .git dir and build artifacts
+    # (archer-os.img etc. would fill the 4GB image)
+    log "Using git archive from: $ARCHER_LOCAL_SRC"
+    git -C "$ARCHER_LOCAL_SRC" archive HEAD | tar -x -C "$MOUNT/opt/archer"
 else
     log "Cloning from GitHub..."
     git clone \

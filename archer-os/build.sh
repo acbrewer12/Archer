@@ -214,10 +214,10 @@ step "Setting up Archer user, cloning repo, installing Python deps..."
 chroot "$MOUNT" useradd -m -s /bin/bash archer
 chroot "$MOUNT" usermod -aG audio,video,dialout archer
 
-# Use local copy if ARCHER_LOCAL_SRC is set (CI), otherwise clone from GitHub
-if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC" ]; then
-    log "Using local source: $ARCHER_LOCAL_SRC"
-    cp -a "$ARCHER_LOCAL_SRC" "$MOUNT/opt/archer"
+mkdir -p "$MOUNT/opt/archer"
+if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC/.git" ]; then
+    log "Using git archive from: $ARCHER_LOCAL_SRC"
+    git -C "$ARCHER_LOCAL_SRC" archive HEAD | tar -x -C "$MOUNT/opt/archer"
 else
     git clone --branch "$ARCHER_BRANCH" --depth 1 \
         "$ARCHER_REPO" "$MOUNT/opt/archer"
