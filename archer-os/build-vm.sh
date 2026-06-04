@@ -160,7 +160,7 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus sudo
+    network-manager avahi-daemon dbus sudo isc-dhcp-client
 
 # Remove policy override — on real boot services start normally
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
@@ -193,6 +193,15 @@ chroot "$MOUNT" bash -c "echo 'root:archer' | chpasswd"
 mkdir -p "$MOUNT/etc/sudoers.d"
 echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
 chmod 440 "$MOUNT/etc/sudoers.d/archer"
+
+# Tell NetworkManager to leave wired ethernet alone.
+# archer_init brings up ethernet directly with dhclient (no D-Bus dependency).
+# NM still handles WiFi and USB tethering.
+mkdir -p "$MOUNT/etc/NetworkManager/conf.d"
+cat > "$MOUNT/etc/NetworkManager/conf.d/01-unmanaged-ethernet.conf" <<EOF
+[keyfile]
+unmanaged-devices=type:ethernet
+EOF
 
 mkdir -p "$MOUNT/etc/systemd/system/getty@tty1.service.d"
 cat > "$MOUNT/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<EOF
