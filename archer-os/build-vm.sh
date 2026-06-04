@@ -41,6 +41,71 @@ step() {
 
 [ "$EUID" -eq 0 ] || die "Run with sudo"
 
+# ══ PRE-FLIGHT CHECKS ════════════════════════════════════════════
+echo ""
+echo -e "  ${BOLD}${CYAN}═══ ARCHER OS VM PRE-FLIGHT CHECKS ═══${NC}"
+echo ""
+PREFLIGHT_OK=true
+
+# Check 1: Root
+echo -e "  ${GREEN}✓${NC} Running as root"
+
+# Check 2: Required commands
+REQUIRED_CMDS="debootstrap parted losetup mkfs.fat mkfs.ext4 grub-install git curl python3 gzip sha256sum stat"
+for cmd in $REQUIRED_CMDS; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo -e "  ${YELLOW}!${NC} Missing command: ${BOLD}${cmd}${NC} (will be installed)"
+    fi
+done
+echo -e "  ${GREEN}✓${NC} Command availability checked"
+
+# Check 3: Disk space ≥8GB free in current directory
+AVAIL_KB=$(df -k . | awk 'NR==2{print $4}')
+AVAIL_GB=$(( AVAIL_KB / 1024 / 1024 ))
+if [ "$AVAIL_GB" -lt 8 ]; then
+    echo -e "  ${RED}✗${NC} Insufficient disk space: ${AVAIL_GB}GB available, ${BOLD}8GB required${NC}"
+    PREFLIGHT_OK=false
+else
+    echo -e "  ${GREEN}✓${NC} Disk space: ${AVAIL_GB}GB available (required: 8GB)"
+fi
+
+# Check 4: RAM ≥2GB
+TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_RAM_GB=$(( TOTAL_RAM_KB / 1024 / 1024 ))
+if [ "$TOTAL_RAM_GB" -lt 2 ]; then
+    echo -e "  ${RED}✗${NC} Insufficient RAM: ${TOTAL_RAM_GB}GB available, ${BOLD}2GB required${NC}"
+    PREFLIGHT_OK=false
+else
+    echo -e "  ${GREEN}✓${NC} RAM: ${TOTAL_RAM_GB}GB available (required: 2GB)"
+fi
+
+# Check 5: Internet connectivity (ping Debian mirror)
+if curl -s --max-time 5 http://deb.debian.org/debian/dists/bookworm/Release -o /dev/null; then
+    echo -e "  ${GREEN}✓${NC} Internet connectivity: Debian mirror reachable"
+else
+    echo -e "  ${RED}✗${NC} Cannot reach deb.debian.org — check internet connection"
+    PREFLIGHT_OK=false
+fi
+
+# Check 6: OS version (Ubuntu/Debian recommended)
+OS_ID=$(. /etc/os-release 2>/dev/null && echo "$ID")
+OS_VER=$(. /etc/os-release 2>/dev/null && echo "$VERSION_ID")
+if [[ "$OS_ID" == "ubuntu" || "$OS_ID" == "debian" ]]; then
+    echo -e "  ${GREEN}✓${NC} Host OS: ${OS_ID} ${OS_VER}"
+else
+    echo -e "  ${YELLOW}!${NC} Host OS: ${OS_ID} ${OS_VER} — Ubuntu 22.04+ recommended"
+fi
+
+echo ""
+if [ "$PREFLIGHT_OK" != "true" ]; then
+    echo -e "  ${RED}${BOLD}Pre-flight checks FAILED. Fix the issues above and re-run.${NC}"
+    echo ""
+    exit 1
+fi
+echo -e "  ${GREEN}${BOLD}All pre-flight checks passed. Starting VM build...${NC}"
+echo ""
+# ══ END PRE-FLIGHT ════════════════════════════════════════════════
+
 step "Installing build tools..."
 apt-get update -qq
 apt-get install -y -qq \
