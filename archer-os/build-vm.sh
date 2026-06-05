@@ -19,7 +19,7 @@ MOUNT="$WORK/mnt"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 BUILD_START=$(date +%s)
 STEP_CURRENT=0
-STEP_TOTAL=9
+STEP_TOTAL=12
 
 log() { echo -e "${BOLD}[ARCHER OS]${NC} $1"; }
 die() { echo -e "${RED}ERROR: $1${NC}"; exit 1; }
@@ -273,6 +273,32 @@ gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
 chmod 755 "$MOUNT/sbin/archer_init"
 log "archer_init installed ($(stat -c%s "$MOUNT/sbin/archer_init") bytes)"
 
+step "Building Archer custom kernel (universal drivers, debug stripped)..."
+chmod +x "$(dirname "$0")/kernel/build-kernel.sh"
+bash "$(dirname "$0")/kernel/build-kernel.sh" "$MOUNT"
+# Capture the kernel version that was built
+ARCHER_KERNEL_VER=$(ls "$MOUNT/lib/modules/" | grep '\-archer$' | tail -1)
+log "Custom kernel: ${ARCHER_KERNEL_VER}"
+
+step "Generating initramfs with dracut (universal hardware support)..."
+# Install dracut inside the image
+cp /etc/resolv.conf "$MOUNT/etc/resolv.conf"
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq dracut
+rm -f "$MOUNT/etc/resolv.conf"
+
+# Generic mode: packs all common hardware modules — boots on any machine.
+# udev fires at boot, detects hardware, loads only the matching modules.
+chroot "$MOUNT" dracut \
+    --force \
+    --no-hostonly \
+    --add "base rootfs-block shutdown" \
+    "/boot/initramfs-${ARCHER_KERNEL_VER}.img" \
+    "$ARCHER_KERNEL_VER" \
+    2>&1 | tail -3
+
+INITRD_SIZE=$(( $(stat -c%s "$MOUNT/boot/initramfs-${ARCHER_KERNEL_VER}.img") / 1024 / 1024 ))
+log "initramfs-${ARCHER_KERNEL_VER}.img (${INITRD_SIZE} MB)"
+
 step "Installing Archer systemd service and enabling services..."
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
     "$MOUNT/etc/systemd/system/archer.service"
@@ -287,6 +313,7 @@ GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
 GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX=""
 EOF
 
 chroot "$MOUNT" grub-install --target=x86_64-efi \
@@ -294,6 +321,7 @@ chroot "$MOUNT" grub-install --target=x86_64-efi \
     --removable --no-nvram >/dev/null 2>&1
 chroot "$MOUNT" grub-install --target=i386-pc "$LOOP" >/dev/null 2>&1
 chroot "$MOUNT" update-grub >/dev/null 2>&1
+log "GRUB configured — default kernel: ${ARCHER_KERNEL_VER}"
 
 cat > "$MOUNT/etc/motd" <<'EOF'
 
