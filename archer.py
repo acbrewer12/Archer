@@ -43,6 +43,19 @@ sys.stderr = _TeeWriter(sys.stderr)
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
+# ── ENV FILE LOADER — picks up API keys from /etc/archer/archer.env ──────────
+def _load_env_file():
+    for path in ('/etc/archer/archer.env', os.path.expanduser('~/.archer.env')):
+        if os.path.isfile(path):
+            with open(path) as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith('#') and '=' in _line:
+                        _k, _, _v = _line.partition('=')
+                        os.environ.setdefault(_k.strip(), _v.strip())
+            break
+_load_env_file()
+
 # ── BUILD CAPABILITY DETECTION ──────────
 # Parts must be status='installed' to activate a capability.
 # Add a part via add_part(..., status='installed') or update its status.
@@ -1542,8 +1555,32 @@ Truck data right now:
 
     response = None
 
-    # Try 1 — Local Ollama (Pi only; CPU inference on HF is too slow)
-    if _IS_PI:
+    # Try 1 — Google Gemini (primary: free tier, 1,500 req/day, no cost)
+    if not response:
+        GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
+        if GEMINI_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "gemini-2.0-flash-lite",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] Gemini")
+            except Exception as e:
+                print(f"[AI] Gemini failed: {e}")
+
+    # Try 2 — Local Ollama (Pi only; offline fallback when no internet)
+    if not response and _IS_PI:
         try:
             result = subprocess.run(
                 ['ollama', 'run', 'llama3.2', full_prompt],
@@ -1556,7 +1593,7 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 2 — HuggingFace Inference API (router endpoint)
+    # Try 3 — HuggingFace Inference API
     if not response:
         HF_TOKEN = os.environ.get('HF_TOKEN', '')
         if HF_TOKEN:
@@ -1581,7 +1618,7 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] HF Inference failed: {e}")
 
-    # Try 3 — Groq
+    # Try 4 — Groq
     if not response:
         GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
         if GROQ_KEY:
@@ -1605,7 +1642,7 @@ Truck data right now:
             except Exception:
                 pass
 
-    # Try 4 — Smart fallback
+    # Try 5 — Smart fallback
     if not response:
         response = smart_fallback(user_input)
         print("[AI] Fallback")
@@ -4942,7 +4979,20 @@ Archer says:"""
 
         try:
             response = None
-            if _IS_PI:
+            GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
+            if GEMINI_KEY:
+                try:
+                    payload = json.dumps({'model': 'gemini-2.0-flash-lite',
+                                          'messages': [{'role': 'user', 'content': prompt}],
+                                          'max_tokens': 80, 'temperature': 0.8}).encode()
+                    req = urllib.request.Request(
+                        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                        data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                except Exception:
+                    pass
+            if not response and _IS_PI:
                 try:
                     payload = json.dumps({'model': 'llama3.2', 'prompt': prompt, 'stream': False}).encode()
                     req = urllib.request.Request('http://localhost:11434/api/generate', data=payload,

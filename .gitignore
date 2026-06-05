@@ -7,3 +7,5 @@ dist/
 build/
 .env
 archer-os/obd-auth/obd_auth.key
+archer-os/archer.env
+archer.env

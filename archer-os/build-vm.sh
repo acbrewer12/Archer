@@ -248,6 +248,20 @@ else
     log "No OBD2 auth key found — run archer-os/obd-auth/keygen.sh to generate one"
 fi
 
+# Embed API key config if it exists — contains GEMINI_API_KEY etc.
+# Format: KEY=value, one per line. Never committed to git (.gitignore protected).
+# Create: archer-os/archer.env  with  GEMINI_API_KEY=your_key_here
+ENV_SRC="$(dirname "$0")/archer.env"
+if [ -f "$ENV_SRC" ]; then
+    mkdir -p "$MOUNT/etc/archer"
+    chmod 700 "$MOUNT/etc/archer"
+    cp "$ENV_SRC" "$MOUNT/etc/archer/archer.env"
+    chmod 600 "$MOUNT/etc/archer/archer.env"
+    log "API key config installed (/etc/archer/archer.env)"
+else
+    log "No archer.env found — create archer-os/archer.env with GEMINI_API_KEY=... to embed AI key"
+fi
+
 step "Compiling archer_init (custom PID 1 — replaces systemd)..."
 gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
     -o "$MOUNT/sbin/archer_init" \
