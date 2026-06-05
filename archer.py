@@ -307,8 +307,8 @@ async def _speak_async(text, alert=False):
             )
             return
 
-        voice     = "en-US-GuyNeural"
-        communicate = edge_tts.Communicate(text, voice)
+        voice       = "en-US-ChristopherNeural"
+        communicate = edge_tts.Communicate(text, voice, rate="-8%", pitch="-6Hz")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             tmp_path = f.name
         await communicate.save(tmp_path)
