@@ -347,7 +347,7 @@ rm -rf "$WORK"
 # Convert raw image to VMDK for VMware Workstation Pro
 if command -v qemu-img &>/dev/null; then
     log "Converting to VMDK for VMware Workstation Pro..."
-    qemu-img convert -f raw -O vmdk -o subformat=monolithicSparse "$IMG" "${IMG%.img}.vmdk"
+    qemu-img convert -f raw -O vmdk -o subformat=streamOptimized "$IMG" "${IMG%.img}.vmdk"
     VMDK_SIZE=$(( $(stat -c%s "${IMG%.img}.vmdk" 2>/dev/null || echo "0") / 1024 / 1024 ))
     log "VMDK created: ${IMG%.img}.vmdk (${VMDK_SIZE} MB)"
 else

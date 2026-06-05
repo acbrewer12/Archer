@@ -33,9 +33,16 @@ jobs:
         run: |
           gh release delete latest-build --yes 2>/dev/null || true
           git push origin :refs/tags/latest-build 2>/dev/null || true
+
+          # Build file list — raw.gz always included, VMDK only if under 2GB limit
+          FILES="archer-os.img.gz"
+          VMDK_SIZE=$(stat -c%s archer-os.vmdk 2>/dev/null || echo 0)
+          if [ "$VMDK_SIZE" -lt 2000000000 ]; then
+            FILES="$FILES archer-os.vmdk"
+          fi
+
           gh release create latest-build \
             --title "Archer OS — Latest Build" \
             --notes "Built from commit $(git rev-parse --short HEAD) on $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --prerelease \
-            archer-os.vmdk \
-            archer-os.img.gz
+            $FILES
