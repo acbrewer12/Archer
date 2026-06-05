@@ -231,8 +231,12 @@ chroot "$MOUNT" python3 -m venv /opt/archer/.venv
 chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
     flask edge-tts SpeechRecognition requests pyserial
 
-# Remove the host resolv.conf — the OS will get its own DNS from NetworkManager
-rm -f "$MOUNT/etc/resolv.conf"
+# Leave a fallback resolv.conf — dhclient will overwrite it with DHCP-provided DNS at boot.
+# Without this, DNS fails on first boot because NM doesn't manage ethernet.
+cat > "$MOUNT/etc/resolv.conf" <<EOF
+nameserver 8.8.8.8
+nameserver 1.1.1.1
+EOF
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
 # Embed OBD2 auth key if one has been generated (see archer-os/obd-auth/keygen.sh).
