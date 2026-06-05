@@ -1551,7 +1551,7 @@ Truck data right now:
     build_ctx += f"\n- Air suspension: {'Installed' if caps['air_suspension'] else 'Not yet installed'}"
     build_ctx += f"\n- HP estimate: {calc_hp_estimate(truck_state['ethanol'], truck_state['boost'])}"
 
-    full_prompt = f"{SYSTEM_PROMPT}\n\n{build_ctx}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. Only reference what you actually know from the truck data above. Do not make up details.\n\nArcher:"
+    full_prompt = f"{SYSTEM_PROMPT}\n\n{build_ctx}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. For truck data (temps, RPM, codes, vitals) only use the numbers above — never invent readings. For general questions (mechanics, history, advice, anything else) answer from your own knowledge, in Archer's voice — brief, direct, confident.\n\nArcher:"
 
     response = None
 
