@@ -16,6 +16,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -25,18 +27,15 @@ jobs:
           chmod +x archer-os/build-vm.sh
           sudo ARCHER_LOCAL_SRC="$GITHUB_WORKSPACE" bash archer-os/build-vm.sh
 
-      - name: Upload VMware VMDK artifact
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: archer-os-vmdk
-          path: archer-os.vmdk
-          retention-days: 3
-
-      - name: Upload raw image artifact (fallback)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: archer-os-raw-gz
-          path: archer-os.img.gz
-          retention-days: 3
+      - name: Publish to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-build --yes 2>/dev/null || true
+          git push origin :refs/tags/latest-build 2>/dev/null || true
+          gh release create latest-build \
+            --title "Archer OS — Latest Build" \
+            --notes "Built from commit $(git rev-parse --short HEAD) on $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --prerelease \
+            archer-os.vmdk \
+            archer-os.img.gz
