@@ -245,13 +245,13 @@ if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
     exec startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
 fi
 BASHPROFILE
-chown archer:archer "$MOUNT/home/archer/.bash_profile"
+chroot "$MOUNT" chown archer:archer /home/archer/.bash_profile
 
 # .xinitrc fallback (used if startx is called without an argument)
 cat > "$MOUNT/home/archer/.xinitrc" <<'XINITRC'
 exec /opt/archer/kiosk.sh
 XINITRC
-chown archer:archer "$MOUNT/home/archer/.xinitrc"
+chroot "$MOUNT" chown archer:archer /home/archer/.xinitrc
 
 # Tell NetworkManager to leave wired ethernet alone.
 # archer_init brings up ethernet directly with dhclient (no D-Bus dependency).
