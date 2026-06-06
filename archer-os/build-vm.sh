@@ -233,6 +233,19 @@ chmod 440 "$MOUNT/etc/sudoers.d/archer"
 mkdir -p "$MOUNT/opt/archer"
 cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
 #!/bin/bash
+# Load GPU kernel modules so Xorg / fbdev have a device to attach to.
+# Probe all common drivers — the right one will succeed, others silently fail.
+# Order: vmwgfx first (VMware VMs), then real hardware GPU drivers.
+for mod in vmwgfx i915 amdgpu nouveau radeon drm_simpledrm; do
+    modprobe "$mod" 2>/dev/null && break
+done
+# Give the kernel a moment to create /dev/fb0 and /dev/dri/* nodes
+sleep 1
+
+# Pre-create Xorg directories (safety net if root was ro at image creation time)
+mkdir -p /home/archer/.local/share/xorg 2>/dev/null || true
+touch /home/archer/.Xauthority 2>/dev/null || true
+
 # Wait up to 45s for Flask to be ready
 for i in $(seq 1 45); do
     curl -sf http://127.0.0.1:5000/ >/dev/null 2>&1 && break
@@ -402,7 +415,7 @@ GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 rw init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 EOF
 

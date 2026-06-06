@@ -154,6 +154,13 @@ static void mount_virtual_fs(void)
     mkdir("/tmp",  0777);
     mkdir("/run",  0755);
 
+    /* Remount root rw — kernel boots it read-only; init must remount it.
+     * (systemd does this; we must too.) */
+    if (mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL) < 0)
+        WARN("remount / rw failed — home/var writes will fail");
+    else
+        LOG("root filesystem remounted read-write");
+
     if (mount("proc",    "/proc", "proc",    MS_NOEXEC | MS_NOSUID | MS_NODEV, NULL) < 0)
         WARN("mount /proc failed (may already be mounted)");
 
