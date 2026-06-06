@@ -154,10 +154,13 @@ static void mount_virtual_fs(void)
     mkdir("/tmp",  0777);
     mkdir("/run",  0755);
 
-    /* Remount root rw — kernel boots it read-only; init must remount it.
-     * (systemd does this; we must too.) */
-    if (mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL) < 0)
-        WARN("remount / rw failed — home/var writes will fail");
+    /* Remount root read-write.
+     * dracut mounts root ro; we must explicitly remount rw before any
+     * userspace process tries to write to /home, /var, /opt, etc.
+     * MS_REMOUNT without MS_RDONLY = clear the read-only flag.
+     * Data arg "" is required on some kernels to avoid EINVAL. */
+    if (mount("none", "/", NULL, MS_REMOUNT | MS_NOATIME, "") < 0)
+        WARN("remount / rw failed — writes to home/var/opt will fail");
     else
         LOG("root filesystem remounted read-write");
 
