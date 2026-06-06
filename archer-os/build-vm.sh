@@ -267,6 +267,16 @@ fi
 BASHPROFILE
 chroot "$MOUNT" chown archer:archer /home/archer/.bash_profile
 
+# Pre-create Xorg directories with correct ownership so X can write its log.
+# Without these, Xorg fails immediately before even loading any driver.
+chroot "$MOUNT" bash -c "
+    mkdir -p /home/archer/.local/share/xorg
+    touch /home/archer/.Xauthority
+    chown -R archer:archer /home/archer/.local
+    chown archer:archer /home/archer/.Xauthority
+    chmod 600 /home/archer/.Xauthority
+"
+
 # .xinitrc fallback (used if startx is called without an argument)
 cat > "$MOUNT/home/archer/.xinitrc" <<'XINITRC'
 exec /opt/archer/kiosk.sh
