@@ -154,16 +154,6 @@ static void mount_virtual_fs(void)
     mkdir("/tmp",  0777);
     mkdir("/run",  0755);
 
-    /* Remount root read-write.
-     * dracut mounts root ro; we must explicitly remount rw before any
-     * userspace process tries to write to /home, /var, /opt, etc.
-     * MS_REMOUNT without MS_RDONLY = clear the read-only flag.
-     * Data arg "" is required on some kernels to avoid EINVAL. */
-    if (mount("none", "/", NULL, MS_REMOUNT | MS_NOATIME, "") < 0)
-        WARN("remount / rw failed — writes to home/var/opt will fail");
-    else
-        LOG("root filesystem remounted read-write");
-
     if (mount("proc",    "/proc", "proc",    MS_NOEXEC | MS_NOSUID | MS_NODEV, NULL) < 0)
         WARN("mount /proc failed (may already be mounted)");
 
@@ -740,6 +730,42 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
      * Flask binds to 0.0.0.0:5000 but still needs lo up for localhost.
      */
     bring_up_loopback();
+
+    /* Remount root read-write.
+     * dracut hands us a ro root. We must remount rw before any userspace
+     * process writes to /home, /var, /opt, etc.
+     * This must happen AFTER mount_virtual_fs() so /dev/kmsg exists for WARN. */
+    if (mount("none", "/", NULL, MS_REMOUNT | MS_NOATIME, "") < 0)
+        WARN("remount / rw failed — filesystem may be read-only");
+    else
+        LOG("root filesystem remounted read-write");
+
+    /* Load kernel modules that are =m (not built-in) but needed before udevd.
+     * Network drivers: e1000 covers older VMware E1000 adapters.
+     * GPU drivers: vmwgfx for VMware SVGA, then real-hardware drivers.
+     * Failures are silently ignored — built-in drivers are already active. */
+    {
+        static const char *const mods[] = {
+            /* network */
+            "e1000", "e1000e", "vmxnet3", "r8169",
+            /* gpu — try vmwgfx first, fall back to real-hardware drivers */
+            "vmwgfx", "drm_simpledrm", "i915", "amdgpu", "nouveau",
+            NULL
+        };
+        for (int i = 0; mods[i]; i++) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                int null = open("/dev/null", O_RDWR);
+                if (null >= 0) { dup2(null,0); dup2(null,1); dup2(null,2); close(null); }
+                char *argv[] = { "/sbin/modprobe", (char*)mods[i], NULL };
+                execv("/sbin/modprobe", argv);
+                _exit(1);
+            }
+            if (pid > 0) waitpid(pid, NULL, 0);
+        }
+        LOG("kernel modules loaded");
+        sleep(1); /* let uevents settle so /dev/fb0 and eth0 appear */
+    }
 
     LOG("archer_init: initialization complete, starting services");
 
