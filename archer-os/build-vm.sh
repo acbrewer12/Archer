@@ -173,12 +173,29 @@ DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     xorg xinit chromium x11-xserver-utils 2>&1 || \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
-# Allow non-root users to start X (archer has NOPASSWD sudo as fallback)
+# Allow non-root users to start X
 mkdir -p "$MOUNT/etc/X11"
 cat > "$MOUNT/etc/X11/Xwrapper.config" <<'XWRAP'
 allowed_users=anybody
 needs_root_rights=yes
 XWRAP
+
+# Force fbdev driver so Xorg works with our custom kernel (no udevd to load DRM modules).
+# fbdev uses the kernel framebuffer — available at boot via CONFIG_FB_VESA=y / CONFIG_FB_EFI=y.
+mkdir -p "$MOUNT/etc/X11/xorg.conf.d"
+cat > "$MOUNT/etc/X11/xorg.conf.d/10-fbdev.conf" <<'XORGCONF'
+Section "Device"
+    Identifier  "Archer Display"
+    Driver      "fbdev"
+    Option      "fbdev" "/dev/fb0"
+EndSection
+
+Section "Screen"
+    Identifier  "Archer Screen"
+    Device      "Archer Display"
+    DefaultDepth 24
+EndSection
+XORGCONF
 
 # Remove policy override — on real boot services start normally
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
@@ -239,10 +256,13 @@ chmod +x "$MOUNT/opt/archer/kiosk.sh"
 
 # .bash_profile — on tty1 (physical display), start X kiosk automatically
 cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
-# On the physical display (tty1), boot straight into the Archer dashboard.
-# Falls back to normal shell if X fails.
+# tty1 = kiosk display (dashboard). tty2 = maintenance shell (Ctrl+Alt+F2).
 if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
-    exec startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    # Don't exec — keep bash alive so if X exits we drop to a shell instead
+    # of dying and triggering an infinite getty restart loop.
+    startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    echo "[archer] X/kiosk exited. See /tmp/archer-x.log for details."
+    echo "[archer] Switch to maintenance shell: Ctrl+Alt+F2"
 fi
 BASHPROFILE
 chroot "$MOUNT" chown archer:archer /home/archer/.bash_profile

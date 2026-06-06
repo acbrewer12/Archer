@@ -65,6 +65,8 @@ static volatile int g_shutdown_type = RB_POWER_OFF;
 static pid_t pid_network  = -1;
 static pid_t pid_avahi    = -1;
 static pid_t pid_archer   = -1;
+static pid_t pid_getty1   = -1;
+static pid_t pid_getty2   = -1;
 
 /* ── logging ─────────────────────────────────────────────────────── */
 
@@ -440,15 +442,11 @@ static void start_services(void)
         /* non-critical, no warning if it fails */
     }
 
-    /* 4. Getty on tty1 — gives us an interactive login shell on the console.
-     *    --autologin archer: no password prompt, logs straight in as archer.
-     *    Without this, keystrokes appear on screen but nothing processes them
-     *    because our init doesn't run bash by default.
-     *    We open /dev/tty1 explicitly so stdout/stderr go there, not /dev/kmsg. */
+    /* 4a. Getty on tty1 — autologin as archer → .bash_profile → startx → kiosk.
+     *     We open /dev/tty1 explicitly so stdin/stdout/stderr go there. */
     {
         pid_t pid = fork();
         if (pid == 0) {
-            /* Open tty1 as stdin/stdout/stderr for the getty process */
             int tty = open("/dev/tty1", O_RDWR | O_NOCTTY);
             if (tty >= 0) {
                 dup2(tty, STDIN_FILENO);
@@ -456,24 +454,48 @@ static void start_services(void)
                 dup2(tty, STDERR_FILENO);
                 if (tty > STDERR_FILENO) close(tty);
             }
-            /* setsid: make this process a session leader so it can control tty1 */
             setsid();
-            /* TIOCSCTTY: claim tty1 as our controlling terminal */
             ioctl(STDIN_FILENO, TIOCSCTTY, 1);
-
             char *argv[] = {
                 "/sbin/agetty",
                 "--autologin", "archer",
                 "--noclear",
-                "tty1",
-                "linux",
-                NULL
+                "tty1", "linux", NULL
             };
             execv("/sbin/agetty", argv);
             _exit(1);
         }
-        if (pid > 0)
-            LOG("getty started on tty1");
+        pid_getty1 = pid;
+        if (pid_getty1 > 0)
+            LOG("getty started on tty1 (kiosk)");
+    }
+
+    /* 4b. Getty on tty2 — maintenance shell, always accessible via Ctrl+Alt+F2.
+     *     Also autologin as archer so you don't need a password to debug. */
+    {
+        pid_t pid = fork();
+        if (pid == 0) {
+            int tty = open("/dev/tty2", O_RDWR | O_NOCTTY);
+            if (tty >= 0) {
+                dup2(tty, STDIN_FILENO);
+                dup2(tty, STDOUT_FILENO);
+                dup2(tty, STDERR_FILENO);
+                if (tty > STDERR_FILENO) close(tty);
+            }
+            setsid();
+            ioctl(STDIN_FILENO, TIOCSCTTY, 1);
+            char *argv[] = {
+                "/sbin/agetty",
+                "--autologin", "archer",
+                "--noclear",
+                "tty2", "linux", NULL
+            };
+            execv("/sbin/agetty", argv);
+            _exit(1);
+        }
+        pid_getty2 = pid;
+        if (pid_getty2 > 0)
+            LOG("getty started on tty2 (maintenance)");
     }
 
     /* Small delay: let NetworkManager initialize before Archer tries to use the network */
@@ -571,6 +593,8 @@ static void write_status(void)
     dprintf(fd, "network_pid=%d\n", (int)pid_network);
     dprintf(fd, "archer_pid=%d\n",  (int)pid_archer);
     dprintf(fd, "avahi_pid=%d\n",   (int)pid_avahi);
+    dprintf(fd, "getty1_pid=%d\n",  (int)pid_getty1);
+    dprintf(fd, "getty2_pid=%d\n",  (int)pid_getty2);
     dprintf(fd, "network_ok=%d\n",  pid_network > 0 ? 1 : 0);
     dprintf(fd, "archer_ok=%d\n",   pid_archer  > 0 ? 1 : 0);
 
@@ -734,11 +758,12 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         /* Reap any dead children */
         pid_t dead;
         while ((dead = waitpid(-1, NULL, WNOHANG)) > 0) {
-            /* Log which service died */
             char msg[64];
             if      (dead == pid_archer)  { snprintf(msg, sizeof(msg), "Archer (pid %d) exited", dead); ERR(msg); pid_archer = -1; }
             else if (dead == pid_network) { snprintf(msg, sizeof(msg), "NetworkManager (pid %d) exited", dead); WARN(msg); pid_network = -1; }
             else if (dead == pid_avahi)   { snprintf(msg, sizeof(msg), "avahi (pid %d) exited", dead); WARN(msg); pid_avahi = -1; }
+            else if (dead == pid_getty1)  { pid_getty1 = -1; }
+            else if (dead == pid_getty2)  { pid_getty2 = -1; }
         }
 
         /* Auto-restart Archer if it died */
@@ -751,6 +776,30 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
             char *nm_argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
             pid_network = spawn("/usr/sbin/NetworkManager", nm_argv, "/", 0, 0);
             if (pid_network > 0) LOG("NetworkManager restarted");
+        }
+
+        /* Auto-restart gettys if kiosk/X exits or user logs out */
+        if (pid_getty1 <= 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                int tty = open("/dev/tty1", O_RDWR | O_NOCTTY);
+                if (tty >= 0) { dup2(tty, 0); dup2(tty, 1); dup2(tty, 2); close(tty); }
+                setsid(); ioctl(0, TIOCSCTTY, 1);
+                char *a[] = { "/sbin/agetty", "--autologin", "archer", "--noclear", "tty1", "linux", NULL };
+                execv("/sbin/agetty", a); _exit(1);
+            }
+            pid_getty1 = pid;
+        }
+        if (pid_getty2 <= 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                int tty = open("/dev/tty2", O_RDWR | O_NOCTTY);
+                if (tty >= 0) { dup2(tty, 0); dup2(tty, 1); dup2(tty, 2); close(tty); }
+                setsid(); ioctl(0, TIOCSCTTY, 1);
+                char *a[] = { "/sbin/agetty", "--autologin", "archer", "--noclear", "tty2", "linux", NULL };
+                execv("/sbin/agetty", a); _exit(1);
+            }
+            pid_getty2 = pid;
         }
 
         /* Update status file every 10 seconds */
