@@ -431,10 +431,36 @@ cat > "$MOUNT/etc/motd" <<'EOF'
   ╔═══════════════════════════════════╗
   ║       ARCHER TRUCK AI OS          ║
   ╚═══════════════════════════════════╝
-  Logs:   journalctl -u archer -f
-  Update: sudo /opt/archer/usb-os/update.sh
+  Logs:   cat /run/archer_init.log
+  Update: sudo /opt/archer/update.sh
+  Status: cat /run/archer_status
 
 EOF
+
+# Update script — works with our custom init (no systemd/systemctl).
+# Pulls latest code from git, then kills archer so archer_init restarts it.
+cat > "$MOUNT/opt/archer/update.sh" <<'UPDATESCRIPT'
+#!/bin/bash
+set -e
+echo "[archer-update] Pulling latest code..."
+cd /opt/archer
+git fetch origin claude/archer-truck-ai-system-TlfGE
+git reset --hard origin/claude/archer-truck-ai-system-TlfGE
+
+echo "[archer-update] Restarting Archer (archer_init will auto-respawn)..."
+ARCHER_PID=$(grep -oP '(?<=archer_pid=)\d+' /run/archer_status 2>/dev/null || true)
+if [ -n "$ARCHER_PID" ] && [ "$ARCHER_PID" -gt 0 ] 2>/dev/null; then
+    kill "$ARCHER_PID" && echo "[archer-update] Sent SIGTERM to Archer (pid $ARCHER_PID)"
+else
+    pkill -f "archer.py" 2>/dev/null && echo "[archer-update] Killed archer.py" || true
+fi
+
+sleep 2
+echo "[archer-update] Done. Archer restarting in background."
+echo "[archer-update] Check: curl -s http://127.0.0.1:5000/ | head -1"
+UPDATESCRIPT
+chmod +x "$MOUNT/opt/archer/update.sh"
+chroot "$MOUNT" chown archer:archer /opt/archer/update.sh
 
 step "Unmounting and converting VM image..."
 # Tear down bind mounts before unmounting the image filesystem
