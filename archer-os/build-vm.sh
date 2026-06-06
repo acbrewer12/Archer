@@ -288,16 +288,17 @@ rm -f "$MOUNT/etc/resolv.conf"
 
 # Generic mode: packs all common hardware modules — boots on any machine.
 # udev fires at boot, detects hardware, loads only the matching modules.
+# Output named initrd.img-VERSION — Debian's update-grub expects this exact pattern.
 chroot "$MOUNT" dracut \
     --force \
     --no-hostonly \
     --add "base rootfs-block shutdown" \
-    "/boot/initramfs-${ARCHER_KERNEL_VER}.img" \
+    "/boot/initrd.img-${ARCHER_KERNEL_VER}" \
     "$ARCHER_KERNEL_VER" \
     2>&1 | tail -3
 
-INITRD_SIZE=$(( $(stat -c%s "$MOUNT/boot/initramfs-${ARCHER_KERNEL_VER}.img") / 1024 / 1024 ))
-log "initramfs-${ARCHER_KERNEL_VER}.img (${INITRD_SIZE} MB)"
+INITRD_SIZE=$(( $(stat -c%s "$MOUNT/boot/initrd.img-${ARCHER_KERNEL_VER}") / 1024 / 1024 ))
+log "initrd.img-${ARCHER_KERNEL_VER} (${INITRD_SIZE} MB)"
 
 step "Installing Archer systemd service and enabling services..."
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
