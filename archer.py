@@ -10471,6 +10471,14 @@ SIM_SCENARIOS = {
     'warning':  {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235, 'coolant_temp': 225, 'battery_main': 11.8},
 }
 
+@display_app.route('/dashboard')
+def dashboard_page():
+    from flask import Response as FR
+    if os.path.exists('archer_dashboard.html'):
+        with open('archer_dashboard.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#050508;color:#00e5ff;font-family:monospace;text-align:center;padding:40px">ARCHER DASHBOARD — archer_dashboard.html not found</body></html>', mimetype='text/html')
+
 @display_app.route('/mirror')
 def mirror_page():
     from flask import Response as FR

@@ -160,7 +160,8 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus sudo isc-dhcp-client
+    network-manager avahi-daemon dbus sudo isc-dhcp-client \
+    xorg xinit chromium x11-xserver-utils
 
 # Remove policy override — on real boot services start normally
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
@@ -184,7 +185,7 @@ ln -sf /usr/share/zoneinfo/America/Chicago "$MOUNT/etc/localtime"
 
 # Auto-login archer user on tty1
 chroot "$MOUNT" useradd -m -s /bin/bash archer
-chroot "$MOUNT" usermod -aG audio,dialout,sudo archer
+chroot "$MOUNT" usermod -aG audio,dialout,sudo,video,input archer
 
 # Set root password to 'archer' for console debugging
 chroot "$MOUNT" bash -c "echo 'root:archer' | chpasswd"
@@ -193,6 +194,46 @@ chroot "$MOUNT" bash -c "echo 'root:archer' | chpasswd"
 mkdir -p "$MOUNT/etc/sudoers.d"
 echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
 chmod 440 "$MOUNT/etc/sudoers.d/archer"
+
+# Kiosk launch script — waits for Flask, then opens Chromium fullscreen
+cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
+#!/bin/bash
+# Wait up to 45s for Flask to be ready
+for i in $(seq 1 45); do
+    curl -sf http://127.0.0.1:5000/ >/dev/null 2>&1 && break
+    sleep 1
+done
+# Disable screensaver / power management
+xset s off -dpms 2>/dev/null || true
+exec /usr/bin/chromium \
+    --kiosk \
+    --no-sandbox \
+    --disable-infobars \
+    --no-first-run \
+    --disable-translate \
+    --disable-extensions \
+    --disable-pinch \
+    --disable-session-crashed-bubble \
+    --overscroll-history-navigation=0 \
+    --app=http://127.0.0.1:5000/dashboard
+KIOSK
+chmod +x "$MOUNT/opt/archer/kiosk.sh"
+
+# .bash_profile — on tty1 (physical display), start X kiosk automatically
+cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
+# On the physical display (tty1), boot straight into the Archer dashboard.
+# Falls back to normal shell if X fails.
+if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
+    exec startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+fi
+BASHPROFILE
+chown archer:archer "$MOUNT/home/archer/.bash_profile"
+
+# .xinitrc fallback (used if startx is called without an argument)
+cat > "$MOUNT/home/archer/.xinitrc" <<'XINITRC'
+exec /opt/archer/kiosk.sh
+XINITRC
+chown archer:archer "$MOUNT/home/archer/.xinitrc"
 
 # Tell NetworkManager to leave wired ethernet alone.
 # archer_init brings up ethernet directly with dhclient (no D-Bus dependency).

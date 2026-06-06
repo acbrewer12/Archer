@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARCHER OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #050508;
+  --bg2:      #09090f;
+  --bg3:      #0d0d16;
+  --panel:    #0a0a12;
+  --border:   #16162a;
+  --border2:  #1e1e35;
+  --cyan:     #00e5ff;
+  --cyan-dim: #009ab5;
+  --red:      #ff3333;
+  --orange:   #ff6600;
+  --yellow:   #ffc700;
+  --green:    #00cc44;
+  --green2:   #00ff55;
+  --text:     #dde4e8;
+  --text-dim: #6a7a88;
+  --text-muted: #30394a;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+html, body {
+  width:100%; height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Rajdhani','Arial Narrow',Arial,sans-serif;
+  overflow:hidden;
+  user-select:none;
+}
+
+/* ── TOP BAR ─────────────────────────────────────────────── */
+#topbar {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:38px;
+  background:var(--bg2);
+  border-bottom:1px solid var(--border2);
+  padding:0 14px;
+  flex-shrink:0;
+  position:relative;
+}
+
+.tb-logo {
+  font-family:'Orbitron',monospace;
+  font-size:17px;
+  font-weight:900;
+  color:var(--cyan);
+  letter-spacing:5px;
+  text-shadow:0 0 18px rgba(0,229,255,0.5);
+}
+
+#lock-group {
+  position:absolute;
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:2px;
+}
+
+.lock-dot {
+  width:8px; height:8px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 8px var(--green);
+  animation:blink 2.5s infinite;
+}
+.lock-dot.locked { background:var(--red); box-shadow:0 0 8px var(--red); }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+#lock-label { color:var(--green); }
+#lock-label.locked { color:var(--red); }
+
+#vin-text {
+  font-family:'Courier New',monospace;
+  font-size:10px;
+  color:var(--text-muted);
+  letter-spacing:1px;
+  margin-left:12px;
+}
+
+.tb-right {
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+#clock {
+  font-family:'Orbitron',monospace;
+  font-size:15px;
+  font-weight:700;
+  color:var(--cyan);
+  letter-spacing:2px;
+}
+
+.key-badge {
+  border:1px solid var(--cyan-dim);
+  color:var(--cyan-dim);
+  padding:2px 10px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:2px;
+  background:rgba(0,229,255,0.06);
+}
+
+/* ── BODY GRID ───────────────────────────────────────────── */
+#body {
+  display:grid;
+  grid-template-columns:195px 1fr 215px;
+  height:calc(100vh - 38px - 88px - 42px);
+}
+
+/* ── LEFT PANEL ──────────────────────────────────────────── */
+#left {
+  background:var(--panel);
+  border-right:1px solid var(--border2);
+  padding:10px 10px 8px;
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+  overflow:hidden;
+}
+
+.panel-hdr {
+  font-size:9px;
+  color:var(--text-dim);
+  letter-spacing:3px;
+  padding-bottom:6px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:2px;
+  font-weight:600;
+}
+
+.sys-item { display:flex; flex-direction:column; gap:3px; }
+
+.sys-row {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.sys-name {
+  font-size:11px;
+  font-weight:600;
+  color:var(--text-dim);
+  letter-spacing:1px;
+}
+
+.sys-pct {
+  font-family:'Orbitron',monospace;
+  font-size:13px;
+  font-weight:700;
+}
+.sys-pct.good  { color:var(--green); }
+.sys-pct.warn  { color:var(--yellow); }
+.sys-pct.bad   { color:var(--red); }
+
+.hbar {
+  height:3px;
+  background:var(--bg3);
+  border-radius:2px;
+  overflow:hidden;
+}
+.hbar-fill {
+  height:100%;
+  border-radius:2px;
+  transition:width .6s ease;
+}
+.hbar-fill.good { background:var(--green); }
+.hbar-fill.warn { background:var(--yellow); }
+.hbar-fill.bad  { background:var(--red); }
+
+.sys-detail {
+  font-size:9px;
+  color:var(--text-muted);
+  letter-spacing:.5px;
+}
+
+#dtc-strip {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-height:0;
+}
+.dtc-row {
+  font-size:10px;
+  color:var(--red);
+  letter-spacing:1px;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+
+#overall-block {
+  margin-top:auto;
+  border-top:1px solid var(--border2);
+  padding-top:8px;
+  text-align:center;
+}
+.overall-sub { font-size:9px; color:var(--text-dim); letter-spacing:2px; margin-bottom:4px; }
+#overall-num {
+  font-family:'Orbitron',monospace;
+  font-size:30px;
+  font-weight:900;
+  line-height:1;
+}
+#overall-msg { font-size:10px; letter-spacing:1px; margin-top:3px; }
+
+/* ── CENTER PANEL ────────────────────────────────────────── */
+#center {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  padding:6px 14px 4px;
+  gap:6px;
+  overflow:hidden;
+}
+
+/* RPM gauge */
+#gauge-wrap { flex-shrink:0; position:relative; }
+#rpm-svg { display:block; }
+
+#rpm-readout {
+  position:absolute;
+  bottom:10px;
+  left:50%;
+  transform:translateX(-50%);
+  text-align:center;
+}
+#rpm-num {
+  font-family:'Orbitron',monospace;
+  font-size:30px;
+  font-weight:900;
+  color:var(--cyan);
+  letter-spacing:2px;
+  line-height:1;
+}
+#rpm-lbl { font-size:10px; color:var(--text-dim); letter-spacing:3px; }
+
+/* Speed + Gear + Odo row */
+#info-row {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:28px;
+  width:100%;
+  flex-shrink:0;
+}
+.info-blk { text-align:center; }
+.info-num {
+  font-family:'Orbitron',monospace;
+  font-size:24px;
+  font-weight:700;
+  color:var(--text);
+  line-height:1;
+}
+.info-unit {
+  font-size:9px;
+  color:var(--text-dim);
+  letter-spacing:2px;
+  margin-top:2px;
+}
+
+#prndl {
+  display:flex;
+  gap:7px;
+  font-family:'Orbitron',monospace;
+  font-size:17px;
+  font-weight:700;
+}
+.gl { color:var(--text-muted); }
+.gl.active { color:var(--cyan); text-shadow:0 0 10px var(--cyan); }
+
+/* Small gauges */
+#small-grid {
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:5px;
+  width:100%;
+}
+.sg {
+  background:var(--bg2);
+  border:1px solid var(--border);
+  padding:5px 6px 4px;
+  text-align:center;
+  position:relative;
+}
+.sg-lbl { font-size:8px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; }
+.sg-num {
+  font-family:'Orbitron',monospace;
+  font-size:19px;
+  font-weight:700;
+  color:var(--text);
+  line-height:1.2;
+}
+.sg-num.warn { color:var(--yellow); }
+.sg-num.bad  { color:var(--red); }
+.sg-unit { font-size:8px; color:var(--text-muted); }
+
+/* ── RIGHT PANEL ─────────────────────────────────────────── */
+#right {
+  background:var(--panel);
+  border-left:1px solid var(--border2);
+  padding:10px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  overflow:hidden;
+}
+
+#ai-hdr {
+  text-align:center;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--border2);
+}
+#ai-letter {
+  font-family:'Orbitron',monospace;
+  font-size:38px;
+  font-weight:900;
+  color:var(--cyan);
+  text-shadow:0 0 24px rgba(0,229,255,0.6);
+  line-height:1;
+}
+#ai-sub   { font-size:10px; color:var(--text-dim); letter-spacing:3px; margin-top:3px; }
+#ai-op    { font-size:10px; font-weight:700; color:var(--green); letter-spacing:2px; margin-top:3px; }
+
+.stat-row {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  border-bottom:1px solid var(--border);
+  padding-bottom:4px;
+}
+.stat-lbl { font-size:11px; color:var(--text-dim); letter-spacing:1px; }
+.stat-val { font-size:11px; font-weight:700; }
+.stat-val.ok     { color:var(--green); }
+.stat-val.off    { color:var(--red); }
+.stat-val.warn   { color:var(--yellow); }
+.stat-val.dim    { color:var(--text-dim); font-size:10px; }
+
+#msg-box {
+  flex:1;
+  background:var(--bg3);
+  border:1px solid var(--border);
+  padding:8px;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+}
+#msg-lbl  { font-size:8px; color:var(--text-dim); letter-spacing:3px; margin-bottom:5px; }
+#msg-text {
+  font-size:12px;
+  color:var(--cyan-dim);
+  line-height:1.55;
+  font-style:italic;
+  overflow:hidden;
+}
+
+/* ── GRAPHS ──────────────────────────────────────────────── */
+#graphs {
+  height:88px;
+  background:var(--bg2);
+  border-top:1px solid var(--border2);
+  display:flex;
+  flex-shrink:0;
+}
+.gc {
+  flex:1;
+  border-right:1px solid var(--border);
+  padding:4px 6px 3px;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.gc:last-child { border-right:none; }
+.gc-lbl { font-size:8px; color:var(--text-dim); letter-spacing:1px; flex-shrink:0; }
+.gc-val {
+  font-family:'Orbitron',monospace;
+  font-size:11px;
+  font-weight:700;
+  color:var(--text);
+  flex-shrink:0;
+}
+.gc-canvas { flex:1; width:100%; display:block; }
+
+/* ── BOTTOM NAV ──────────────────────────────────────────── */
+#nav {
+  height:42px;
+  background:var(--bg2);
+  border-top:1px solid var(--border2);
+  display:flex;
+  flex-shrink:0;
+}
+.nt {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:1px;
+  color:var(--text-muted);
+  cursor:pointer;
+  border-right:1px solid var(--border);
+  transition:all .15s;
+  border-top:2px solid transparent;
+}
+.nt:last-child { border-right:none; }
+.nt.active {
+  color:var(--cyan);
+  background:rgba(0,229,255,0.04);
+  border-top:2px solid var(--cyan);
+}
+.nt:hover:not(.active) {
+  color:var(--text-dim);
+  background:rgba(255,255,255,0.02);
+}
+.ni { font-size:13px; }
+
+/* reconnect banner */
+#reconnect {
+  display:none;
+  position:fixed;
+  top:38px;
+  left:0; right:0;
+  background:rgba(255,40,40,.9);
+  color:#fff;
+  text-align:center;
+  padding:5px;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:3px;
+  z-index:99;
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="tb-logo">ARCHER</div>
+
+  <div id="lock-group">
+    <div class="lock-dot" id="lock-dot"></div>
+    <span id="lock-label">SYSTEM UNLOCKED</span>
+    <span id="vin-text">VIN: ──────────────────</span>
+  </div>
+
+  <div class="tb-right">
+    <div id="clock">00:00:00</div>
+    <div class="key-badge" id="key-badge">KEY: OWNER</div>
+  </div>
+</div>
+
+<div id="reconnect">⚠ RECONNECTING TO ARCHER...</div>
+
+<!-- BODY -->
+<div id="body">
+
+  <!-- LEFT -->
+  <div id="left">
+    <div class="panel-hdr">SYSTEM STATUS</div>
+
+    <div class="sys-item">
+      <div class="sys-row">
+        <span class="sys-name">ENGINE</span>
+        <span class="sys-pct good" id="sp-eng">--%</span>
+      </div>
+      <div class="hbar"><div class="hbar-fill good" id="hb-eng" style="width:0%"></div></div>
+      <div class="sys-detail" id="sd-eng">Waiting for data</div>
+    </div>
+
+    <div class="sys-item">
+      <div class="sys-row">
+        <span class="sys-name">TRANSMISSION</span>
+        <span class="sys-pct good" id="sp-trn">--%</span>
+      </div>
+      <div class="hbar"><div class="hbar-fill good" id="hb-trn" style="width:0%"></div></div>
+      <div class="sys-detail" id="sd-trn">Waiting for data</div>
+    </div>
+
+    <div class="sys-item">
+      <div class="sys-row">
+        <span class="sys-name">ABS / ESC</span>
+        <span class="sys-pct good" id="sp-abs">--%</span>
+      </div>
+      <div class="hbar"><div class="hbar-fill good" id="hb-abs" style="width:0%"></div></div>
+      <div class="sys-detail" id="sd-abs">No faults detected</div>
+    </div>
+
+    <div class="sys-item">
+      <div class="sys-row">
+        <span class="sys-name">BCM</span>
+        <span class="sys-pct good" id="sp-bcm">--%</span>
+      </div>
+      <div class="hbar"><div class="hbar-fill good" id="hb-bcm" style="width:0%"></div></div>
+      <div class="sys-detail" id="sd-bcm">Body control nominal</div>
+    </div>
+
+    <div class="sys-item">
+      <div class="sys-row">
+        <span class="sys-name">TPMS</span>
+        <span class="sys-pct good" id="sp-tpms">--%</span>
+      </div>
+      <div class="hbar"><div class="hbar-fill good" id="hb-tpms" style="width:0%"></div></div>
+      <div class="sys-detail" id="sd-tpms">Tire pressure nominal</div>
+    </div>
+
+    <div id="dtc-strip"></div>
+
+    <div id="overall-block">
+      <div class="overall-sub">OVERALL VEHICLE STATUS</div>
+      <div id="overall-num" style="color:var(--green)">--%</div>
+      <div id="overall-msg" style="color:var(--text-dim)">Initializing...</div>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div id="center">
+
+    <!-- RPM gauge -->
+    <div id="gauge-wrap">
+      <svg id="rpm-svg" viewBox="0 0 240 140" width="240" height="140">
+        <!-- background arc -->
+        <path d="M22 128 A96 96 0 0 1 218 128"
+              fill="none" stroke="#111122" stroke-width="15" stroke-linecap="round"/>
+        <!-- red-zone overlay -->
+        <path d="M185 47 A96 96 0 0 1 218 128"
+              fill="none" stroke="#ff222211" stroke-width="15" stroke-linecap="round"/>
+        <!-- fill arc -->
+        <path id="rpm-arc"
+              d="M22 128 A96 96 0 0 1 218 128"
+              fill="none" stroke="#00e5ff" stroke-width="15" stroke-linecap="round"
+              stroke-dasharray="302" stroke-dashoffset="302"/>
+        <!-- tick labels -->
+        <text x="18"  y="145" fill="#333" font-size="10" font-family="monospace" text-anchor="middle">0</text>
+        <text x="120" y="28"  fill="#333" font-size="10" font-family="monospace" text-anchor="middle">4</text>
+        <text x="222" y="145" fill="#555" font-size="10" font-family="monospace" text-anchor="middle">8</text>
+        <text x="222" y="135" fill="#ff3333" font-size="8" font-family="monospace" text-anchor="middle">▲</text>
+        <!-- needle -->
+        <line id="rpm-needle" x1="120" y1="128" x2="120" y2="40"
+              stroke="#00e5ff" stroke-width="2" stroke-linecap="round"
+              transform="rotate(-90,120,128)"/>
+        <circle cx="120" cy="128" r="5" fill="#00e5ff" opacity=".9"/>
+      </svg>
+      <div id="rpm-readout">
+        <div id="rpm-num">0</div>
+        <div id="rpm-lbl">RPM × 1000</div>
+      </div>
+    </div>
+
+    <!-- Speed / Gear / Odo -->
+    <div id="info-row">
+      <div class="info-blk">
+        <div class="info-num" id="speed-val">--</div>
+        <div class="info-unit">MPH</div>
+      </div>
+
+      <div id="prndl">
+        <span class="gl active" id="gl-p">P</span>
+        <span class="gl" id="gl-r">R</span>
+        <span class="gl" id="gl-n">N</span>
+        <span class="gl" id="gl-d">D</span>
+        <span class="gl" id="gl-l">L</span>
+      </div>
+
+      <div class="info-blk">
+        <div class="info-num" id="odo-val" style="font-size:16px;">------</div>
+        <div class="info-unit">ODOMETER MI</div>
+      </div>
+    </div>
+
+    <!-- 8-cell small gauges -->
+    <div id="small-grid">
+      <div class="sg">
+        <div class="sg-lbl">COOLANT</div>
+        <div class="sg-num" id="sg-cool">--</div>
+        <div class="sg-unit">°F</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">INTAKE AIR</div>
+        <div class="sg-num" id="sg-iat">--</div>
+        <div class="sg-unit">°F</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">FUEL PRES</div>
+        <div class="sg-num" id="sg-fuelp">--</div>
+        <div class="sg-unit">PSI</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">OIL PRES</div>
+        <div class="sg-num" id="sg-oilp">--</div>
+        <div class="sg-unit">PSI</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">EXHAUST</div>
+        <div class="sg-num" id="sg-exh">--</div>
+        <div class="sg-unit">°F</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">VOLTAGE</div>
+        <div class="sg-num" id="sg-volt">--</div>
+        <div class="sg-unit">V</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">BOOST</div>
+        <div class="sg-num" id="sg-boost">--</div>
+        <div class="sg-unit">PSI</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">OIL TEMP</div>
+        <div class="sg-num" id="sg-oilt">--</div>
+        <div class="sg-unit">°F</div>
+      </div>
+    </div>
+
+  </div><!-- /center -->
+
+  <!-- RIGHT -->
+  <div id="right">
+    <div id="ai-hdr">
+      <div id="ai-letter">A</div>
+      <div id="ai-sub">ARCHER AI</div>
+      <div id="ai-op">● SYSTEM OPERATIONAL</div>
+    </div>
+
+    <div class="stat-row">
+      <span class="stat-lbl">OBD2</span>
+      <span class="stat-val off" id="st-obd">OFFLINE</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">PI LINK</span>
+      <span class="stat-val off" id="st-pi">OFFLINE</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">NETWORK</span>
+      <span class="stat-val off" id="st-net">NO NETWORK</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">OUTSIDE</span>
+      <span class="stat-val dim" id="st-wx">--°F</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">FUEL</span>
+      <span class="stat-val dim" id="st-fuel">--%</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">UPTIME</span>
+      <span class="stat-val dim" id="st-uptime">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-lbl">KERNEL</span>
+      <span class="stat-val dim" id="st-kernel">6.12.92-archer</span>
+    </div>
+
+    <div id="msg-box">
+      <div id="msg-lbl">ARCHER SAYS</div>
+      <div id="msg-text">Initializing systems...</div>
+    </div>
+  </div>
+
+</div><!-- /body -->
+
+<!-- LIVE DATA GRAPHS -->
+<div id="graphs">
+  <div class="gc">
+    <div class="gc-lbl">COOLANT TEMP</div>
+    <div class="gc-val" id="gcv-cool">-- °F</div>
+    <canvas class="gc-canvas" id="gcc-cool"></canvas>
+  </div>
+  <div class="gc">
+    <div class="gc-lbl">INTAKE AIR</div>
+    <div class="gc-val" id="gcv-iat">-- °F</div>
+    <canvas class="gc-canvas" id="gcc-iat"></canvas>
+  </div>
+  <div class="gc">
+    <div class="gc-lbl">OIL TEMP</div>
+    <div class="gc-val" id="gcv-oilt">-- °F</div>
+    <canvas class="gc-canvas" id="gcc-oilt"></canvas>
+  </div>
+  <div class="gc">
+    <div class="gc-lbl">BOOST PSI</div>
+    <div class="gc-val" id="gcv-boost">-- PSI</div>
+    <canvas class="gc-canvas" id="gcc-boost"></canvas>
+  </div>
+  <div class="gc">
+    <div class="gc-lbl">BATTERY V</div>
+    <div class="gc-val" id="gcv-volt">-- V</div>
+    <canvas class="gc-canvas" id="gcc-volt"></canvas>
+  </div>
+  <div class="gc">
+    <div class="gc-lbl">EXHAUST TEMP</div>
+    <div class="gc-val" id="gcv-exh">-- °F</div>
+    <canvas class="gc-canvas" id="gcc-exh"></canvas>
+  </div>
+</div>
+
+<!-- NAV -->
+<div id="nav">
+  <div class="nt active" data-tab="dashboard">
+    <span class="ni">⬡</span>DASHBOARD
+  </div>
+  <div class="nt" data-tab="diagnostics">
+    <span class="ni">⚠</span>DIAGNOSTICS
+  </div>
+  <div class="nt" data-tab="live">
+    <span class="ni">▦</span>LIVE DATA
+  </div>
+  <div class="nt" data-tab="actuators">
+    <span class="ni">⚙</span>ACTUATORS
+  </div>
+  <div class="nt" data-tab="system">
+    <span class="ni">▣</span>SYSTEM
+  </div>
+  <div class="nt" data-tab="ai">
+    <span class="ni">◈</span>ARCHER AI
+  </div>
+  <div class="nt" data-tab="settings">
+    <span class="ni">≡</span>SETTINGS
+  </div>
+</div>
+
+<script>
+// ── Graph state ───────────────────────────────────────────
+const HIST = 80;
+const G = {
+  cool:  { id:'cool',  color:'#ff6644', min:160, max:260, unit:'°F' },
+  iat:   { id:'iat',   color:'#44aaff', min:40,  max:160, unit:'°F' },
+  oilt:  { id:'oilt',  color:'#ff9900', min:160, max:290, unit:'°F' },
+  boost: { id:'boost', color:'#00e5ff', min:-15, max:30,  unit:'PSI' },
+  volt:  { id:'volt',  color:'#00cc44', min:11,  max:15.5,unit:'V'  },
+  exh:   { id:'exh',   color:'#ff3333', min:600, max:2000,unit:'°F' },
+};
+for (const g of Object.values(G)) { g.data = []; g.canvas = null; }
+
+// ── Init ──────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  for (const g of Object.values(G))
+    g.canvas = document.getElementById('gcc-' + g.id);
+
+  document.querySelectorAll('.nt').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.nt').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+
+  clock();
+  setInterval(clock, 1000);
+  poll();
+  setInterval(poll, 2000);
+  setInterval(drawGraphs, 400);
+});
+
+// ── Clock ─────────────────────────────────────────────────
+function clock() {
+  const n = new Date();
+  const pad = x => String(x).padStart(2,'0');
+  document.getElementById('clock').textContent =
+    `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+}
+
+// ── Poll Flask endpoints ──────────────────────────────────
+let errors = 0;
+async function poll() {
+  try {
+    const [dr, hr] = await Promise.all([
+      fetch('/display_data', {cache:'no-store'}).catch(() => null),
+      fetch('/health',       {cache:'no-store'}).catch(() => null),
+    ]);
+    const d = dr && dr.ok ? await dr.json() : null;
+    const h = hr && hr.ok ? await hr.json() : null;
+    errors = 0;
+    document.getElementById('reconnect').style.display = 'none';
+    if (d) applyDisplay(d);
+    if (h) applyHealth(h);
+    if (d) computeScores(d, h);
+  } catch(e) {
+    errors++;
+    if (errors > 2)
+      document.getElementById('reconnect').style.display = 'block';
+  }
+}
+
+// ── Apply display_data ────────────────────────────────────
+function applyDisplay(d) {
+  // RPM
+  const rpm = d.rpm || 0;
+  setRpm(rpm);
+  document.getElementById('rpm-num').textContent = rpm.toLocaleString();
+
+  // Speed
+  setText('speed-val', d.speed != null ? Math.round(d.speed) : '--');
+
+  // Odometer
+  if (d.odometer) setText('odo-val', Math.round(d.odometer).toLocaleString());
+
+  // Small gauges  (field names from get_display_data())
+  sg('cool',  d.coolant,   180, 220, 240);
+  sg('iat',   sensor(d,'iat') ?? sensor(d,'intake_air_temp'), 40, 120, 140);
+  sg('fuelp', sensor(d,'fuel_pressure'), 40, 70, 85);
+  sg('oilp',  sensor(d,'oil_pressure'),  25, 60, 75);
+  sg('exh',   d.exhaust,   800, 1500, 1800);
+  sg('volt',  d.battery,   12.0, 14.8, 15.2);
+  sg('boost', d.boost,     -15, 20, 25);
+  sg('oilt',  d.oil_temp,  180, 240, 265);
+
+  // Graphs
+  push('cool',  d.coolant);
+  push('iat',   sensor(d,'iat') ?? sensor(d,'intake_air_temp'));
+  push('oilt',  d.oil_temp);
+  push('boost', d.boost);
+  push('volt',  d.battery);
+  push('exh',   d.exhaust);
+
+  // Graph current values
+  gcv('cool',  d.coolant,  '°F');
+  gcv('iat',   sensor(d,'iat') ?? sensor(d,'intake_air_temp'), '°F');
+  gcv('oilt',  d.oil_temp, '°F');
+  gcv('boost', d.boost,    'PSI');
+  gcv('volt',  d.battery,  'V');
+  gcv('exh',   d.exhaust,  '°F');
+
+  // Archer message
+  if (d.archer_msg) setText('msg-text', '"' + d.archer_msg + '"');
+
+  // Fuel
+  if (d.fuel_pct != null) {
+    const cls = d.fuel_pct < 15 ? 'warn' : 'dim';
+    const el = document.getElementById('st-fuel');
+    el.textContent = d.fuel_pct + '%' + (d.fuel_range ? '  ' + d.fuel_range + 'mi' : '');
+    el.className = 'stat-val ' + cls;
+  }
+
+  // Lock status — locked if OBD offline
+  const locked = !d.rpm && !d.coolant;
+  document.getElementById('lock-dot').className  = 'lock-dot' + (locked ? ' locked' : '');
+  document.getElementById('lock-label').textContent = locked ? 'SYSTEM LOCKED' : 'SYSTEM UNLOCKED';
+  document.getElementById('lock-label').className   = locked ? 'locked' : '';
+}
+
+function sensor(d, key) {
+  if (d[key] != null) return d[key];
+  if (d.sensor_data && d.sensor_data[key] != null) return d.sensor_data[key];
+  return null;
+}
+
+// ── Apply health ──────────────────────────────────────────
+function applyHealth(h) {
+  // OBD2
+  const obdEl = document.getElementById('st-obd');
+  const map = { live:'LIVE', beamng:'BEAMNG SIM', sim:'SIM', offline:'OFFLINE' };
+  obdEl.textContent  = map[h.obd_status] ?? h.obd_status?.toUpperCase() ?? '--';
+  obdEl.className    = 'stat-val ' + (h.obd_status === 'live' ? 'ok' : h.obd_status === 'offline' ? 'off' : 'warn');
+
+  // Uptime
+  if (h.uptime_seconds != null) {
+    const s = Math.round(h.uptime_seconds);
+    const m = Math.floor(s / 60), rem = s % 60;
+    const hr = Math.floor(m / 60), mn = m % 60;
+    setText('st-uptime', hr > 0 ? `${hr}h ${mn}m` : `${mn}m ${rem}s`);
+  }
+
+  // Weather
+  if (h.weather_temp != null) {
+    const wx = h.weather_temp + '°F' + (h.weather_cond ? '  ' + h.weather_cond : '');
+    setText('st-wx', wx);
+  }
+
+  // DTCs
+  const dtcEl = document.getElementById('dtc-strip');
+  dtcEl.innerHTML = h.active_dtc_count > 0
+    ? `<div class="dtc-row">⚠ ${h.active_dtc_count} ACTIVE DTC${h.active_dtc_count > 1 ? 'S' : ''}</div>`
+    : '';
+}
+
+// ── Health scores ─────────────────────────────────────────
+function computeScores(d, h) {
+  let eng = 100, trn = 96, abs = 98, bcm = 97, tpms = 99;
+
+  // Engine: coolant + oil temp
+  if (d.coolant != null) {
+    if      (d.coolant > 240) eng -= 35;
+    else if (d.coolant > 225) eng -= 15;
+    else if (d.coolant < 160) eng -=  5;
+  }
+  if (d.oil_temp != null) {
+    if      (d.oil_temp > 265) eng -= 30;
+    else if (d.oil_temp > 250) eng -= 12;
+  }
+  if (h && h.active_dtc_count > 0) { eng -= h.active_dtc_count * 8; trn -= 4; }
+
+  // Electrical: battery voltage
+  let elec = 100;
+  if (d.battery != null) {
+    if      (d.battery < 11.5) elec = 30;
+    else if (d.battery < 12.0) elec = 55;
+    else if (d.battery < 12.8) elec = 75;
+    else if (d.battery > 15.0) elec = 60;
+  }
+
+  eng  = clamp(eng);
+  trn  = clamp(trn);
+  elec = clamp(elec);
+
+  setScore('eng',  eng,  d.coolant != null ? `Coolant ${Math.round(d.coolant)}°F` : 'No sensor data');
+  setScore('trn',  trn,  'Transmission nominal');
+  setScore('abs',  abs,  'No faults detected');
+  setScore('bcm',  bcm,  'Body control nominal');
+  setScore('tpms', tpms, 'All tires nominal');
+
+  const overall = Math.round((eng + trn + elec + abs + bcm + tpms) / 6);
+  const numEl = document.getElementById('overall-num');
+  numEl.textContent  = overall + '%';
+  numEl.style.color  = overall >= 80 ? 'var(--green2)' : overall >= 60 ? 'var(--yellow)' : 'var(--red)';
+  setText('overall-msg', overall >= 80 ? 'ALL SYSTEMS NORMAL' : overall >= 60 ? 'MONITORING ACTIVE' : 'ATTENTION NEEDED');
+  document.getElementById('overall-msg').style.color =
+    overall >= 80 ? 'var(--green)' : overall >= 60 ? 'var(--yellow)' : 'var(--red)';
+}
+
+function clamp(v) { return Math.max(0, Math.min(100, Math.round(v))); }
+
+function setScore(id, score, detail) {
+  const cls = score >= 80 ? 'good' : score >= 55 ? 'warn' : 'bad';
+  const sp  = document.getElementById('sp-' + id);
+  sp.textContent = score + '%';
+  sp.className   = 'sys-pct ' + cls;
+  const hb = document.getElementById('hb-' + id);
+  hb.style.width  = score + '%';
+  hb.className    = 'hbar-fill ' + cls;
+  setText('sd-' + id, detail);
+}
+
+// ── RPM gauge ─────────────────────────────────────────────
+const ARC_LEN = 302; // π × 96
+function setRpm(rpm) {
+  const pct  = Math.min(rpm / 8000, 1);
+  const arc  = document.getElementById('rpm-arc');
+  arc.style.strokeDashoffset = ARC_LEN * (1 - pct);
+  arc.style.stroke = rpm < 4000 ? '#00e5ff' : rpm < 6500 ? '#ffc700' : '#ff3333';
+
+  // Rotate needle: -90° at 0rpm, +90° at 8000rpm
+  const angle = -90 + pct * 180;
+  document.getElementById('rpm-needle').setAttribute('transform',
+    `rotate(${angle},120,128)`);
+}
+
+// ── Small gauge helper ────────────────────────────────────
+function sg(id, val, lo, warnHi, badHi) {
+  const el = document.getElementById('sg-' + id);
+  if (val == null) { el.textContent = '--'; el.className = 'sg-num'; return; }
+  el.textContent = (val % 1 !== 0) ? val.toFixed(1) : Math.round(val);
+  el.className   = 'sg-num' + (val > badHi ? ' bad' : val > warnHi ? ' warn' : '');
+}
+
+// ── Graph helpers ─────────────────────────────────────────
+function push(id, val) {
+  if (val == null) return;
+  const g = G[id];
+  g.data.push(+val);
+  if (g.data.length > HIST) g.data.shift();
+}
+
+function gcv(id, val, unit) {
+  if (val == null) return;
+  const el = document.getElementById('gcv-' + id);
+  el.textContent = (val % 1 !== 0 ? val.toFixed(1) : Math.round(val)) + ' ' + unit;
+}
+
+function drawGraphs() {
+  for (const g of Object.values(G)) {
+    const c = g.canvas;
+    if (!c || g.data.length < 2) continue;
+    const r = c.getBoundingClientRect();
+    if (!r.width) continue;
+    c.width = r.width; c.height = r.height;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+    const range = (g.max - g.min) || 1;
+    const pts = g.data.map((v, i) => ({
+      x: (i / (HIST - 1)) * c.width,
+      y: c.height - ((v - g.min) / range) * c.height,
+    }));
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.strokeStyle = g.color;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.lineTo(pts[pts.length-1].x, c.height);
+    ctx.lineTo(pts[0].x, c.height);
+    ctx.closePath();
+    ctx.fillStyle = g.color + '18';
+    ctx.fill();
+  }
+}
+
+// ── Util ──────────────────────────────────────────────────
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+</script>
+</body>
+</html>
