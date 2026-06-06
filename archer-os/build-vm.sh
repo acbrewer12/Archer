@@ -162,12 +162,23 @@ chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     network-manager avahi-daemon dbus sudo isc-dhcp-client
 
-# X11 kiosk — setuid operations may fail in WSL2 build env; non-fatal
-# On real hardware these install cleanly and the kiosk works correctly
+# X11 kiosk — pre-register Xorg permissions so WSL2 setuid block doesn't abort
+mkdir -p "$MOUNT/var/lib/dpkg"
+# Tell dpkg not to set setuid on Xorg (0755 instead of 4755)
+# archer user has NOPASSWD sudo so X starts via sudo wrapper instead
+chroot "$MOUNT" bash -c "dpkg-statoverride --add root root 0755 /usr/bin/Xorg 2>/dev/null; true"
+echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
     xorg xinit chromium x11-xserver-utils 2>&1 || \
-    log "WARNING: X11/Chromium install had errors (OK in WSL2 — kiosk will work on real hardware)"
+    log "WARNING: X11/Chromium install had errors (kiosk may not work)"
+rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
+# Allow non-root users to start X (archer has NOPASSWD sudo as fallback)
+mkdir -p "$MOUNT/etc/X11"
+cat > "$MOUNT/etc/X11/Xwrapper.config" <<'XWRAP'
+allowed_users=anybody
+needs_root_rights=yes
+XWRAP
 
 # Remove policy override — on real boot services start normally
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
