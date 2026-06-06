@@ -196,6 +196,7 @@ echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
 chmod 440 "$MOUNT/etc/sudoers.d/archer"
 
 # Kiosk launch script — waits for Flask, then opens Chromium fullscreen
+mkdir -p "$MOUNT/opt/archer"
 cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
 #!/bin/bash
 # Wait up to 45s for Flask to be ready
