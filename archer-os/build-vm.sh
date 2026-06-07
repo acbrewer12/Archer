@@ -160,7 +160,7 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus sudo isc-dhcp-client
+    network-manager avahi-daemon dbus sudo isc-dhcp-client curl
 
 # X11 kiosk — pre-register Xorg permissions so WSL2 setuid block doesn't abort
 mkdir -p "$MOUNT/var/lib/dpkg"
@@ -234,13 +234,17 @@ mkdir -p "$MOUNT/opt/archer"
 cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
 #!/bin/bash
 # GPU modules are loaded by archer_init (root) before this script runs.
-# Create Xorg directories — root is now rw thanks to archer_init remount.
-mkdir -p /home/archer/.local/share/xorg 2>/dev/null || true
+# Create Xorg + Chromium profile directories — root is now rw thanks to
+# archer_init's remount. A missing/unwritable profile dir can make Chromium
+# hang silently on a fresh boot instead of erroring out.
+mkdir -p /home/archer/.local/share/xorg      2>/dev/null || true
+mkdir -p /home/archer/.config/archer-chrome  2>/dev/null || true
 touch /home/archer/.Xauthority 2>/dev/null || true
 
-# Wait up to 45s for Flask to be ready
+# Wait up to 45s for Flask to be ready. Pure-bash TCP probe — curl is not
+# guaranteed to be present this early (and isn't worth the dependency here).
 for i in $(seq 1 45); do
-    curl -sf http://127.0.0.1:5000/ >/dev/null 2>&1 && break
+    { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null && { exec 3<&- 3>&-; break; }
     sleep 1
 done
 # Disable screensaver / power management
@@ -262,6 +266,7 @@ CHROME_FLAGS=(
     --overscroll-history-navigation=0
     --force-device-scale-factor=1
     --autoplay-policy=no-user-gesture-required
+    --user-data-dir=/home/archer/.config/archer-chrome
     # The fbdev framebuffer has no real GPU/DRI — letting Chromium try GPU
     # compositing crashes its GPU process and leaves a blank black window.
     # Force software rendering/compositing instead.
@@ -270,16 +275,19 @@ CHROME_FLAGS=(
     --use-gl=swiftshader
 )
 
-# Try launching the dashboard a few times — on first boot Chromium can crash
-# while building a fresh profile. If it keeps failing, fall back to an
-# on-screen error page (avoids needing a VT switch to read the log).
+# Try launching the dashboard a few times. Each attempt is bounded by
+# `timeout` — if Chromium launches but its renderer hangs without ever
+# painting (a blank black window that never exits), waiting on it directly
+# would block forever and we'd never reach the on-screen fallback below.
 for attempt in 1 2 3; do
     echo "=== launch attempt $attempt: $(date) ===" >> "$LOG"
-    /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="$URL" >>"$LOG" 2>&1
-    echo "--- chromium exited with code $? ---" >> "$LOG"
+    timeout 35 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="$URL" >>"$LOG" 2>&1
+    echo "--- chromium exited with code $? (124 = hung / timed out) ---" >> "$LOG"
     sleep 2
 done
 
+# All attempts failed — render the captured logs directly in a Chromium
+# window so the failure is visible on the monitor without a VT switch.
 ERR_HTML=/tmp/archer-kiosk-error.html
 {
     echo "<html><body style='background:#000;color:#3f3;font:16px monospace;white-space:pre-wrap;padding:24px'>"
@@ -290,7 +298,8 @@ ERR_HTML=/tmp/archer-kiosk-error.html
     sed 's/&/\&amp;/g;s/</\&lt;/g' "$LOG" 2>/dev/null
     echo "</body></html>"
 } > "$ERR_HTML"
-exec /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="file://$ERR_HTML"
+timeout 60 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="file://$ERR_HTML" >>"$LOG" 2>&1
+echo "--- error-page chromium exited with code $? — handing back to shell ---" >> "$LOG"
 KIOSK
 chmod +x "$MOUNT/opt/archer/kiosk.sh"
 
@@ -301,7 +310,11 @@ if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
     # Don't exec — keep bash alive so if X exits we drop to a shell instead
     # of dying and triggering an infinite getty restart loop.
     startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
-    echo "[archer] X/kiosk exited. See /tmp/archer-x.log for details."
+    # If X crashed mid-startup it can leave the console stuck in graphics
+    # mode (KD_GRAPHICS) — these messages would be invisible otherwise.
+    sudo /usr/bin/chvt 1 2>/dev/null
+    printf '\033c'
+    echo "[archer] X/kiosk exited. See /tmp/archer-x.log and /tmp/archer-chromium.log"
     echo "[archer] Switch to maintenance shell: Ctrl+Alt+F2"
 fi
 BASHPROFILE
