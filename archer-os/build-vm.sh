@@ -290,9 +290,13 @@ done
 # window so the failure is visible on the monitor without a VT switch.
 ERR_HTML=/tmp/archer-kiosk-error.html
 {
-    echo "<html><body style='background:#000;color:#3f3;font:16px monospace;white-space:pre-wrap;padding:24px'>"
+    echo "<html><body style='background:#000;color:#3f3;font:14px monospace;white-space:pre-wrap;padding:24px'>"
     echo "ARCHER KIOSK — Chromium failed to load the dashboard after 3 attempts.<br><br>"
-    echo "--- /tmp/archer-x.log ---<br>"
+    echo "--- dmesg (full kernel boot log — scrolls too fast to read live, readable here) ---<br>"
+    sudo /usr/bin/dmesg 2>/dev/null | sed 's/&/\&amp;/g;s/</\&lt;/g'
+    echo "<br><br>--- /run/archer_init.log ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' /run/archer_init.log 2>/dev/null
+    echo "<br><br>--- /tmp/archer-x.log ---<br>"
     sed 's/&/\&amp;/g;s/</\&lt;/g' /tmp/archer-x.log 2>/dev/null
     echo "<br><br>--- $LOG ---<br>"
     sed 's/&/\&amp;/g;s/</\&lt;/g' "$LOG" 2>/dev/null
