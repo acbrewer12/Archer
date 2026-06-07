@@ -479,9 +479,10 @@ cat > "$MOUNT/etc/motd" <<'EOF'
   ╔═══════════════════════════════════╗
   ║       ARCHER TRUCK AI OS          ║
   ╚═══════════════════════════════════╝
-  Logs:   cat /run/archer_init.log
-  Update: sudo /opt/archer/update.sh
-  Status: cat /run/archer_status
+  Logs:     cat /run/archer_init.log
+  Boot log: cat /var/log/archer_boot_dmesg.log
+  Update:   sudo /opt/archer/update.sh
+  Status:   cat /run/archer_status
 
 EOF
 

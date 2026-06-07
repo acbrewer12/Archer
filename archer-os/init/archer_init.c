@@ -134,6 +134,34 @@ static void setup_signals(void)
     signal(SIGPIPE, SIG_IGN);
 }
 
+/* ── persisted boot log ──────────────────────────────────────────── */
+
+/*
+ * Verbose kernel logging (loglevel=7) scrolls by far too fast to read or
+ * photograph live. dmesg dumps the whole kernel ring buffer (cumulative —
+ * every message printed since boot, even ones long since scrolled off
+ * screen) to a real file on the root ext4 filesystem, so it survives and
+ * can be read later: from the maintenance shell (tty2), or by mounting the
+ * disk image from the host after shutdown.
+ */
+#define BOOT_LOG_PATH "/var/log/archer_boot_dmesg.log"
+
+static void dump_boot_log(void)
+{
+    pid_t pid = fork();
+    if (pid == 0) {
+        int fd = open(BOOT_LOG_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { dup2(fd, STDOUT_FILENO); close(fd); }
+        int null = open("/dev/null", O_RDWR);
+        if (null >= 0) { dup2(null, STDIN_FILENO); dup2(null, STDERR_FILENO); close(null); }
+        char *argv[] = { (char *)"dmesg", NULL };
+        execv("/bin/dmesg", argv);
+        execv("/usr/bin/dmesg", argv);
+        _exit(1);
+    }
+    if (pid > 0) waitpid(pid, NULL, 0);
+}
+
 /* ── filesystem mounts ───────────────────────────────────────────── */
 
 /*
@@ -767,6 +795,11 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         sleep(1); /* let uevents settle so /dev/fb0 and eth0 appear */
     }
 
+    /* Snapshot the kernel ring buffer now — if something hangs or panics
+     * during service startup, we still have everything up to this point
+     * saved to disk instead of lost in a fast-scrolling console. */
+    dump_boot_log();
+
     LOG("archer_init: initialization complete, starting services");
 
     /*
@@ -775,6 +808,11 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
      */
     start_services();
     write_status();
+
+    /* Re-snapshot now that every service has been launched — the ring
+     * buffer is cumulative, so this overwrites the earlier file with a
+     * more complete copy covering the rest of the boot sequence too. */
+    dump_boot_log();
 
     LOG("archer_init: entering main loop (reap + restart)");
 
