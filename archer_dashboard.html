@@ -52,10 +52,10 @@ html, body {
 
 .tb-logo {
   font-family:'Orbitron',monospace;
-  font-size:17px;
+  font-size:22px;
   font-weight:900;
   color:var(--cyan);
-  letter-spacing:5px;
+  letter-spacing:6px;
   text-shadow:0 0 18px rgba(0,229,255,0.5);
 }
 
@@ -101,7 +101,7 @@ html, body {
 
 #clock {
   font-family:'Orbitron',monospace;
-  font-size:15px;
+  font-size:18px;
   font-weight:700;
   color:var(--cyan);
   letter-spacing:2px;
@@ -121,7 +121,7 @@ html, body {
 #body {
   display:grid;
   grid-template-columns:195px 1fr 215px;
-  height:calc(100vh - 38px - 88px - 42px);
+  height:calc(100vh - 38px - 130px - 42px);
 }
 
 /* ── LEFT PANEL ──────────────────────────────────────────── */
@@ -154,7 +154,7 @@ html, body {
 }
 
 .sys-name {
-  font-size:11px;
+  font-size:13px;
   font-weight:600;
   color:var(--text-dim);
   letter-spacing:1px;
@@ -162,7 +162,7 @@ html, body {
 
 .sys-pct {
   font-family:'Orbitron',monospace;
-  font-size:13px;
+  font-size:16px;
   font-weight:700;
 }
 .sys-pct.good  { color:var(--green); }
@@ -185,7 +185,7 @@ html, body {
 .hbar-fill.bad  { background:var(--red); }
 
 .sys-detail {
-  font-size:9px;
+  font-size:10px;
   color:var(--text-muted);
   letter-spacing:.5px;
 }
@@ -211,28 +211,29 @@ html, body {
   padding-top:8px;
   text-align:center;
 }
-.overall-sub { font-size:9px; color:var(--text-dim); letter-spacing:2px; margin-bottom:4px; }
+.overall-sub { font-size:10px; color:var(--text-dim); letter-spacing:2px; margin-bottom:4px; }
 #overall-num {
   font-family:'Orbitron',monospace;
-  font-size:30px;
+  font-size:40px;
   font-weight:900;
   line-height:1;
 }
-#overall-msg { font-size:10px; letter-spacing:1px; margin-top:3px; }
+#overall-msg { font-size:11px; letter-spacing:1px; margin-top:3px; }
 
 /* ── CENTER PANEL ────────────────────────────────────────── */
 #center {
   display:flex;
   flex-direction:column;
   align-items:center;
+  justify-content:center;
   padding:6px 14px 4px;
-  gap:6px;
+  gap:14px;
   overflow:hidden;
 }
 
 /* RPM gauge */
 #gauge-wrap { flex-shrink:0; position:relative; }
-#rpm-svg { display:block; }
+#rpm-svg { display:block; width:min(42vw,520px); height:auto; }
 
 #rpm-readout {
   position:absolute;
@@ -243,13 +244,14 @@ html, body {
 }
 #rpm-num {
   font-family:'Orbitron',monospace;
-  font-size:30px;
+  font-size:clamp(40px,4.4vw,62px);
   font-weight:900;
-  color:var(--cyan);
+  color:var(--red);
   letter-spacing:2px;
   line-height:1;
+  text-shadow:0 0 22px rgba(255,51,51,0.55);
 }
-#rpm-lbl { font-size:10px; color:var(--text-dim); letter-spacing:3px; }
+#rpm-lbl { font-size:12px; color:var(--text-dim); letter-spacing:3px; }
 
 /* Speed + Gear + Odo row */
 #info-row {
@@ -263,13 +265,13 @@ html, body {
 .info-blk { text-align:center; }
 .info-num {
   font-family:'Orbitron',monospace;
-  font-size:24px;
+  font-size:clamp(30px,3.2vw,42px);
   font-weight:700;
   color:var(--text);
   line-height:1;
 }
 .info-unit {
-  font-size:9px;
+  font-size:11px;
   color:var(--text-dim);
   letter-spacing:2px;
   margin-top:2px;
@@ -279,7 +281,7 @@ html, body {
   display:flex;
   gap:7px;
   font-family:'Orbitron',monospace;
-  font-size:17px;
+  font-size:clamp(20px,2.2vw,26px);
   font-weight:700;
 }
 .gl { color:var(--text-muted); }
@@ -288,28 +290,28 @@ html, body {
 /* Small gauges */
 #small-grid {
   display:grid;
-  grid-template-columns:repeat(4,1fr);
-  gap:5px;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
   width:100%;
 }
 .sg {
   background:var(--bg2);
   border:1px solid var(--border);
-  padding:5px 6px 4px;
+  padding:10px 8px 8px;
   text-align:center;
   position:relative;
 }
-.sg-lbl { font-size:8px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; }
+.sg-lbl { font-size:10px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; }
 .sg-num {
   font-family:'Orbitron',monospace;
-  font-size:19px;
+  font-size:clamp(22px,2.6vw,32px);
   font-weight:700;
   color:var(--text);
   line-height:1.2;
 }
 .sg-num.warn { color:var(--yellow); }
 .sg-num.bad  { color:var(--red); }
-.sg-unit { font-size:8px; color:var(--text-muted); }
+.sg-unit { font-size:9px; color:var(--text-muted); }
 
 /* ── RIGHT PANEL ─────────────────────────────────────────── */
 #right {
@@ -329,14 +331,14 @@ html, body {
 }
 #ai-letter {
   font-family:'Orbitron',monospace;
-  font-size:38px;
+  font-size:48px;
   font-weight:900;
   color:var(--cyan);
   text-shadow:0 0 24px rgba(0,229,255,0.6);
   line-height:1;
 }
-#ai-sub   { font-size:10px; color:var(--text-dim); letter-spacing:3px; margin-top:3px; }
-#ai-op    { font-size:10px; font-weight:700; color:var(--green); letter-spacing:2px; margin-top:3px; }
+#ai-sub   { font-size:11px; color:var(--text-dim); letter-spacing:3px; margin-top:3px; }
+#ai-op    { font-size:11px; font-weight:700; color:var(--green); letter-spacing:2px; margin-top:3px; }
 
 .stat-row {
   display:flex;
@@ -345,12 +347,12 @@ html, body {
   border-bottom:1px solid var(--border);
   padding-bottom:4px;
 }
-.stat-lbl { font-size:11px; color:var(--text-dim); letter-spacing:1px; }
-.stat-val { font-size:11px; font-weight:700; }
+.stat-lbl { font-size:13px; color:var(--text-dim); letter-spacing:1px; }
+.stat-val { font-size:13px; font-weight:700; }
 .stat-val.ok     { color:var(--green); }
 .stat-val.off    { color:var(--red); }
 .stat-val.warn   { color:var(--yellow); }
-.stat-val.dim    { color:var(--text-dim); font-size:10px; }
+.stat-val.dim    { color:var(--text-dim); font-size:12px; }
 
 #msg-box {
   flex:1;
@@ -361,9 +363,9 @@ html, body {
   display:flex;
   flex-direction:column;
 }
-#msg-lbl  { font-size:8px; color:var(--text-dim); letter-spacing:3px; margin-bottom:5px; }
+#msg-lbl  { font-size:10px; color:var(--text-dim); letter-spacing:3px; margin-bottom:5px; }
 #msg-text {
-  font-size:12px;
+  font-size:14px;
   color:var(--cyan-dim);
   line-height:1.55;
   font-style:italic;
@@ -372,7 +374,7 @@ html, body {
 
 /* ── GRAPHS ──────────────────────────────────────────────── */
 #graphs {
-  height:88px;
+  height:130px;
   background:var(--bg2);
   border-top:1px solid var(--border2);
   display:flex;
@@ -387,10 +389,10 @@ html, body {
   overflow:hidden;
 }
 .gc:last-child { border-right:none; }
-.gc-lbl { font-size:8px; color:var(--text-dim); letter-spacing:1px; flex-shrink:0; }
+.gc-lbl { font-size:10px; color:var(--text-dim); letter-spacing:1px; flex-shrink:0; }
 .gc-val {
   font-family:'Orbitron',monospace;
-  font-size:11px;
+  font-size:14px;
   font-weight:700;
   color:var(--text);
   flex-shrink:0;
@@ -411,7 +413,7 @@ html, body {
   align-items:center;
   justify-content:center;
   gap:5px;
-  font-size:10px;
+  font-size:12px;
   font-weight:700;
   letter-spacing:1px;
   color:var(--text-muted);
@@ -463,6 +465,7 @@ html, body {
 
   <div class="tb-right">
     <div id="clock">00:00:00</div>
+    <span class="key-badge" id="demo-badge" style="display:none;border-color:var(--yellow);color:var(--yellow);background:rgba(255,199,0,.08);">◆ DEMO DATA</span>
     <div class="key-badge" id="key-badge">KEY: OWNER</div>
   </div>
 </div>
@@ -535,28 +538,28 @@ html, body {
 
     <!-- RPM gauge -->
     <div id="gauge-wrap">
-      <svg id="rpm-svg" viewBox="0 0 240 140" width="240" height="140">
+      <svg id="rpm-svg" viewBox="0 0 240 140" preserveAspectRatio="xMidYMid meet">
         <!-- background arc -->
         <path d="M22 128 A96 96 0 0 1 218 128"
-              fill="none" stroke="#111122" stroke-width="15" stroke-linecap="round"/>
+              fill="none" stroke="#1a1014" stroke-width="15" stroke-linecap="round"/>
         <!-- red-zone overlay -->
         <path d="M185 47 A96 96 0 0 1 218 128"
-              fill="none" stroke="#ff222211" stroke-width="15" stroke-linecap="round"/>
+              fill="none" stroke="#ff222222" stroke-width="15" stroke-linecap="round"/>
         <!-- fill arc -->
         <path id="rpm-arc"
               d="M22 128 A96 96 0 0 1 218 128"
-              fill="none" stroke="#00e5ff" stroke-width="15" stroke-linecap="round"
+              fill="none" stroke="#ff3333" stroke-width="15" stroke-linecap="round"
               stroke-dasharray="302" stroke-dashoffset="302"/>
         <!-- tick labels -->
-        <text x="18"  y="145" fill="#333" font-size="10" font-family="monospace" text-anchor="middle">0</text>
-        <text x="120" y="28"  fill="#333" font-size="10" font-family="monospace" text-anchor="middle">4</text>
-        <text x="222" y="145" fill="#555" font-size="10" font-family="monospace" text-anchor="middle">8</text>
+        <text x="18"  y="145" fill="#553333" font-size="10" font-family="monospace" text-anchor="middle">0</text>
+        <text x="120" y="28"  fill="#553333" font-size="10" font-family="monospace" text-anchor="middle">4</text>
+        <text x="222" y="145" fill="#774444" font-size="10" font-family="monospace" text-anchor="middle">8</text>
         <text x="222" y="135" fill="#ff3333" font-size="8" font-family="monospace" text-anchor="middle">▲</text>
         <!-- needle -->
         <line id="rpm-needle" x1="120" y1="128" x2="120" y2="40"
-              stroke="#00e5ff" stroke-width="2" stroke-linecap="round"
+              stroke="#ff3333" stroke-width="2.5" stroke-linecap="round"
               transform="rotate(-90,120,128)"/>
-        <circle cx="120" cy="128" r="5" fill="#00e5ff" opacity=".9"/>
+        <circle cx="120" cy="128" r="5" fill="#ff3333" opacity=".9"/>
       </svg>
       <div id="rpm-readout">
         <div id="rpm-num">0</div>
@@ -626,6 +629,11 @@ html, body {
         <div class="sg-lbl">OIL TEMP</div>
         <div class="sg-num" id="sg-oilt">--</div>
         <div class="sg-unit">°F</div>
+      </div>
+      <div class="sg">
+        <div class="sg-lbl">ETHANOL</div>
+        <div class="sg-num" id="sg-eth">--</div>
+        <div class="sg-unit">% E</div>
       </div>
     </div>
 
@@ -775,6 +783,31 @@ function clock() {
     `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
 }
 
+// ── Demo data (synthetic, used when OBD2 is offline so the UI stays alive) ──
+let demoT = 0;
+let demoActive = false;
+function demoTick() {
+  demoT += 0.06;
+  const w = (amp, freq=1, ph=0) => Math.sin(demoT*freq + ph) * amp;
+  return {
+    rpm: Math.max(650, Math.round(1450 + w(560,0.45) + w(70,3,1))),
+    speed: Math.max(0, Math.round(47 + w(21,0.22))),
+    coolant: Math.round(199 + w(5,0.13)),
+    oil_temp: Math.round(213 + w(7,0.16)),
+    battery: +(14.1 + w(0.35,0.27)).toFixed(1),
+    boost: +(w(9,0.38)).toFixed(1),
+    exhaust: Math.round(980 + w(170,0.19)),
+    ethanol: Math.round(10 + w(2,0.06)),
+    odometer: 84213, fuel_pct: 61, fuel_range: 308,
+    archer_msg: 'Demo mode — OBD2 offline. Displaying simulated values.',
+    sensor_data: {
+      iat: Math.round(81 + w(12,0.21)),
+      fuel_pressure: Math.round(58 + w(4,0.3)),
+      oil_pressure: Math.round(49 + w(6,0.24)),
+    },
+  };
+}
+
 // ── Poll Flask endpoints ──────────────────────────────────
 let errors = 0;
 async function poll() {
@@ -783,10 +816,16 @@ async function poll() {
       fetch('/display_data', {cache:'no-store'}).catch(() => null),
       fetch('/health',       {cache:'no-store'}).catch(() => null),
     ]);
-    const d = dr && dr.ok ? await dr.json() : null;
+    let d = dr && dr.ok ? await dr.json() : null;
     const h = hr && hr.ok ? await hr.json() : null;
     errors = 0;
     document.getElementById('reconnect').style.display = 'none';
+
+    const live = !!(d && (d.rpm != null || d.coolant != null));
+    demoActive = !live;
+    document.getElementById('demo-badge').style.display = demoActive ? 'inline-block' : 'none';
+    if (!live) d = demoTick();
+
     if (d) applyDisplay(d);
     if (h) applyHealth(h);
     if (d) computeScores(d, h);
@@ -819,6 +858,7 @@ function applyDisplay(d) {
   sg('volt',  d.battery,   12.0, 14.8, 15.2);
   sg('boost', d.boost,     -15, 20, 25);
   sg('oilt',  d.oil_temp,  180, 240, 265);
+  sg('eth',   d.ethanol,   0, 30, 85);
 
   // Graphs
   push('cool',  d.coolant);
@@ -952,7 +992,10 @@ function setRpm(rpm) {
   const pct  = Math.min(rpm / 8000, 1);
   const arc  = document.getElementById('rpm-arc');
   arc.style.strokeDashoffset = ARC_LEN * (1 - pct);
-  arc.style.stroke = rpm < 4000 ? '#00e5ff' : rpm < 6500 ? '#ffc700' : '#ff3333';
+  // All-red theme: brightness/glow scale with RPM, hue stays red
+  const g = Math.round(40 + pct * 60);
+  arc.style.stroke = `rgb(255,${g},${g})`;
+  arc.style.filter = `drop-shadow(0 0 ${5 + pct*10}px rgba(255,51,51,${0.35 + pct*0.45}))`;
 
   // Rotate needle: -90° at 0rpm, +90° at 8000rpm
   const angle = -90 + pct * 180;

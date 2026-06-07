@@ -255,6 +255,11 @@ exec /usr/bin/chromium \
     --disable-pinch \
     --disable-session-crashed-bubble \
     --overscroll-history-navigation=0 \
+    --start-fullscreen \
+    --window-position=0,0 \
+    --force-color-profile=srgb \
+    --force-device-scale-factor=1 \
+    --autoplay-policy=no-user-gesture-required \
     --app=http://127.0.0.1:5000/dashboard
 KIOSK
 chmod +x "$MOUNT/opt/archer/kiosk.sh"
