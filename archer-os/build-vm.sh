@@ -245,22 +245,52 @@ for i in $(seq 1 45); do
 done
 # Disable screensaver / power management
 xset s off -dpms 2>/dev/null || true
-exec /usr/bin/chromium \
-    --kiosk \
-    --no-sandbox \
-    --disable-infobars \
-    --no-first-run \
-    --disable-translate \
-    --disable-extensions \
-    --disable-pinch \
-    --disable-session-crashed-bubble \
-    --overscroll-history-navigation=0 \
-    --start-fullscreen \
-    --window-position=0,0 \
-    --force-color-profile=srgb \
-    --force-device-scale-factor=1 \
-    --autoplay-policy=no-user-gesture-required \
-    --app=http://127.0.0.1:5000/dashboard
+
+URL="http://127.0.0.1:5000/dashboard"
+LOG=/tmp/archer-chromium.log
+: > "$LOG"
+
+CHROME_FLAGS=(
+    --kiosk
+    --no-sandbox
+    --disable-infobars
+    --no-first-run
+    --disable-translate
+    --disable-extensions
+    --disable-pinch
+    --disable-session-crashed-bubble
+    --overscroll-history-navigation=0
+    --force-device-scale-factor=1
+    --autoplay-policy=no-user-gesture-required
+    # The fbdev framebuffer has no real GPU/DRI — letting Chromium try GPU
+    # compositing crashes its GPU process and leaves a blank black window.
+    # Force software rendering/compositing instead.
+    --disable-gpu
+    --disable-gpu-compositing
+    --use-gl=swiftshader
+)
+
+# Try launching the dashboard a few times — on first boot Chromium can crash
+# while building a fresh profile. If it keeps failing, fall back to an
+# on-screen error page (avoids needing a VT switch to read the log).
+for attempt in 1 2 3; do
+    echo "=== launch attempt $attempt: $(date) ===" >> "$LOG"
+    /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="$URL" >>"$LOG" 2>&1
+    echo "--- chromium exited with code $? ---" >> "$LOG"
+    sleep 2
+done
+
+ERR_HTML=/tmp/archer-kiosk-error.html
+{
+    echo "<html><body style='background:#000;color:#3f3;font:16px monospace;white-space:pre-wrap;padding:24px'>"
+    echo "ARCHER KIOSK — Chromium failed to load the dashboard after 3 attempts.<br><br>"
+    echo "--- /tmp/archer-x.log ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' /tmp/archer-x.log 2>/dev/null
+    echo "<br><br>--- $LOG ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' "$LOG" 2>/dev/null
+    echo "</body></html>"
+} > "$ERR_HTML"
+exec /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="file://$ERR_HTML"
 KIOSK
 chmod +x "$MOUNT/opt/archer/kiosk.sh"
 
