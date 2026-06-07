@@ -450,12 +450,16 @@ chroot "$MOUNT" systemctl enable NetworkManager
 chroot "$MOUNT" systemctl enable avahi-daemon
 
 step "Installing GRUB bootloader (UEFI + Legacy BIOS)..."
+# DEBUG: verbose kernel logging (was "quiet loglevel=0") -- the boot was
+# going blank ~28s after "Booting the kernel..." with zero clues why, because
+# loglevel=0 silences EVERYTHING including panics/hangs. Once boot is
+# confirmed reaching the kiosk reliably, switch this back to "quiet".
 cat > "$MOUNT/etc/default/grub" <<EOF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="loglevel=7 ignore_loglevel init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 EOF
 
