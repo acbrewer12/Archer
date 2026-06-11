@@ -12,10 +12,8 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistroTar   = "$ScriptDir\distro\archer-dev.tar.gz"
 $KernelMsi   = "$ScriptDir\tools\wsl_update_x64.msi"
 $VmwareExe   = "$ScriptDir\tools\VMware-player.exe"
-$VmdkSrc     = "$ScriptDir\vm\archer-os.vmdk"
-$VmDir       = "$env:LOCALAPPDATA\ArcherVM"
-$VmxPath     = "$VmDir\archer-os.vmx"
-$VmdkDest    = "$VmDir\archer-os.vmdk"
+$VmdkPath    = "$ScriptDir\vm\archer-os.vmdk"   # stays on USB — no copy
+$VmxPath     = "$ScriptDir\vm\archer-os.vmx"    # VMX also lives on USB
 $DistroName  = "ArcherDev"
 $WslInstall  = "$ScriptDir\WSL\$DistroName"
 
@@ -52,7 +50,7 @@ Write-Host ""
 
 # USB source files
 $usbDistroOk = Test-Path $DistroTar
-$usbVmdkOk   = Test-Path $VmdkSrc
+$usbVmdkOk   = Test-Path $VmdkPath
 
 # WSL2 features
 $wslFeature  = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux"
@@ -70,10 +68,8 @@ $wslDistroOk = [bool](wsl --list --quiet 2>$null | Where-Object { $_ -match $Dis
 $vmwareDir   = Get-VmwarePath
 $vmwareOk    = [bool]$vmwareDir
 
-# VM deployed on local drive
-$vmdkOk      = Test-Path $VmdkDest
-$vmxOk       = Test-Path $VmxPath
-$vmDeployed  = $vmdkOk -and $vmxOk
+# VM ready (VMDK stays on USB, just need VMX written)
+$vmDeployed  = Test-Path $VmxPath
 
 # Print status table
 function Status($label, $ok, $note="") {
@@ -88,14 +84,14 @@ Status "WSL2 Windows features"       $wslFeatOk
 Status "WSL2 kernel"                 $wslKernelOk
 Status "ArcherDev WSL distro"        $wslDistroOk
 Status "VMware Player"               $vmwareOk    (if ($vmwareDir) { $vmwareDir } else { "" })
-Status "Archer OS VM on local drive" $vmDeployed
+Status "Archer OS VM (on USB)"        $vmDeployed
 Write-Host ""
 
 # ── Missing USB source files (hard stop) ─────────────────────────────────────
 
 $missing = @()
 if (!$usbDistroOk) { $missing += "distro\archer-dev.tar.gz  (WSL environment)" }
-if (!$usbVmdkOk)   { $missing += "vm\archer-os.vmdk          (Archer OS VM disk)" }
+if (!$usbVmdkOk)   { $missing += "vm\archer-os.vmdk          (Archer OS VM disk — must stay on USB)" }
 if ($missing.Count -gt 0) {
     Write-Host "  [ERROR] Required files missing from USB:" -ForegroundColor Red
     $missing | ForEach-Object { Write-Host "          - $_" -ForegroundColor Red }
@@ -210,15 +206,9 @@ if (!$vmwareOk) {
 # ── Deploy VM to local drive ──────────────────────────────────────────────────
 
 if (!$skipVm -and !$vmDeployed) {
-    Write-Host "  [VM]  Deploying Archer OS VM to local drive..." -ForegroundColor Yellow
-    if (!(Test-Path $VmDir)) { New-Item -ItemType Directory -Path $VmDir -Force | Out-Null }
+    Write-Host "  [VM]  Writing VMX config to USB..." -ForegroundColor Yellow
 
-    if (!$vmdkOk) {
-        Write-Host "        Copying VMDK (~1.5GB, ~2 min on USB 2.0)..." -ForegroundColor Gray
-        Copy-Item $VmdkSrc $VmdkDest -Force
-    }
-
-    # Always (re)write VMX so it stays current
+    # VMX points to VMDK by absolute USB path so VMware finds it from any PC
     @"
 .encoding = "UTF-8"
 config.version = "8"
@@ -231,7 +221,7 @@ cpuid.coresPerSocket = "2"
 scsi0.present = "TRUE"
 scsi0.virtualDev = "pvscsi"
 scsi0:0.present = "TRUE"
-scsi0:0.fileName = "archer-os.vmdk"
+scsi0:0.fileName = "$VmdkPath"
 scsi0:0.mode = "persistent"
 ethernet0.present = "TRUE"
 ethernet0.virtualDev = "e1000"

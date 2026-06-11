@@ -10,8 +10,7 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistroName = "ArcherDev"
 $DistroTar  = "$ScriptDir\distro\archer-dev.tar.gz"
 $BackupTar  = "$ScriptDir\distro\archer-dev.tar.gz.bak"
-$VmDir      = "$env:LOCALAPPDATA\ArcherVM"
-$VmxPath    = "$VmDir\archer-os.vmx"
+$VmxPath    = "$ScriptDir\vm\archer-os.vmx"   # VMX lives on USB alongside VMDK
 
 Write-Host ""
 Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Cyan
@@ -51,24 +50,15 @@ function Get-VmwareUninstaller {
     return $null
 }
 
-# Stop the VM if running
+# Stop the VM if running (VMDK stays on USB — nothing to delete from host)
 $vmrun = Get-VmrunPath
 if ($vmrun -and (Test-Path $VmxPath)) {
-    Write-Host "  [1/2] Stopping Archer OS VM..." -ForegroundColor White
+    Write-Host "  [1/1] Stopping Archer OS VM..." -ForegroundColor White
     & $vmrun -T player stop $VmxPath nogui 2>$null
     Start-Sleep -Seconds 3
     Write-Host "        Stopped." -ForegroundColor Gray
 } else {
-    Write-Host "  [1/2] VM not running (or vmrun not found) — skipping stop." -ForegroundColor Gray
-}
-
-# Delete local VM files (VMDK copy + VMX)
-Write-Host "  [2/2] Removing VM files from local drive..." -ForegroundColor White
-if (Test-Path $VmDir) {
-    Remove-Item -Recurse -Force $VmDir
-    Write-Host "        Deleted: $VmDir" -ForegroundColor Gray
-} else {
-    Write-Host "        No VM directory found — already clean." -ForegroundColor Gray
+    Write-Host "  [1/1] VM not running (or vmrun not found) — skipping stop." -ForegroundColor Gray
 }
 
 Write-Host ""

@@ -73,8 +73,7 @@ Uninstall saves your work back to USB and removes everything — zero trace left
 
 ── NOTES ────────────────────────────────────────────────────────────────────
 
-- VM VMDK is copied to host SSD during session for performance
-  (USB 2.0 is too slow to run the VM directly from USB)
+- VM VMDK stays on USB the entire session — not copied to host
 - WSL2 VHDX lives ON the USB during the session
 - git push/pull works normally from WSL — commits go to GitHub
 - Build times in WSL on USB 2.0 are slow (~40-60 min vs ~11 min on SSD)
