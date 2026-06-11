@@ -29,7 +29,7 @@ Write-Host ""
 
 $DistroName = Read-Host "  Enter distro name to export (e.g. Ubuntu)"
 
-$found = wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName }
+$found = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0","" } | Where-Object { $_ -match $DistroName }
 if (!$found) {
     Write-Host "  ERROR: '$DistroName' not found." -ForegroundColor Red
     exit 1

@@ -113,7 +113,7 @@ Write-Host ""
 Write-Host "  [ WSL2 ENVIRONMENT ]" -ForegroundColor Yellow
 Write-Host ""
 
-$existing = wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName }
+$existing = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0","" } | Where-Object { $_ -match $DistroName }
 if (!$existing) {
     Write-Host "  WSL distro not found - already removed or never installed." -ForegroundColor Gray
 } else {

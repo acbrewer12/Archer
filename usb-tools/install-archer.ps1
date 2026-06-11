@@ -58,7 +58,7 @@ $wslFeatOk   = ($wslFeature.State -eq "Enabled") -and ($vmFeature.State -eq "Ena
 $wslKernelOk = $false
 try { wsl --version 2>$null | Out-Null; $wslKernelOk = ($LASTEXITCODE -eq 0) } catch {}
 
-$wslDistroOk = [bool](wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName })
+$wslDistroOk = [bool](wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0","" } | Where-Object { $_ -match $DistroName })
 
 $vmwareDir   = Get-VmwarePath
 $vmwareOk    = [bool]$vmwareDir
