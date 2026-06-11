@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
     Install the full Archer dev environment on any Windows PC from USB.
-    Sets up WSL2 (dev environment) + VMware Player + Archer OS VM.
+    Checks every component first — only installs what is missing.
+    If everything is already set up, launches immediately.
     Run uninstall-archer.ps1 before you leave to save work and clean up.
 #>
 
@@ -12,10 +13,29 @@ $DistroTar   = "$ScriptDir\distro\archer-dev.tar.gz"
 $KernelMsi   = "$ScriptDir\tools\wsl_update_x64.msi"
 $VmwareExe   = "$ScriptDir\tools\VMware-player.exe"
 $VmdkSrc     = "$ScriptDir\vm\archer-os.vmdk"
-$VmDir       = "$env:LOCALAPPDATA\ArcherVM"        # VM lives on host SSD during session
+$VmDir       = "$env:LOCALAPPDATA\ArcherVM"
 $VmxPath     = "$VmDir\archer-os.vmx"
+$VmdkDest    = "$VmDir\archer-os.vmdk"
 $DistroName  = "ArcherDev"
-$WslInstall  = "$ScriptDir\WSL\$DistroName"        # WSL VHDX lives on USB
+$WslInstall  = "$ScriptDir\WSL\$DistroName"
+
+function Get-VmwarePath {
+    @(
+        "C:\Program Files (x86)\VMware\VMware Player",
+        "C:\Program Files\VMware\VMware Player",
+        "C:\Program Files (x86)\VMware\VMware Workstation",
+        "C:\Program Files\VMware\VMware Workstation"
+    ) | Where-Object { Test-Path "$_\vmplayer.exe" } | Select-Object -First 1
+}
+
+function Get-VmrunPath {
+    @(
+        "C:\Program Files (x86)\VMware\VMware Player\vmrun.exe",
+        "C:\Program Files\VMware\VMware Player\vmrun.exe",
+        "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
+        "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 
 Write-Host ""
 Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Cyan
@@ -23,88 +43,133 @@ Write-Host "  ║    ARCHER FULL ENVIRONMENT INSTALL   ║" -ForegroundColor Cya
 Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Preflight ─────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# STATUS CHECK — inspect everything before touching anything
+# ════════════════════════════════════════════════════════════════════════════════
 
-$missingFiles = @()
-if (!(Test-Path $DistroTar)) { $missingFiles += "distro\archer-dev.tar.gz (WSL environment)" }
-if (!(Test-Path $VmdkSrc))   { $missingFiles += "vm\archer-os.vmdk (Archer OS VM disk)" }
-if ($missingFiles.Count -gt 0) {
-    Write-Host "[ERROR] Missing files on USB:" -ForegroundColor Red
-    $missingFiles | ForEach-Object { Write-Host "        - $_" -ForegroundColor Red }
+Write-Host "  Checking current state..." -ForegroundColor DarkGray
+Write-Host ""
+
+# USB source files
+$usbDistroOk = Test-Path $DistroTar
+$usbVmdkOk   = Test-Path $VmdkSrc
+
+# WSL2 features
+$wslFeature  = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux"
+$vmFeature   = Get-WindowsOptionalFeature -Online -FeatureName "VirtualMachinePlatform"
+$wslFeatOk   = ($wslFeature.State -eq "Enabled") -and ($vmFeature.State -eq "Enabled")
+
+# WSL2 kernel functional
+$wslKernelOk = $false
+try { wsl --version 2>$null | Out-Null; $wslKernelOk = ($LASTEXITCODE -eq 0) } catch {}
+
+# Distro imported
+$wslDistroOk = [bool](wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName })
+
+# VMware installed
+$vmwareDir   = Get-VmwarePath
+$vmwareOk    = [bool]$vmwareDir
+
+# VM deployed on local drive
+$vmdkOk      = Test-Path $VmdkDest
+$vmxOk       = Test-Path $VmxPath
+$vmDeployed  = $vmdkOk -and $vmxOk
+
+# Print status table
+function Status($label, $ok, $note="") {
+    $icon  = if ($ok) { "[✓]" } else { "[ ]" }
+    $color = if ($ok) { "Green" } else { "Yellow" }
+    $line  = "  $icon  $label"
+    if ($note) { $line += "  ($note)" }
+    Write-Host $line -ForegroundColor $color
+}
+
+Status "WSL2 Windows features"       $wslFeatOk
+Status "WSL2 kernel"                 $wslKernelOk
+Status "ArcherDev WSL distro"        $wslDistroOk
+Status "VMware Player"               $vmwareOk    (if ($vmwareDir) { $vmwareDir } else { "" })
+Status "Archer OS VM on local drive" $vmDeployed
+Write-Host ""
+
+# ── Missing USB source files (hard stop) ─────────────────────────────────────
+
+$missing = @()
+if (!$usbDistroOk) { $missing += "distro\archer-dev.tar.gz  (WSL environment)" }
+if (!$usbVmdkOk)   { $missing += "vm\archer-os.vmdk          (Archer OS VM disk)" }
+if ($missing.Count -gt 0) {
+    Write-Host "  [ERROR] Required files missing from USB:" -ForegroundColor Red
+    $missing | ForEach-Object { Write-Host "          - $_" -ForegroundColor Red }
     Write-Host ""
-    Write-Host "        Run prepare-usb.ps1 on your home PC first." -ForegroundColor Yellow
+    Write-Host "  Run prepare-usb.ps1 on your home PC first." -ForegroundColor Yellow
     exit 1
 }
 
-# ════════════════════════════════════════════════════════════════════════════════
-# PART 1 — WSL2
-# ════════════════════════════════════════════════════════════════════════════════
+# ── Everything already ready? ─────────────────────────────────────────────────
 
-Write-Host "  [ WSL2 SETUP ]" -ForegroundColor Yellow
+if ($wslFeatOk -and $wslKernelOk -and $wslDistroOk -and $vmwareOk -and $vmDeployed) {
+    Write-Host "  Everything is already installed. Launching..." -ForegroundColor Green
+    Write-Host ""
+    $vmplayerExe = "$vmwareDir\vmplayer.exe"
+    Start-Process $vmplayerExe -ArgumentList "`"$VmxPath`""
+    wsl -d $DistroName
+    exit 0
+}
+
+Write-Host "  Installing missing components..." -ForegroundColor White
 Write-Host ""
 
-# ── Enable Windows features ───────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# INSTALL — only what's missing
+# ════════════════════════════════════════════════════════════════════════════════
 
-Write-Host "  [1/3] Checking Windows features..." -ForegroundColor White
+# ── WSL2 Windows features ─────────────────────────────────────────────────────
 
-$wslFeature = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux"
-$vmFeature  = Get-WindowsOptionalFeature -Online -FeatureName "VirtualMachinePlatform"
-$needsReboot = $false
-
-if ($wslFeature.State -ne "Enabled") {
-    Write-Host "        Enabling WSL..." -ForegroundColor Gray
-    dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
-    $needsReboot = $true
-}
-if ($vmFeature.State -ne "Enabled") {
-    Write-Host "        Enabling VirtualMachinePlatform..." -ForegroundColor Gray
-    dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
-    $needsReboot = $true
-}
-
-if ($needsReboot) {
-    $scriptPath = $MyInvocation.MyCommand.Path
+if (!$wslFeatOk) {
+    Write-Host "  [WSL] Enabling Windows features..." -ForegroundColor Yellow
+    if ($wslFeature.State -ne "Enabled") {
+        dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
+    }
+    if ($vmFeature.State -ne "Enabled") {
+        dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
+    }
+    # Schedule resume after reboot
     Set-ItemProperty `
         -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
         -Name "ArcherInstall" `
-        -Value "powershell -ExecutionPolicy Bypass -WindowStyle Normal -File `"$scriptPath`""
+        -Value "powershell -ExecutionPolicy Bypass -WindowStyle Normal -File `"$($MyInvocation.MyCommand.Path)`""
     Write-Host ""
-    Write-Host "  [!] Reboot required. Installer will resume automatically after reboot." -ForegroundColor Yellow
+    Write-Host "  [!] Reboot required. Installer will resume automatically." -ForegroundColor Yellow
     $c = Read-Host "  Reboot now? (y/n)"
     if ($c -eq "y") { Restart-Computer -Force }
     exit 0
 }
-Write-Host "        Already enabled." -ForegroundColor Gray
 
 # ── WSL2 kernel ───────────────────────────────────────────────────────────────
 
-Write-Host "  [2/3] Installing WSL2 kernel..." -ForegroundColor White
-
-if (Test-Path $KernelMsi) {
-    Start-Process msiexec.exe -ArgumentList "/i `"$KernelMsi`" /quiet /norestart" -Wait
-    Write-Host "        Installed from USB." -ForegroundColor Gray
-} else {
-    Write-Host "        No bundled MSI — trying wsl --update (needs internet)..." -ForegroundColor Gray
-    wsl --update 2>$null
+if (!$wslKernelOk) {
+    Write-Host "  [WSL] Installing WSL2 kernel..." -ForegroundColor Yellow
+    if (Test-Path $KernelMsi) {
+        Start-Process msiexec.exe -ArgumentList "/i `"$KernelMsi`" /quiet /norestart" -Wait
+        Write-Host "        Done (from USB)." -ForegroundColor Gray
+    } else {
+        Write-Host "        No bundled MSI — running wsl --update (needs internet)..." -ForegroundColor Gray
+        wsl --update 2>$null
+    }
 }
-wsl --set-default-version 2 | Out-Null
 
-# ── Import distro ─────────────────────────────────────────────────────────────
+wsl --set-default-version 2 2>$null | Out-Null
 
-$wslAlreadyInstalled = $false
-$existing = wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName }
-if ($existing) {
-    Write-Host "  [3/3] WSL distro already imported, skipping." -ForegroundColor Gray
-    $wslAlreadyInstalled = $true
-} else {
-    Write-Host "  [3/3] Importing ArcherDev distro..." -ForegroundColor White
-    Write-Host "        (Takes a few minutes on USB 2.0)" -ForegroundColor Gray
+# ── WSL distro import ─────────────────────────────────────────────────────────
+
+if (!$wslDistroOk) {
+    Write-Host "  [WSL] Importing ArcherDev distro..." -ForegroundColor Yellow
+    Write-Host "        (a few minutes on USB 2.0)" -ForegroundColor Gray
 
     if (!(Test-Path $WslInstall)) { New-Item -ItemType Directory -Path $WslInstall -Force | Out-Null }
 
     wsl --import $DistroName $WslInstall $DistroTar --version 2
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] WSL import failed." -ForegroundColor Red
+        Write-Host "  [ERROR] WSL import failed." -ForegroundColor Red
         exit 1
     }
 
@@ -116,83 +181,45 @@ if ($existing) {
         fi
     " 2>$null
     wsl --terminate $DistroName 2>$null
-    Write-Host "        Import complete." -ForegroundColor Gray
+    Write-Host "        Done." -ForegroundColor Gray
 }
 
-Write-Host ""
+# ── VMware Player ─────────────────────────────────────────────────────────────
 
-# ════════════════════════════════════════════════════════════════════════════════
-# PART 2 — VMWARE PLAYER
-# ════════════════════════════════════════════════════════════════════════════════
+$skipVm = $false
 
-Write-Host "  [ VMWARE PLAYER ]" -ForegroundColor Yellow
-Write-Host ""
-
-function Get-VmwarePath {
-    $candidates = @(
-        "C:\Program Files (x86)\VMware\VMware Player",
-        "C:\Program Files\VMware\VMware Player",
-        "C:\Program Files (x86)\VMware\VMware Workstation",
-        "C:\Program Files\VMware\VMware Workstation"
-    )
-    return $candidates | Where-Object { Test-Path "$_\vmplayer.exe" } | Select-Object -First 1
-}
-
-function Get-VmrunPath {
-    $candidates = @(
-        "C:\Program Files (x86)\VMware\VMware Player\vmrun.exe",
-        "C:\Program Files\VMware\VMware Player\vmrun.exe",
-        "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
-        "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
-    )
-    return $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-}
-
-$vmwareDir = Get-VmwarePath
-if ($vmwareDir) {
-    Write-Host "  [1/2] VMware Player already installed at: $vmwareDir" -ForegroundColor Gray
-} else {
-    Write-Host "  [1/2] Installing VMware Player..." -ForegroundColor White
-
+if (!$vmwareOk) {
+    Write-Host "  [VM]  Installing VMware Player..." -ForegroundColor Yellow
     if (!(Test-Path $VmwareExe)) {
-        Write-Host "[ERROR] VMware installer not found at: $VmwareExe" -ForegroundColor Red
-        Write-Host "        Download VMware Workstation Player and save it to tools\VMware-player.exe" -ForegroundColor Yellow
-        Write-Host "        Continuing without VM setup." -ForegroundColor Yellow
-        Write-Host ""
-        goto SkipVm
+        Write-Host "        Installer not found at tools\VMware-player.exe" -ForegroundColor Yellow
+        Write-Host "        Skipping VM setup — WSL2 is ready." -ForegroundColor Yellow
+        $skipVm = $true
+    } else {
+        Write-Host "        Running installer (~3 min)..." -ForegroundColor Gray
+        Start-Process $VmwareExe -ArgumentList "/s /v`"/qn REBOOT=ReallySuppress EULAS_AGREED=1`"" -Wait
+        $vmwareDir = Get-VmwarePath
+        if (!$vmwareDir) {
+            Write-Host "        Install failed — skipping VM." -ForegroundColor Yellow
+            $skipVm = $true
+        } else {
+            Write-Host "        Done." -ForegroundColor Gray
+        }
     }
-
-    Write-Host "        Running installer (this takes 2-3 minutes)..." -ForegroundColor Gray
-    Start-Process $VmwareExe -ArgumentList "/s /v`"/qn REBOOT=ReallySuppress EULAS_AGREED=1`"" -Wait
-
-    $vmwareDir = Get-VmwarePath
-    if (!$vmwareDir) {
-        Write-Host "[ERROR] VMware install appears to have failed." -ForegroundColor Red
-        Write-Host "        Continuing without VM — WSL2 is ready." -ForegroundColor Yellow
-        goto SkipVm
-    }
-    Write-Host "        Installed." -ForegroundColor Gray
 }
 
-# ── Deploy Archer OS VM ───────────────────────────────────────────────────────
+# ── Deploy VM to local drive ──────────────────────────────────────────────────
 
-Write-Host "  [2/2] Deploying Archer OS VM..." -ForegroundColor White
+if (!$skipVm -and !$vmDeployed) {
+    Write-Host "  [VM]  Deploying Archer OS VM to local drive..." -ForegroundColor Yellow
+    if (!(Test-Path $VmDir)) { New-Item -ItemType Directory -Path $VmDir -Force | Out-Null }
 
-if (!(Test-Path $VmDir)) { New-Item -ItemType Directory -Path $VmDir -Force | Out-Null }
+    if (!$vmdkOk) {
+        Write-Host "        Copying VMDK (~1.5GB, ~2 min on USB 2.0)..." -ForegroundColor Gray
+        Copy-Item $VmdkSrc $VmdkDest -Force
+    }
 
-# Copy VMDK from USB to local SSD for performance (USB 2.0 would throttle VM badly)
-$VmdkDest = "$VmDir\archer-os.vmdk"
-if (!(Test-Path $VmdkDest)) {
-    Write-Host "        Copying VMDK to local drive for performance..." -ForegroundColor Gray
-    Write-Host "        (archer-os.vmdk ~1.5GB — takes ~2 min on USB 2.0)" -ForegroundColor Gray
-    Copy-Item $VmdkSrc $VmdkDest -Force
-    Write-Host "        Copy complete." -ForegroundColor Gray
-} else {
-    Write-Host "        VMDK already on local drive." -ForegroundColor Gray
-}
-
-# Write VMX config
-@"
+    # Always (re)write VMX so it stays current
+    @"
 .encoding = "UTF-8"
 config.version = "8"
 virtualHW.version = "19"
@@ -219,17 +246,11 @@ floppy0.present = "FALSE"
 tools.syncTime = "FALSE"
 "@ | Set-Content -Path $VmxPath -Encoding UTF8
 
-Write-Host "        VM config written." -ForegroundColor Gray
-
-# Launch
-Write-Host "        Launching Archer OS VM..." -ForegroundColor Gray
-$vmplayerExe = "$vmwareDir\vmplayer.exe"
-Start-Process $vmplayerExe -ArgumentList "`"$VmxPath`""
-
-:SkipVm
+    Write-Host "        Done." -ForegroundColor Gray
+}
 
 # ════════════════════════════════════════════════════════════════════════════════
-# DONE
+# LAUNCH
 # ════════════════════════════════════════════════════════════════════════════════
 
 Write-Host ""
@@ -237,11 +258,13 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║           SETUP COMPLETE             ║" -ForegroundColor Green
 Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-Write-Host "  WSL2:  wsl -d ArcherDev" -ForegroundColor Cyan
-Write-Host "  VM:    VMware Player is open" -ForegroundColor Cyan
-Write-Host ""
+
+if (!$skipVm -and $vmwareDir) {
+    Write-Host "  Launching Archer OS VM..." -ForegroundColor Cyan
+    Start-Process "$vmwareDir\vmplayer.exe" -ArgumentList "`"$VmxPath`""
+}
+
 Write-Host "  Run uninstall-archer.ps1 before you leave." -ForegroundColor Yellow
 Write-Host ""
 
-# Drop into WSL
 wsl -d $DistroName
