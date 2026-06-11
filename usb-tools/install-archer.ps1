@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Install the full Archer dev environment on any Windows PC from USB.
-    Checks every component first — only installs what is missing.
+    Checks every component first - only installs what is missing.
     If everything is already set up, launches immediately.
     Run uninstall-archer.ps1 before you leave to save work and clean up.
 #>
@@ -12,8 +12,8 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistroTar   = "$ScriptDir\distro\archer-dev.tar.gz"
 $KernelMsi   = "$ScriptDir\tools\wsl_update_x64.msi"
 $VmwareExe   = "$ScriptDir\tools\VMware-player.exe"
-$VmdkPath    = "$ScriptDir\vm\archer-os.vmdk"   # stays on USB — no copy
-$VmxPath     = "$ScriptDir\vm\archer-os.vmx"    # VMX also lives on USB
+$VmdkPath    = "$ScriptDir\vm\archer-os.vmdk"
+$VmxPath     = "$ScriptDir\vm\archer-os.vmx"
 $DistroName  = "ArcherDev"
 $WslInstall  = "$ScriptDir\WSL\$DistroName"
 
@@ -36,62 +36,57 @@ function Get-VmrunPath {
 }
 
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║    ARCHER FULL ENVIRONMENT INSTALL   ║" -ForegroundColor Cyan
-Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "  +======================================+" -ForegroundColor Cyan
+Write-Host "  |   ARCHER FULL ENVIRONMENT INSTALL    |" -ForegroundColor Cyan
+Write-Host "  +======================================+" -ForegroundColor Cyan
 Write-Host ""
 
-# ════════════════════════════════════════════════════════════════════════════════
-# STATUS CHECK — inspect everything before touching anything
-# ════════════════════════════════════════════════════════════════════════════════
+# ------------------------------------------------------------------------------
+# STATUS CHECK - inspect everything before touching anything
+# ------------------------------------------------------------------------------
 
 Write-Host "  Checking current state..." -ForegroundColor DarkGray
 Write-Host ""
 
-# USB source files
 $usbDistroOk = Test-Path $DistroTar
 $usbVmdkOk   = Test-Path $VmdkPath
 
-# WSL2 features
 $wslFeature  = Get-WindowsOptionalFeature -Online -FeatureName "Microsoft-Windows-Subsystem-Linux"
 $vmFeature   = Get-WindowsOptionalFeature -Online -FeatureName "VirtualMachinePlatform"
 $wslFeatOk   = ($wslFeature.State -eq "Enabled") -and ($vmFeature.State -eq "Enabled")
 
-# WSL2 kernel functional
 $wslKernelOk = $false
 try { wsl --version 2>$null | Out-Null; $wslKernelOk = ($LASTEXITCODE -eq 0) } catch {}
 
-# Distro imported
 $wslDistroOk = [bool](wsl --list --quiet 2>$null | Where-Object { $_ -match $DistroName })
 
-# VMware installed
 $vmwareDir   = Get-VmwarePath
 $vmwareOk    = [bool]$vmwareDir
 
-# VM ready (VMDK stays on USB, just need VMX written)
 $vmDeployed  = Test-Path $VmxPath
 
-# Print status table
 function Status($label, $ok, $note="") {
-    $icon  = if ($ok) { "[✓]" } else { "[ ]" }
+    $icon  = if ($ok) { "[OK]" } else { "[  ]" }
     $color = if ($ok) { "Green" } else { "Yellow" }
     $line  = "  $icon  $label"
     if ($note) { $line += "  ($note)" }
     Write-Host $line -ForegroundColor $color
 }
 
-Status "WSL2 Windows features"       $wslFeatOk
-Status "WSL2 kernel"                 $wslKernelOk
-Status "ArcherDev WSL distro"        $wslDistroOk
-Status "VMware Player"               $vmwareOk    (if ($vmwareDir) { $vmwareDir } else { "" })
-Status "Archer OS VM (on USB)"        $vmDeployed
+Status "WSL2 Windows features"    $wslFeatOk
+Status "WSL2 kernel"              $wslKernelOk
+Status "ArcherDev WSL distro"     $wslDistroOk
+Status "VMware Player"            $vmwareOk   (if ($vmwareDir) { $vmwareDir } else { "" })
+Status "Archer OS VM (on USB)"    $vmDeployed
 Write-Host ""
 
-# ── Missing USB source files (hard stop) ─────────────────────────────────────
+# ------------------------------------------------------------------------------
+# Preflight - missing USB source files
+# ------------------------------------------------------------------------------
 
 $missing = @()
 if (!$usbDistroOk) { $missing += "distro\archer-dev.tar.gz  (WSL environment)" }
-if (!$usbVmdkOk)   { $missing += "vm\archer-os.vmdk          (Archer OS VM disk — must stay on USB)" }
+if (!$usbVmdkOk)   { $missing += "vm\archer-os.vmdk          (Archer OS VM disk)" }
 if ($missing.Count -gt 0) {
     Write-Host "  [ERROR] Required files missing from USB:" -ForegroundColor Red
     $missing | ForEach-Object { Write-Host "          - $_" -ForegroundColor Red }
@@ -100,13 +95,14 @@ if ($missing.Count -gt 0) {
     exit 1
 }
 
-# ── Everything already ready? ─────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# If everything is ready - just launch
+# ------------------------------------------------------------------------------
 
 if ($wslFeatOk -and $wslKernelOk -and $wslDistroOk -and $vmwareOk -and $vmDeployed) {
     Write-Host "  Everything is already installed. Launching..." -ForegroundColor Green
     Write-Host ""
-    $vmplayerExe = "$vmwareDir\vmplayer.exe"
-    Start-Process $vmplayerExe -ArgumentList "`"$VmxPath`""
+    Start-Process "$vmwareDir\vmplayer.exe" -ArgumentList "`"$VmxPath`""
     wsl -d $DistroName
     exit 0
 }
@@ -114,11 +110,9 @@ if ($wslFeatOk -and $wslKernelOk -and $wslDistroOk -and $vmwareOk -and $vmDeploy
 Write-Host "  Installing missing components..." -ForegroundColor White
 Write-Host ""
 
-# ════════════════════════════════════════════════════════════════════════════════
-# INSTALL — only what's missing
-# ════════════════════════════════════════════════════════════════════════════════
-
-# ── WSL2 Windows features ─────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# WSL2 Windows features
+# ------------------------------------------------------------------------------
 
 if (!$wslFeatOk) {
     Write-Host "  [WSL] Enabling Windows features..." -ForegroundColor Yellow
@@ -128,7 +122,6 @@ if (!$wslFeatOk) {
     if ($vmFeature.State -ne "Enabled") {
         dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
     }
-    # Schedule resume after reboot
     Set-ItemProperty `
         -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
         -Name "ArcherInstall" `
@@ -140,7 +133,9 @@ if (!$wslFeatOk) {
     exit 0
 }
 
-# ── WSL2 kernel ───────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# WSL2 kernel
+# ------------------------------------------------------------------------------
 
 if (!$wslKernelOk) {
     Write-Host "  [WSL] Installing WSL2 kernel..." -ForegroundColor Yellow
@@ -148,14 +143,16 @@ if (!$wslKernelOk) {
         Start-Process msiexec.exe -ArgumentList "/i `"$KernelMsi`" /quiet /norestart" -Wait
         Write-Host "        Done (from USB)." -ForegroundColor Gray
     } else {
-        Write-Host "        No bundled MSI — running wsl --update (needs internet)..." -ForegroundColor Gray
+        Write-Host "        No bundled MSI - running wsl --update (needs internet)..." -ForegroundColor Gray
         wsl --update 2>$null
     }
 }
 
 wsl --set-default-version 2 2>$null | Out-Null
 
-# ── WSL distro import ─────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# WSL distro import
+# ------------------------------------------------------------------------------
 
 if (!$wslDistroOk) {
     Write-Host "  [WSL] Importing ArcherDev distro..." -ForegroundColor Yellow
@@ -169,7 +166,6 @@ if (!$wslDistroOk) {
         exit 1
     }
 
-    # Restore default user (wsl --import always defaults to root)
     wsl -d $DistroName -u root -- bash -c "
         U=\$(getent passwd 1000 | cut -d: -f1)
         if [ -n \"\$U\" ]; then
@@ -180,7 +176,9 @@ if (!$wslDistroOk) {
     Write-Host "        Done." -ForegroundColor Gray
 }
 
-# ── VMware Player ─────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# VMware Player
+# ------------------------------------------------------------------------------
 
 $skipVm = $false
 
@@ -188,14 +186,14 @@ if (!$vmwareOk) {
     Write-Host "  [VM]  Installing VMware Player..." -ForegroundColor Yellow
     if (!(Test-Path $VmwareExe)) {
         Write-Host "        Installer not found at tools\VMware-player.exe" -ForegroundColor Yellow
-        Write-Host "        Skipping VM setup — WSL2 is ready." -ForegroundColor Yellow
+        Write-Host "        Skipping VM setup - WSL2 is ready." -ForegroundColor Yellow
         $skipVm = $true
     } else {
         Write-Host "        Running installer (~3 min)..." -ForegroundColor Gray
         Start-Process $VmwareExe -ArgumentList "/s /v`"/qn REBOOT=ReallySuppress EULAS_AGREED=1`"" -Wait
         $vmwareDir = Get-VmwarePath
         if (!$vmwareDir) {
-            Write-Host "        Install failed — skipping VM." -ForegroundColor Yellow
+            Write-Host "        Install failed - skipping VM." -ForegroundColor Yellow
             $skipVm = $true
         } else {
             Write-Host "        Done." -ForegroundColor Gray
@@ -203,12 +201,13 @@ if (!$vmwareOk) {
     }
 }
 
-# ── Deploy VM to local drive ──────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
+# Write VMX pointing at VMDK on USB
+# ------------------------------------------------------------------------------
 
 if (!$skipVm -and !$vmDeployed) {
     Write-Host "  [VM]  Writing VMX config to USB..." -ForegroundColor Yellow
 
-    # VMX points to VMDK by absolute USB path so VMware finds it from any PC
     @"
 .encoding = "UTF-8"
 config.version = "8"
@@ -239,14 +238,14 @@ tools.syncTime = "FALSE"
     Write-Host "        Done." -ForegroundColor Gray
 }
 
-# ════════════════════════════════════════════════════════════════════════════════
-# LAUNCH
-# ════════════════════════════════════════════════════════════════════════════════
+# ------------------------------------------------------------------------------
+# Launch
+# ------------------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "  ║           SETUP COMPLETE             ║" -ForegroundColor Green
-Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "  +======================================+" -ForegroundColor Green
+Write-Host "  |          SETUP COMPLETE              |" -ForegroundColor Green
+Write-Host "  +======================================+" -ForegroundColor Green
 Write-Host ""
 
 if (!$skipVm -and $vmwareDir) {
