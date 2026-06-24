@@ -3,7 +3,7 @@ name: Build Archer OS Image
 on:
   workflow_dispatch:
   push:
-    branches: [claude/archer-truck-ai-system-TlfGE]
+    branches: [main]
     paths:
       - 'archer-os/**'
       - 'usb-os/**'

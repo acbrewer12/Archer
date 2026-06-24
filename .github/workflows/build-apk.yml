@@ -14,6 +14,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       # ── 1. Checkout ───────────────────────────────────────────────────────
@@ -65,13 +67,18 @@ jobs:
           mv android-apk/app/build/outputs/apk/debug/app-debug.apk \
              android-apk/app/build/outputs/apk/debug/Archer.apk
 
-      # ── 8. Upload — download this and sideload directly ───────────────────
-      - name: Upload Archer.apk
-        uses: actions/upload-artifact@v4
-        with:
-          name: Archer-${{ github.run_number }}
-          path: android-apk/app/build/outputs/apk/debug/Archer.apk
-          retention-days: 90
+      # ── 8. Publish to GitHub Release (replaces previous, no artifact storage used)
+      - name: Publish to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-apk --yes 2>/dev/null || true
+          git push origin :refs/tags/latest-apk 2>/dev/null || true
+          gh release create latest-apk \
+            --title "Archer APK — Latest Build" \
+            --notes "Built from commit $(git rev-parse --short HEAD) on $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --prerelease \
+            android-apk/app/build/outputs/apk/debug/Archer.apk
 
       # ── 9. Install instructions ───────────────────────────────────────────
       - name: Install instructions
