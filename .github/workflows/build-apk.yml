@@ -80,23 +80,12 @@ jobs:
             --prerelease \
             android-apk/app/build/outputs/apk/debug/Archer.apk
 
-      # ── 9. Install instructions ───────────────────────────────────────────
-      - name: Install instructions
-        run: |
-          echo ""
-          echo "══════════════════════════════════════════════════"
-          echo "  Archer.apk built and ready."
-          echo ""
-          echo "  HOW TO INSTALL:"
-          echo "  1. Download Archer.apk from the Artifacts section"
-          echo "  2. On your phone: Settings → Apps → Special app"
-          echo "     access → Install unknown apps → enable for"
-          echo "     your browser or Files app"
-          echo "  3. Open the APK file on your phone → Install"
-          echo ""
-          echo "  REPLACE GOOGLE ASSISTANT:"
-          echo "  4. Settings → Apps → Default Apps"
-          echo "       → Digital assistant app → Archer"
-          echo "  5. Long-press the circle button → Archer opens"
-          echo "       instead of Gemini, mic starts automatically"
-          echo "══════════════════════════════════════════════════"
+      # ── 9. Upload to Firebase App Distribution ───────────────────────────
+      - name: Upload to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: testers
+          file: android-apk/app/build/outputs/apk/debug/Archer.apk
+          releaseNotes: "Build ${{ github.run_number }} — commit ${{ github.sha }}"
