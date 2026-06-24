@@ -1,0 +1,95 @@
+name: Build Archer APK
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['android-apk/**']
+  workflow_dispatch:
+    inputs:
+      archer_url:
+        description: 'Archer server URL (blank = HuggingFace Space)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 ────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Android SDK ────────────────────────────────────────────────────
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK Platform + Build Tools
+        run: |
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "platform-tools"
+
+      # ── 4. Gradle ─────────────────────────────────────────────────────────
+      - name: Setup Gradle 8.4
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
+
+      # ── 5. Patch Archer URL ───────────────────────────────────────────────
+      - name: Set Archer URL
+        run: |
+          URL="${{ github.event.inputs.archer_url }}"
+          if [ -z "$URL" ]; then
+            URL="https://aydencatman-archer.hf.space"
+          fi
+          echo "Building APK for: $URL"
+          find android-apk -name "*.java" \
+            -exec sed -i "s|ARCHER_URL_PLACEHOLDER|$URL|g" {} +
+
+      # ── 6. Build debug APK (auto-signed, sideloadable) ────────────────────
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon --project-dir android-apk
+
+      # ── 7. Rename for clarity ─────────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          mv android-apk/app/build/outputs/apk/debug/app-debug.apk \
+             android-apk/app/build/outputs/apk/debug/Archer.apk
+
+      # ── 8. Upload — download this and sideload directly ───────────────────
+      - name: Upload Archer.apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: Archer-${{ github.run_number }}
+          path: android-apk/app/build/outputs/apk/debug/Archer.apk
+          retention-days: 90
+
+      # ── 9. Install instructions ───────────────────────────────────────────
+      - name: Install instructions
+        run: |
+          echo ""
+          echo "══════════════════════════════════════════════════"
+          echo "  Archer.apk built and ready."
+          echo ""
+          echo "  HOW TO INSTALL:"
+          echo "  1. Download Archer.apk from the Artifacts section"
+          echo "  2. On your phone: Settings → Apps → Special app"
+          echo "     access → Install unknown apps → enable for"
+          echo "     your browser or Files app"
+          echo "  3. Open the APK file on your phone → Install"
+          echo ""
+          echo "  REPLACE GOOGLE ASSISTANT:"
+          echo "  4. Settings → Apps → Default Apps"
+          echo "       → Digital assistant app → Archer"
+          echo "  5. Long-press the circle button → Archer opens"
+          echo "       instead of Gemini, mic starts automatically"
+          echo "══════════════════════════════════════════════════"

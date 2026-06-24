@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#000000">
+<title>Archer — Initializing</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;padding:20px}
+:root{--red:#cc0000;--amber:#ffaa00;--green:#00cc44;--dim:#1a1a1a;--label:#444;--text2:#888}
+
+.wrap{width:100%;max-width:440px;display:flex;flex-direction:column;align-items:center;gap:0}
+
+/* LOGO */
+.logo-wrap{position:relative;margin-bottom:6px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:72px;letter-spacing:12px;color:var(--red);line-height:1;text-shadow:0 0 40px rgba(204,0,0,0.35)}
+.logo-scan{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--red),transparent);top:0;opacity:0;animation:scan 2.2s linear infinite}
+@keyframes scan{0%{top:0;opacity:0}8%{opacity:0.7}92%{opacity:0.7}100%{top:100%;opacity:0}}
+.vehicle{font-size:9px;color:#555;letter-spacing:4px;margin-bottom:24px}
+
+/* PROGRESS BAR */
+.bar-track{width:100%;height:2px;background:#0d0d0d;border:1px solid var(--dim);border-radius:1px;margin-bottom:20px;overflow:hidden}
+.bar-fill{height:100%;width:0%;background:var(--red);border-radius:1px;transition:width 0.4s ease;box-shadow:0 0 8px rgba(204,0,0,0.5);will-change:width;transform:translateZ(0)}
+
+/* CHECK LIST */
+.checks{width:100%;display:flex;flex-direction:column;gap:5px}
+.check-item{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#050505;border:1px solid #0d0d0d;border-radius:4px;opacity:0;transform:translateY(8px) scale(0.97) translateZ(0);transition:opacity 0.3s ease,transform 0.3s cubic-bezier(0.34,1.56,0.64,1);will-change:opacity,transform}
+.check-item.visible{opacity:1;transform:translateY(0) scale(1)}
+.check-icon{width:18px;flex-shrink:0;text-align:center;font-size:12px;line-height:1}
+.spinner{width:12px;height:12px;border:1.5px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.55s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* Checkmark scale-pop animation */
+.check-mark{display:inline-block;transform:scale(0);animation:markpop 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards}
+@keyframes markpop{0%{transform:scale(0) rotate(-20deg)}60%{transform:scale(1.25) rotate(5deg)}100%{transform:scale(1) rotate(0deg)}}
+.check-label{font-size:10px;letter-spacing:2px;color:#555;flex:1;text-transform:uppercase}
+.check-label.running{color:#888}
+.check-label.done{color:#ccc}
+.check-detail{font-size:9px;color:#555;letter-spacing:1px;flex-shrink:0;max-width:140px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.check-detail.ok   {color:#00aa44}
+.check-detail.warn {color:#cc8800}
+.check-detail.fail {color:#cc3300}
+
+/* SCAN-LINE OVERLAY */
+.scanlines{position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,transparent,transparent 2px,rgba(0,0,0,0.18) 2px,rgba(0,0,0,0.18) 4px);z-index:100;animation:scanscroll 12s linear infinite}
+@keyframes scanscroll{0%{background-position:0 0}100%{background-position:0 100px}}
+/* Moving bright scan sweep across full screen */
+.scan-sweep{position:fixed;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent 0%,rgba(204,0,0,0.25) 40%,rgba(255,80,0,0.5) 50%,rgba(204,0,0,0.25) 60%,transparent 100%);pointer-events:none;z-index:101;animation:sweepdown 3s ease-in-out infinite}
+@keyframes sweepdown{0%{top:-4px;opacity:0}5%{opacity:1}95%{opacity:0.6}100%{top:100vh;opacity:0}}
+
+/* READY / ERROR banner */
+.banner{margin-top:16px;text-align:center;opacity:0;transition:opacity 0.4s}
+.banner.show{opacity:1}
+.banner-text{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:5px}
+.banner-text.ok  {color:var(--green)}
+.banner-text.warn{color:var(--amber)}
+.banner-text.fail{color:var(--red)}
+.banner-sub{font-size:9px;color:#555;letter-spacing:2px;margin-top:4px}
+
+/* Corner accents */
+.corner{position:fixed;width:16px;height:16px;border-color:var(--dim);border-style:solid;opacity:0.5}
+.corner.tl{top:12px;left:12px;border-width:1px 0 0 1px}
+.corner.tr{top:12px;right:12px;border-width:1px 1px 0 0}
+.corner.bl{bottom:12px;left:12px;border-width:0 0 1px 1px}
+.corner.br{bottom:12px;right:12px;border-width:0 1px 1px 0}
+/* VERSION + UPTIME FOOTER */
+.ver-bar{position:fixed;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:5px 14px;background:#050505;border-top:1px solid #0d0d0d}
+.ver-left{font-size:7px;letter-spacing:2px;color:#333}
+.ver-left .ver-hash{color:#444}
+.ver-center{font-size:7px;letter-spacing:1px;color:#555;text-align:center}
+.ver-right{font-size:7px;letter-spacing:1px;color:#333;text-align:right}
+#ver-uptime{color:#444}
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="scan-sweep"></div>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
+
+<div class="wrap">
+  <div class="logo-wrap">
+    <div class="logo">ARCHER</div>
+    <div class="logo-scan"></div>
+  </div>
+  <div class="vehicle">2006 GMC SIERRA 2500HD</div>
+
+  <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+  <div class="checks" id="checks"></div>
+  <div class="banner" id="banner">
+    <div class="banner-text" id="banner-text"></div>
+    <div class="banner-sub" id="banner-sub"></div>
+  </div>
+</div>
+
+<div class="ver-bar">
+  <div class="ver-left">ARCHER OS v2.0 &nbsp;<span class="ver-hash" id="ver-hash">build ??????</span></div>
+  <div class="ver-center" id="ver-build-ts">--</div>
+  <div class="ver-right">UPTIME <span id="ver-uptime">0s</span></div>
+</div>
+
+<script>
+const barEl     = document.getElementById('bar');
+const checksEl  = document.getElementById('checks');
+const bannerEl  = document.getElementById('banner');
+const bannerTxt = document.getElementById('banner-text');
+const bannerSub = document.getElementById('banner-sub');
+
+// Status-to-display mapping
+const STATUS = {
+  ok:   { icon: '▸', color: '#00cc44', borderColor: '#0d1a0d' },
+  warn: { icon: '▸', color: '#ffaa00', borderColor: '#1a1500' },
+  fail: { icon: '✕', color: '#cc0000', borderColor: '#1a0000' },
+};
+
+// Track rendered rows by check id
+const rows = {};
+
+function setProgress(pct) {
+  barEl.style.width = Math.min(100, pct) + '%';
+}
+
+function renderRow(check, index, total) {
+  const existing = rows[check.id];
+  const s = STATUS[check.status] || STATUS.warn;
+
+  if (!existing) {
+    // First time we see this check — create the row
+    const row = document.createElement('div');
+    row.className = 'check-item';
+    row.id = 'row-' + check.id;
+    row.innerHTML = `
+      <div class="check-icon" id="icon-${check.id}"><div class="spinner"></div></div>
+      <div class="check-label running" id="lbl-${check.id}">${check.label}</div>
+      <div class="check-detail" id="det-${check.id}"></div>
+    `;
+    checksEl.appendChild(row);
+    rows[check.id] = row;
+    // Stagger each row entrance by 60ms × its position index
+    const staggerDelay = index * 60;
+    row.style.transitionDelay = staggerDelay + 'ms';
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { row.classList.add('visible'); });
+    });
+  }
+
+  // Update icon, label, detail with real result
+  const icon = document.getElementById('icon-' + check.id);
+  const lbl  = document.getElementById('lbl-'  + check.id);
+  const det  = document.getElementById('det-'  + check.id);
+  const row  = rows[check.id];
+
+  icon.innerHTML = `<span class="check-mark" style="color:${s.color}">${s.icon}</span>`;
+  lbl.className  = 'check-label done';
+  det.textContent = check.detail || '';
+  det.className   = 'check-detail ' + check.status;
+  row.style.borderColor = s.borderColor;
+}
+
+async function runBootChecks() {
+  // First call with reveal=0 to learn the total check count
+  let total = 9; // reasonable default
+  try {
+    const r0 = await fetch('/boot/status?reveal=0');
+    if (r0.ok) { const d0 = await r0.json(); total = d0.total || total; }
+  } catch(_) {}
+
+  const REVEAL_INTERVAL = 350; // ms between each check appearing
+  const MAX_WAIT_MS     = 15000;
+  const start           = Date.now();
+  let reveal = 0;
+
+  while (Date.now() - start < MAX_WAIT_MS) {
+    reveal = Math.min(reveal + 1, total);
+    try {
+      const resp = await fetch(`/boot/status?reveal=${reveal}`);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      const checks = data.checks || [];
+      checks.forEach((c, i) => renderRow(c, i, total));
+      setProgress(Math.round((reveal / Math.max(total, 1)) * 95));
+
+      if (reveal >= total) {
+        // All checks revealed — fetch once more to get final ready state
+        let finalData = data;
+        try {
+          const rf = await fetch(`/boot/status?reveal=${total}`);
+          if (rf.ok) finalData = await rf.json();
+        } catch(_) {}
+
+        setProgress(100);
+        const allChecks = finalData.checks || checks;
+        const fails = allChecks.filter(c => c.status === 'fail').length;
+        const warns = allChecks.filter(c => c.status === 'warn').length;
+
+        if (fails > 0) {
+          bannerTxt.textContent = 'SYSTEM ISSUES DETECTED';
+          bannerTxt.className   = 'banner-text fail';
+          bannerSub.textContent = `${fails} failure${fails > 1 ? 's' : ''} — loading anyway`;
+        } else if (warns > 0) {
+          bannerTxt.textContent = 'SYSTEMS READY';
+          bannerTxt.className   = 'banner-text warn';
+          bannerSub.textContent = `${warns} warning${warns > 1 ? 's' : ''} — non-critical`;
+        } else {
+          bannerTxt.textContent = 'ALL SYSTEMS GO';
+          bannerTxt.className   = 'banner-text ok';
+          bannerSub.textContent = enrichBannerSub(finalData) || ('uptime ' + (finalData.uptime||'?') + 's');
+        }
+
+        bannerEl.classList.add('show');
+        await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 1000));
+        const next  = new URLSearchParams(location.search).get('next') || '/';
+        const token = finalData.token || '';
+        const sep   = next.includes('?') ? '&' : '?';
+        window.location.href = token ? next + sep + '_bt=' + token : next;
+        return;
+      }
+    } catch(e) {
+      // Server not ready yet — keep waiting
+    }
+
+    await new Promise(r => setTimeout(r, REVEAL_INTERVAL));
+  }
+
+  // Timeout fallback
+  const next = new URLSearchParams(location.search).get('next') || '/';
+  window.location.href = next;
+}
+
+// ── VERSION & UPTIME ──────────────────────
+let _pageLoadTime = Date.now();
+
+function formatUptime(s) {
+  if (s < 60)  return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  const h = Math.floor(s/3600);
+  const m = Math.floor((s%3600)/60);
+  return h + 'h ' + m + 'm';
+}
+
+async function fetchVersionInfo() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    // Build timestamp
+    if (d.build_ts) {
+      const bts = new Date(d.build_ts * 1000);
+      const fmtDate = bts.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      const fmtTime = bts.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
+      document.getElementById('ver-build-ts').textContent = 'built ' + fmtDate + ' ' + fmtTime;
+    }
+    // Git hash
+    if (d.git_hash) {
+      document.getElementById('ver-hash').textContent = 'build ' + d.git_hash.substring(0,7);
+    }
+    // Uptime from server
+    if (d.uptime_seconds !== undefined) {
+      document.getElementById('ver-uptime').textContent = formatUptime(Math.round(d.uptime_seconds));
+    }
+  } catch(_) {
+    // Server not yet up — show page-relative time
+    document.getElementById('ver-build-ts').textContent = 'connecting...';
+  }
+}
+
+// Uptime tick (page-relative while waiting for server)
+let _serverUptime = null;
+let _serverUptimeAt = null;
+setInterval(() => {
+  const uptimeEl = document.getElementById('ver-uptime');
+  if (!uptimeEl) return;
+  if (_serverUptime !== null && _serverUptimeAt !== null) {
+    const elapsed = Math.round((Date.now() - _serverUptimeAt) / 1000);
+    uptimeEl.textContent = formatUptime(_serverUptime + elapsed);
+  }
+}, 1000);
+
+// Fetch version after small delay, then re-fetch every 5s while on page
+fetchVersionInfo();
+setInterval(fetchVersionInfo, 5000);
+
+// System status summary injected into banner-sub after boot
+function enrichBannerSub(finalData) {
+  const items = [];
+  if (finalData.uptime_seconds !== undefined) {
+    items.push('uptime ' + formatUptime(Math.round(finalData.uptime_seconds)));
+  }
+  if (finalData.build_ts) {
+    const d = new Date(finalData.build_ts * 1000);
+    items.push('build ' + d.toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+  }
+  if (finalData.git_hash) items.push(finalData.git_hash.substring(0,7));
+  return items.join(' · ');
+}
+
+// Start after a brief moment so the logo renders first
+setTimeout(runBootChecks, 400);
+</script>
+</body></html>

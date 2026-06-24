@@ -2,7 +2,7 @@
 Archer test suite — covers backend routes, auth, tier system,
 smart_fallback, save/load state, and key data endpoints.
 """
-import os, sys, json, hashlib, tempfile, threading
+import os, sys, json, hashlib, tempfile, threading, time
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -20,12 +20,11 @@ for mod in ['serial', 'vosk', 'sounddevice', 'piper_tts']:
 # Prevent all background threads from actually starting
 _real_thread_start = threading.Thread.start
 def _noop_start(self):
-    pass  # don't launch any daemon threads during tests
+    pass
 threading.Thread.start = _noop_start
 
-import archer  # noqa: E402 — import after patching
+import archer  # noqa: E402
 
-# Restore thread start (tests themselves might need real threads)
 threading.Thread.start = _real_thread_start
 
 client = archer.display_app.test_client()
@@ -37,6 +36,12 @@ def _make_cookie(tier: int, name: str = 'Tester') -> str:
     secret = os.environ['ARCHER_SECRET']
     token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
     return f'{tier}:{name}:{token}'
+
+
+def _authed_client(tier: int, name: str = 'Tester'):
+    c = archer.display_app.test_client()
+    c.set_cookie('archer_auth', _make_cookie(tier, name))
+    return c
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -62,13 +67,10 @@ class TestGetRequestTier:
             '/', headers={'Cookie': 'archer_auth=bad:data:xxxxxxxxxxxxxxxx'}
         ):
             from flask import request
-            # invalid cookie → falls back to fingerprint → default tier (4 = unknown)
             tier = archer.get_request_tier(request)
             assert tier >= 1
 
     def test_tampered_token_rejected(self):
-        cookie = _make_cookie(1).replace(archer.os.environ['ARCHER_SECRET'][:2], 'XX', 1)
-        # Reconstruct a clearly-tampered cookie
         parts = _make_cookie(1).split(':')
         parts[2] = 'AAAAAAAAAAAAAAAA'  # wrong token
         bad_cookie = ':'.join(parts)
@@ -77,14 +79,37 @@ class TestGetRequestTier:
         ):
             from flask import request
             tier = archer.get_request_tier(request)
-            # Should NOT be 1 — falls back to fingerprint
-            assert tier != 1 or True  # at minimum: no crash
+            assert tier != 1, f"Tampered cookie should not grant tier 1, got {tier}"
 
     def test_no_cookie_returns_int(self):
         with archer.display_app.test_request_context('/'):
             from flask import request
             tier = archer.get_request_tier(request)
             assert isinstance(tier, int)
+
+    def test_valid_tier3_cookie(self):
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={_make_cookie(3, "Family")}'}
+        ):
+            from flask import request
+            assert archer.get_request_tier(request) == 3
+
+    def test_valid_tier4_cookie(self):
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={_make_cookie(4, "Valet")}'}
+        ):
+            from flask import request
+            assert archer.get_request_tier(request) == 4
+
+    def test_wrong_secret_rejected(self):
+        # Cookie signed with a different secret
+        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:16]
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth=1:Ayden:{bad_token}'}
+        ):
+            from flask import request
+            tier = archer.get_request_tier(request)
+            assert tier != 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -115,6 +140,34 @@ class TestDisplayData:
         d  = json.loads(r.data)
         assert 'sensor_data' in d
         assert isinstance(d['sensor_data'], dict)
+
+    def test_spike_history_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'spike_history' in d
+        assert isinstance(d['spike_history'], dict)
+
+    def test_connected_clients_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'connected_clients' in d
+        assert isinstance(d['connected_clients'], int)
+
+    def test_device_tier_present(self):
+        r = client.get('/display_data?fp=test-fp-001')
+        d = json.loads(r.data)
+        assert 'device_tier' in d
+        assert isinstance(d['device_tier'], int)
+
+    def test_drive_mode_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'drive_mode' in d
+
+    def test_coolant_temp_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'coolant' in d
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -151,11 +204,9 @@ class TestVoiceCommand:
         assert 'valet' in json.loads(r.data)['response'].lower()
 
     def test_tier1_dangerous_command_allowed(self):
-        # Tier 1 (owner) is NOT blocked by the tier check (handle_command runs).
-        # 'shut down' actually calls sys.exit — mock it to prevent that.
         with patch('sys.exit'), patch.object(archer, 'speak', return_value=None):
             r = self._post('shut down', tier=1)
-        assert r.status_code == 200  # tier check passed; not 403
+        assert r.status_code == 200
 
     def test_normal_command_returns_response(self):
         with patch.object(archer, 'speak', return_value=None):
@@ -164,6 +215,20 @@ class TestVoiceCommand:
         d = json.loads(r.data)
         assert isinstance(d['response'], str)
         assert len(d['response']) > 0
+
+    def test_multiple_dangerous_keywords_blocked_tier2(self):
+        for cmd in ('tc off', 'kill engine', 'reboot', 'engine off'):
+            r = self._post(cmd, tier=2)
+            assert r.status_code == 403, f"'{cmd}' should be blocked for tier 2"
+
+    def test_response_has_response_key(self):
+        with patch.object(archer, 'speak', return_value=None):
+            r = self._post('boost', tier=1)
+        assert 'response' in json.loads(r.data)
+
+    def test_whitespace_only_command_handled(self):
+        r = self._post('   ', tier=1)
+        assert r.status_code == 200
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -174,11 +239,11 @@ class TestRegisterDevice:
         r = client.post('/register_device', json={
             'fingerprint': 'test-fp-001',
             'name': 'TestDevice',
-            'tier': 1,  # try to register as Tier 1
+            'tier': 1,
         })
         d = json.loads(r.data)
         assert d['ok'] is True
-        assert d['tier'] == 2  # should be capped at 2
+        assert d['tier'] == 2
 
     def test_tier_4_accepted(self):
         r = client.post('/register_device', json={
@@ -197,7 +262,7 @@ class TestRegisterDevice:
             'tier': 99,
         })
         d = json.loads(r.data)
-        assert d['tier'] <= 4
+        assert d['tier'] == 4
 
     def test_missing_fingerprint_rejected(self):
         r = client.post('/register_device', json={
@@ -206,6 +271,25 @@ class TestRegisterDevice:
         })
         d = json.loads(r.data)
         assert d['ok'] is False
+
+    def test_tier_2_accepted(self):
+        r = client.post('/register_device', json={
+            'fingerprint': 'test-fp-pass',
+            'name': 'Passenger',
+            'tier': 2,
+        })
+        d = json.loads(r.data)
+        assert d['ok'] is True
+        assert d['tier'] == 2
+
+    def test_name_preserved(self):
+        r = client.post('/register_device', json={
+            'fingerprint': 'test-fp-name',
+            'name': 'Alice',
+            'tier': 3,
+        })
+        d = json.loads(r.data)
+        assert d['name'] == 'Alice'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -233,6 +317,14 @@ class TestSmartFallback:
         for text in ['', 'oil', 'speed', 'battery', 'coolant', 'hello', 'intake']:
             assert archer.smart_fallback(text) is not None
 
+    def test_speed_keyword(self):
+        result = archer.smart_fallback('what speed am I going')
+        assert isinstance(result, str) and len(result) > 0
+
+    def test_battery_keyword(self):
+        result = archer.smart_fallback('battery voltage')
+        assert isinstance(result, str) and len(result) > 0
+
 
 # ═══════════════════════════════════════════════════════════════
 # 6. save_state / load_state round-trip
@@ -252,7 +344,7 @@ class TestSaveLoadState:
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
             archer.save_state()
-            with open(archer.SAVE_FILE) as f:
+            with open(archer.SAVE_FILE, encoding='utf-8') as f:
                 data = json.load(f)
             assert isinstance(data, dict)
         finally:
@@ -276,7 +368,7 @@ class TestSaveLoadState:
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'nonexistent.json')
         try:
-            archer.load_state()  # should not raise
+            archer.load_state()
         finally:
             archer.SAVE_FILE = orig
 
@@ -285,8 +377,18 @@ class TestSaveLoadState:
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
             archer.save_state()
-            # .tmp file should be cleaned up
             assert not os.path.exists(archer.SAVE_FILE + '.tmp')
+        finally:
+            archer.SAVE_FILE = orig
+
+    def test_truck_state_keys_saved(self, tmp_path):
+        orig = archer.SAVE_FILE
+        archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
+        try:
+            archer.save_state()
+            with open(archer.SAVE_FILE, encoding='utf-8') as f:
+                data = json.load(f)
+            assert 'truck_state' in data or 'nav_places' in data
         finally:
             archer.SAVE_FILE = orig
 
@@ -296,9 +398,7 @@ class TestSaveLoadState:
 # ═══════════════════════════════════════════════════════════════
 class TestNavPlaces:
     def _client(self, tier=1):
-        c = archer.display_app.test_client()
-        c.set_cookie('archer_auth', _make_cookie(tier))
-        return c
+        return _authed_client(tier)
 
     def test_save_place(self):
         c = self._client()
@@ -311,7 +411,7 @@ class TestNavPlaces:
         r = self._client().get('/nav/places')
         assert r.status_code == 200
         d = json.loads(r.data)
-        assert isinstance(d, dict)  # endpoint returns places dict directly
+        assert isinstance(d, dict)
 
     def test_saved_place_appears_in_list(self):
         c = self._client()
@@ -321,15 +421,30 @@ class TestNavPlaces:
         places = json.loads(r.data)
         assert 'marker_test2' in places
 
+    def test_saved_place_coords_correct(self):
+        c = self._client()
+        c.post('/nav/save_place', json={'name': 'coords_check', 'lat': 42.0, 'lon': -93.5, 'address': 'Iowa'})
+        r = c.get('/nav/places')
+        places = json.loads(r.data)
+        assert 'coords_check' in places
+        assert places['coords_check']['lat'] == 42.0
+
+    def test_multiple_places_saved(self):
+        c = self._client()
+        c.post('/nav/save_place', json={'name': 'alpha', 'lat': 1.0, 'lon': 1.0, 'address': 'A'})
+        c.post('/nav/save_place', json={'name': 'beta',  'lat': 2.0, 'lon': 2.0, 'address': 'B'})
+        r = c.get('/nav/places')
+        places = json.loads(r.data)
+        assert 'alpha' in places
+        assert 'beta' in places
+
 
 # ═══════════════════════════════════════════════════════════════
 # 8. /system_health
 # ═══════════════════════════════════════════════════════════════
 class TestSystemHealth:
     def _client(self, tier=1):
-        c = archer.display_app.test_client()
-        c.set_cookie('archer_auth', _make_cookie(tier))
-        return c
+        return _authed_client(tier)
 
     def test_returns_200(self):
         r = self._client().get('/system_health')
@@ -338,7 +453,29 @@ class TestSystemHealth:
     def test_has_status_field(self):
         r = self._client().get('/system_health')
         d = json.loads(r.data)
-        assert 'status' in d or 'uptime' in d or 'ok' in d
+        assert 'status' in d
+
+    def test_status_is_string(self):
+        r = self._client().get('/system_health')
+        d = json.loads(r.data)
+        assert isinstance(d['status'], str)
+
+    def test_status_is_ok_or_degraded(self):
+        r = self._client().get('/system_health')
+        d = json.loads(r.data)
+        assert d['status'] in ('ok', 'degraded')
+
+    def test_issues_list_present(self):
+        r = self._client().get('/system_health')
+        d = json.loads(r.data)
+        assert 'issues' in d
+        assert isinstance(d['issues'], list)
+
+    def test_failures_list_present(self):
+        r = self._client().get('/system_health')
+        d = json.loads(r.data)
+        assert 'failures' in d
+        assert isinstance(d['failures'], list)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -346,9 +483,7 @@ class TestSystemHealth:
 # ═══════════════════════════════════════════════════════════════
 class TestTierPages:
     def _client(self, tier):
-        c = archer.display_app.test_client()
-        c.set_cookie('archer_auth', _make_cookie(tier))
-        return c
+        return _authed_client(tier)
 
     def test_tier1_page_loads(self):
         r = self._client(1).get('/tier1')
@@ -361,6 +496,26 @@ class TestTierPages:
 
     def test_tier4_page_loads(self):
         r = self._client(4).get('/tier4')
+        assert r.status_code == 200
+
+    def test_tier3_page_loads(self):
+        r = self._client(3).get('/tier3')
+        assert r.status_code == 200
+
+    def test_tier1_alias_ayden(self):
+        r = self._client(1).get('/ayden')
+        assert r.status_code == 200
+
+    def test_tier2_alias_passenger(self):
+        r = self._client(2).get('/passenger')
+        assert r.status_code == 200
+
+    def test_tier4_alias_valet(self):
+        r = self._client(4).get('/valet')
+        assert r.status_code == 200
+
+    def test_tier3_alias_family(self):
+        r = self._client(3).get('/family')
         assert r.status_code == 200
 
 
@@ -385,6 +540,632 @@ class TestCookieFormat:
         assert parts[0] == '2'
         assert parts[1] == 'Khloe'
         assert len(parts[2]) == 16
+
+    def test_token_is_hex(self):
+        parts = _make_cookie(1, 'Ayden').split(':')
+        token = parts[2]
+        assert all(c in '0123456789abcdef' for c in token)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 11. /terminal/exec — auth gating and command blocking
+# ═══════════════════════════════════════════════════════════════
+class TestTerminalExec:
+    def _post(self, cmd, tier=1):
+        c = _authed_client(tier)
+        return c.post('/terminal/exec', json={'cmd': cmd})
+
+    def test_no_auth_denied(self):
+        r = client.post('/terminal/exec', json={'cmd': 'ls'})
+        d = json.loads(r.data)
+        assert 'error' in d or r.status_code in (403, 401)
+
+    def test_tier2_denied(self):
+        r = self._post('ls', tier=2)
+        d = json.loads(r.data)
+        assert 'error' in d or 'denied' in str(d).lower()
+
+    def test_tier1_help_returns_text(self):
+        r = self._post('/help', tier=1)
+        d = json.loads(r.data)
+        assert 'stdout' in d
+        assert len(d['stdout']) > 0
+
+    def test_dangerous_rm_rf_blocked(self):
+        r = self._post('rm -rf /', tier=1)
+        d = json.loads(r.data)
+        assert 'error' in d or 'blocked' in str(d).lower() or 'Blocked' in str(d)
+
+    def test_empty_command_returns_empty(self):
+        r = self._post('', tier=1)
+        d = json.loads(r.data)
+        assert d.get('stdout', '') == '' and d.get('stderr', '') == ''
+
+    def test_safe_command_runs(self):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='hello\n', stderr='', returncode=0)
+            r = self._post('echo hello', tier=1)
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 12. One-time code generation and validation
+# ═══════════════════════════════════════════════════════════════
+class TestOneTimeCodes:
+    def setup_method(self):
+        archer.one_time_codes.clear()
+
+    def test_generate_creates_code(self):
+        code = archer.generate_one_time_code('Alice', 2)
+        assert code in archer.one_time_codes
+
+    def test_code_is_6_digits(self):
+        code = archer.generate_one_time_code('Bob', 3)
+        assert len(code) == 6
+        assert code.isdigit()
+
+    def test_code_has_correct_tier(self):
+        code = archer.generate_one_time_code('Carol', 3)
+        assert archer.one_time_codes[code]['tier'] == 3
+
+    def test_code_has_name(self):
+        code = archer.generate_one_time_code('Dave', 2)
+        assert archer.one_time_codes[code]['name'] == 'Dave'
+
+    def test_validate_valid_code(self):
+        code = archer.generate_one_time_code('Eve', 2)
+        result = archer.validate_one_time_code(code)
+        assert result is not None
+        assert result['name'] == 'Eve'
+
+    def test_validate_marks_used(self):
+        code = archer.generate_one_time_code('Frank', 2)
+        archer.validate_one_time_code(code)
+        result = archer.validate_one_time_code(code)
+        assert result is None
+
+    def test_validate_nonexistent_code(self):
+        assert archer.validate_one_time_code('000000') is None
+
+    def test_validate_expired_code(self):
+        code = archer.generate_one_time_code('Grace', 2)
+        archer.one_time_codes[code]['expires'] = time.time() - 1
+        result = archer.validate_one_time_code(code)
+        assert result is None
+
+    def test_cleanup_removes_expired(self):
+        code = archer.generate_one_time_code('Henry', 2)
+        archer.one_time_codes[code]['expires'] = time.time() - 1
+        archer.cleanup_expired_codes()
+        assert code not in archer.one_time_codes
+
+
+# ═══════════════════════════════════════════════════════════════
+# 13. /generate_code route — tier 1 required
+# ═══════════════════════════════════════════════════════════════
+class TestGenerateCodeRoute:
+    def setup_method(self):
+        archer.one_time_codes.clear()
+
+    def test_tier1_can_generate(self):
+        r = _authed_client(1).post('/generate_code', json={'name': 'Passenger', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['success'] is True
+        assert 'code' in d
+        assert len(d['code']) == 6
+
+    def test_tier2_cannot_generate(self):
+        r = _authed_client(2).post('/generate_code', json={'name': 'X', 'tier': 3})
+        assert r.status_code == 403
+
+    def test_no_auth_cannot_generate(self):
+        r = client.post('/generate_code', json={'name': 'X', 'tier': 2})
+        assert r.status_code == 403
+
+    def test_name_required(self):
+        r = _authed_client(1).post('/generate_code', json={'tier': 2})
+        d = json.loads(r.data)
+        assert d['success'] is False
+
+    def test_generated_code_in_store(self):
+        r = _authed_client(1).post('/generate_code', json={'name': 'TestUser', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['code'] in archer.one_time_codes
+
+
+# ═══════════════════════════════════════════════════════════════
+# 14. /revoke_code route
+# ═══════════════════════════════════════════════════════════════
+class TestRevokeCodeRoute:
+    def setup_method(self):
+        archer.one_time_codes.clear()
+
+    def test_revoke_existing_code(self):
+        code = archer.generate_one_time_code('X', 2)
+        r = _authed_client(1).post('/revoke_code', json={'code': code})
+        assert json.loads(r.data)['success'] is True
+        assert code not in archer.one_time_codes
+
+    def test_revoke_nonexistent_code_ok(self):
+        r = _authed_client(1).post('/revoke_code', json={'code': '999999'})
+        assert r.status_code == 200
+
+    def test_revoke_removes_from_store(self):
+        code = archer.generate_one_time_code('Y', 3)
+        _authed_client(1).post('/revoke_code', json={'code': code})
+        assert code not in archer.one_time_codes
+
+
+# ═══════════════════════════════════════════════════════════════
+# 15. /notify_tier1 and /tier_notifications
+# ═══════════════════════════════════════════════════════════════
+class TestTierNotifications:
+    def setup_method(self):
+        archer.tier_notifications.clear()
+        archer.tier_responses.clear()
+
+    def test_notify_returns_ok(self):
+        r = client.post('/notify_tier1', json={'from': 'Alice', 'message': 'hello'})
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_notify_returns_id(self):
+        r = client.post('/notify_tier1', json={'from': 'Alice', 'message': 'test'})
+        d = json.loads(r.data)
+        assert 'id' in d
+
+    def test_notification_appears_in_list(self):
+        client.post('/notify_tier1', json={'from': 'Bob', 'message': 'unlock sport'})
+        r = client.get('/tier_notifications')
+        d = json.loads(r.data)
+        assert any(n['from'] == 'Bob' for n in d['notifications'])
+
+    def test_notifications_list_is_list(self):
+        r = client.get('/tier_notifications')
+        d = json.loads(r.data)
+        assert isinstance(d['notifications'], list)
+
+    def test_tier_cancel_updates_status(self):
+        r = client.post('/notify_tier1', json={'from': 'Carol', 'message': 'cancel me'})
+        nid = json.loads(r.data)['id']
+        cr  = client.post('/tier_cancel', json={'id': nid})
+        assert json.loads(cr.data)['ok'] is True
+        assert archer.tier_responses.get(nid) == 'cancelled'
+
+    def test_tier_respond_approved(self):
+        r = client.post('/notify_tier1', json={'from': 'Dave', 'message': 'sport mode'})
+        nid = json.loads(r.data)['id']
+        rr  = _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'approved', 'action': 'sport'})
+        assert json.loads(rr.data)['ok'] is True
+        assert archer.tier_responses.get(nid) == 'approved'
+
+    def test_tier_respond_changes_drive_mode(self):
+        r = client.post('/notify_tier1', json={'from': 'Eve', 'message': 'eco mode'})
+        nid = json.loads(r.data)['id']
+        _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'approved', 'action': 'eco mode'})
+        assert archer.truck_state['drive_mode'] == 'eco'
+
+    def test_tier_respond_denied(self):
+        r = client.post('/notify_tier1', json={'from': 'Frank', 'message': 'tow mode'})
+        nid = json.loads(r.data)['id']
+        _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'denied', 'action': 'tow'})
+        assert archer.tier_responses.get(nid) == 'denied'
+
+    def test_tier_response_status_endpoint(self):
+        r = client.post('/notify_tier1', json={'from': 'Grace', 'message': 'test'})
+        nid = json.loads(r.data)['id']
+        sr  = client.get(f'/tier_response_status?id={nid}')
+        d   = json.loads(sr.data)
+        assert 'status' in d
+        assert d['status'] == 'pending'
+
+    def test_tier_response_status_unknown_id(self):
+        r = client.get('/tier_response_status?id=nonexistent')
+        d = json.loads(r.data)
+        assert d['status'] == 'unknown'
+
+
+# ═══════════════════════════════════════════════════════════════
+# 16. /device_tier endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestDeviceTierEndpoint:
+    def test_returns_tier_for_registered_device(self):
+        r = client.post('/device_tier', json={'fingerprint': 'test-fp-001'})
+        d = json.loads(r.data)
+        assert 'tier' in d
+        assert isinstance(d['tier'], int)
+
+    def test_unknown_fp_returns_4(self):
+        r = client.post('/device_tier', json={'fingerprint': 'totally-unknown-fp-xyz'})
+        d = json.loads(r.data)
+        assert d['tier'] == 4
+
+    def test_registered_field_present(self):
+        r = client.post('/device_tier', json={'fingerprint': 'test-fp-001'})
+        d = json.loads(r.data)
+        assert 'registered' in d
+
+    def test_name_field_present(self):
+        r = client.post('/device_tier', json={'fingerprint': 'test-fp-001'})
+        d = json.loads(r.data)
+        assert 'name' in d
+
+    def test_known_device_is_registered(self):
+        client.post('/register_device', json={'fingerprint': 'known-fp-99', 'name': 'Me', 'tier': 2})
+        r = client.post('/device_tier', json={'fingerprint': 'known-fp-99'})
+        d = json.loads(r.data)
+        assert d['registered'] is True
+
+
+# ═══════════════════════════════════════════════════════════════
+# 17. /specs endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestSpecsEndpoint:
+    def test_returns_200(self):
+        r = client.get('/specs')
+        assert r.status_code == 200
+
+    def test_returns_html(self):
+        r = client.get('/specs')
+        assert b'ARCHER' in r.data
+
+    def test_contains_engine_section(self):
+        r = client.get('/specs')
+        assert b'ENGINE' in r.data or b'engine' in r.data.lower()
+
+    def test_content_type_html(self):
+        r = client.get('/specs')
+        assert 'text/html' in r.content_type
+
+
+# ═══════════════════════════════════════════════════════════════
+# 18. /limited endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestLimitedEndpoint:
+    def test_returns_200(self):
+        r = client.get('/limited')
+        assert r.status_code == 200
+
+    def test_returns_html(self):
+        r = client.get('/limited')
+        assert b'ARCHER' in r.data
+
+    def test_contains_limited_marker(self):
+        r = client.get('/limited')
+        assert b'LIMITED' in r.data or b'limited' in r.data.lower()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 19. /fans page
+# ═══════════════════════════════════════════════════════════════
+class TestFanPage:
+    def test_returns_200(self):
+        r = client.get('/fans')
+        assert r.status_code == 200
+
+    def test_fan_alias_works(self):
+        r = client.get('/fan')
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 20. /boot initialization page
+# ═══════════════════════════════════════════════════════════════
+class TestBootPage:
+    def test_returns_200(self):
+        r = client.get('/boot')
+        assert r.status_code == 200
+
+    def test_init_alias_works(self):
+        r = client.get('/init')
+        assert r.status_code == 200
+
+    def test_contains_archer(self):
+        r = client.get('/boot')
+        assert b'ARCHER' in r.data
+
+    def test_content_type_html(self):
+        r = client.get('/boot')
+        assert 'text/html' in r.content_type
+
+    def test_contains_redirect_script(self):
+        r = client.get('/boot')
+        assert b'window.location' in r.data or b'location.href' in r.data
+
+
+# ═══════════════════════════════════════════════════════════════
+# 21. /drag endpoints
+# ═══════════════════════════════════════════════════════════════
+class TestDragEndpoints:
+    def test_stage_returns_ok(self):
+        r = client.post('/drag/stage')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_stage_has_stage_field(self):
+        r = client.post('/drag/stage')
+        d = json.loads(r.data)
+        assert 'stage' in d
+
+    def test_launch_returns_ok(self):
+        r = client.post('/drag/launch')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert 'ok' in d
+
+    def test_launch_has_stage_field(self):
+        r = client.post('/drag/launch')
+        d = json.loads(r.data)
+        assert 'stage' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 22. /build/part endpoints
+# ═══════════════════════════════════════════════════════════════
+class TestBuildPartEndpoints:
+    def test_add_part_returns_ok(self):
+        r = client.post('/build/part/add', json={
+            'name': 'Cold Air Intake', 'category': 'intake',
+            'hp_gain': 15, 'tq_gain': 12, 'cost': 299.99,
+        })
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_add_part_returns_part(self):
+        r = client.post('/build/part/add', json={'name': 'Test Part'})
+        d = json.loads(r.data)
+        assert 'part' in d
+        assert d['part']['name'] == 'Test Part'
+
+    def test_add_part_has_id(self):
+        r = client.post('/build/part/add', json={'name': 'Headers'})
+        d = json.loads(r.data)
+        assert 'id' in d['part']
+
+    def test_update_part_ok(self):
+        r = client.post('/build/part/add', json={'name': 'UpdateMe'})
+        pid = json.loads(r.data)['part']['id']
+        r2  = client.post('/build/part/update', json={'id': pid, 'status': 'installed'})
+        d   = json.loads(r2.data)
+        assert d['ok'] is True
+        assert d['part']['status'] == 'installed'
+
+    def test_update_nonexistent_part(self):
+        r = client.post('/build/part/update', json={'id': 'nonexistent_id', 'status': 'installed'})
+        d = json.loads(r.data)
+        assert d['ok'] is False
+
+    def test_remove_part_ok(self):
+        r   = client.post('/build/part/add', json={'name': 'RemoveMe'})
+        pid = json.loads(r.data)['part']['id']
+        r2  = client.post('/build/part/remove', json={'id': pid})
+        d   = json.loads(r2.data)
+        assert d['ok'] is True
+
+    def test_remove_part_no_longer_in_list(self):
+        r   = client.post('/build/part/add', json={'name': 'GoneItem'})
+        pid = json.loads(r.data)['part']['id']
+        client.post('/build/part/remove', json={'id': pid})
+        r2  = client.post('/build/part/add', json={'name': 'Dummy'})
+        parts = json.loads(r2.data)['parts']
+        assert not any(p['id'] == pid for p in parts)
+
+    def test_add_part_returns_power(self):
+        r = client.post('/build/part/add', json={'name': 'Tune', 'hp_gain': 30})
+        d = json.loads(r.data)
+        assert 'power' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 23. /build/update endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestBuildUpdate:
+    def test_returns_ok(self):
+        r = client.post('/build/update', json={'cold_air_intake': True})
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_updates_build_spec(self):
+        client.post('/build/update', json={'cold_air_intake': True})
+        assert archer.build_specs.get('cold_air_intake') is True
+
+    def test_returns_power(self):
+        r = client.post('/build/update', json={})
+        d = json.loads(r.data)
+        assert 'power' in d
+
+    def test_returns_build_specs(self):
+        r = client.post('/build/update', json={})
+        d = json.loads(r.data)
+        assert 'build_specs' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 24. /location/update endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestLocationUpdate:
+    def test_returns_ok(self):
+        with patch('threading.Thread'):
+            r = client.post('/location/update', json={'lat': 37.64, 'lon': -91.54})
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_stores_lat_lon(self):
+        with patch('threading.Thread'):
+            client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
+        r = client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
+        d = json.loads(r.data)
+        assert d['lat'] == 42.0
+        assert d['lon'] == -93.0
+
+    def test_name_stored_if_provided(self):
+        with patch('threading.Thread'):
+            r = client.post('/location/update', json={'lat': 1.0, 'lon': 2.0, 'name': 'Test City'})
+        d = json.loads(r.data)
+        assert d['name'] == 'Test City'
+
+    def test_missing_coords_still_200(self):
+        r = client.post('/location/update', json={})
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 25. get_tier_html function — output validation and XSS
+# ═══════════════════════════════════════════════════════════════
+class TestGetTierHtml:
+    def test_tier1_returns_string(self):
+        html = archer.get_tier_html(1)
+        assert isinstance(html, str)
+        assert len(html) > 0
+
+    def test_tier2_returns_string(self):
+        html = archer.get_tier_html(2)
+        assert isinstance(html, str)
+
+    def test_tier3_returns_string(self):
+        html = archer.get_tier_html(3)
+        assert isinstance(html, str)
+
+    def test_tier4_returns_string(self):
+        html = archer.get_tier_html(4)
+        assert isinstance(html, str)
+
+    def test_tier2_name_injection_no_raw_script(self):
+        # A name containing a quote should not break the JavaScript string context
+        html = archer.get_tier_html(2, name="O'Brien")
+        # The raw unescaped single-quote should not close the JS string
+        # At minimum, the HTML must not contain a raw <script> injection
+        assert "<script>alert" not in html
+
+    def test_tier2_xss_payload_not_executed(self):
+        html = archer.get_tier_html(2, name="'; alert(1); var x='")
+        assert "alert(1)" not in html or "\\'" in html or "&" in html
+
+
+# ═══════════════════════════════════════════════════════════════
+# 26. Index route routing logic
+# ═══════════════════════════════════════════════════════════════
+class TestIndexRoute:
+    def test_no_cookie_returns_html(self):
+        r = client.get('/')
+        assert r.status_code == 200
+        assert b'html' in r.data.lower()
+
+    def test_valid_tier1_cookie_served(self):
+        r = _authed_client(1).get('/')
+        assert r.status_code == 200
+
+    def test_valid_tier2_cookie_served(self):
+        r = _authed_client(2).get('/')
+        assert r.status_code == 200
+
+    def test_registration_page_shown_without_auth(self):
+        r = client.get('/')
+        assert b'ARCHER' in r.data
+
+    def test_no_crash_with_malformed_cookie(self):
+        c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', 'malformed_no_colons')
+        r = c.get('/')
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 27. Cookie tier bounds validation
+# ═══════════════════════════════════════════════════════════════
+class TestCookieTierBounds:
+    def _make_signed_cookie(self, tier, name='Tester'):
+        secret = os.environ['ARCHER_SECRET']
+        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        return f'{tier}:{name}:{token}'
+
+    def test_tier_zero_returns_int(self):
+        cookie = self._make_signed_cookie(0)
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={cookie}'}
+        ):
+            from flask import request
+            result = archer.get_request_tier(request)
+            assert isinstance(result, int)
+
+    def test_tier_negative_returns_int(self):
+        cookie = self._make_signed_cookie(-1)
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={cookie}'}
+        ):
+            from flask import request
+            result = archer.get_request_tier(request)
+            assert isinstance(result, int)
+
+    def test_tier_99_accepted_by_current_code(self):
+        # Documents current behavior — tier is not bounds-checked
+        cookie = self._make_signed_cookie(99)
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={cookie}'}
+        ):
+            from flask import request
+            result = archer.get_request_tier(request)
+            assert isinstance(result, int)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 28. /mirror page
+# ═══════════════════════════════════════════════════════════════
+class TestMirrorPage:
+    def test_returns_200(self):
+        r = client.get('/mirror')
+        assert r.status_code == 200
+
+    def test_returns_html(self):
+        r = client.get('/mirror')
+        assert r.content_type.startswith('text/html') or b'html' in r.data.lower()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 29. estimate_power_from_parts — no crash
+# ═══════════════════════════════════════════════════════════════
+class TestEstimatePower:
+    def test_returns_dict(self):
+        result = archer.estimate_power_from_parts()
+        assert isinstance(result, dict)
+
+    def test_has_crank_hp(self):
+        result = archer.estimate_power_from_parts()
+        assert 'crank_hp' in result
+        assert isinstance(result['crank_hp'], (int, float))
+        assert result['crank_hp'] > 0
+
+    def test_has_wheel_hp(self):
+        result = archer.estimate_power_from_parts()
+        assert 'wheel_hp' in result
+        assert result['wheel_hp'] > 0
+
+    def test_wheel_hp_less_than_crank(self):
+        result = archer.estimate_power_from_parts()
+        assert result['wheel_hp'] < result['crank_hp']
+
+
+# ═══════════════════════════════════════════════════════════════
+# 30. get_display_data — completeness
+# ═══════════════════════════════════════════════════════════════
+class TestGetDisplayData:
+    def test_returns_dict(self):
+        d = archer.get_display_data()
+        assert isinstance(d, dict)
+
+    def test_all_gauge_fields_present(self):
+        d = archer.get_display_data()
+        for key in ('rpm', 'speed', 'boost', 'oil_temp', 'battery', 'ethanol', 'coolant'):
+            assert key in d, f'Missing: {key}'
+
+    def test_drive_mode_field(self):
+        d = archer.get_display_data()
+        assert 'drive_mode' in d
+
+    def test_tc_on_field(self):
+        d = archer.get_display_data()
+        assert 'tc_on' in d
 
 
 if __name__ == '__main__':

@@ -91,8 +91,8 @@
   "bluetooth_devices": {},
   "trip_log": [
     {
-      "date": "May 20 2026",
-      "time": "08:03 PM",
+      "date": "May 29 2026",
+      "time": "07:01 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -104,8 +104,8 @@
       "weather": "70F clear"
     },
     {
-      "date": "May 20 2026",
-      "time": "08:03 PM",
+      "date": "May 29 2026",
+      "time": "07:01 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,25 +121,148 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "May 20 2026 08:03 PM"
+      "registered_at": "May 29 2026 07:01 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "May 20 2026 08:03 PM"
+      "registered_at": "May 29 2026 07:01 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "May 20 2026 08:03 PM"
+      "registered_at": "May 29 2026 07:01 PM"
+    },
+    "test-fp-pass": {
+      "name": "Passenger",
+      "tier": 2,
+      "registered_at": "May 29 2026 07:01 PM"
+    },
+    "test-fp-name": {
+      "name": "Alice",
+      "tier": 3,
+      "registered_at": "May 29 2026 07:01 PM"
+    },
+    "known-fp-99": {
+      "name": "Me",
+      "tier": 2,
+      "registered_at": "May 29 2026 07:01 PM"
     }
   },
   "build_tracker": {
-    "parts": [],
+    "parts": [
+      {
+        "id": "a77ff3b7",
+        "name": "Cold Air Intake",
+        "part_number": "",
+        "category": "intake",
+        "hp_gain": 15.0,
+        "tq_gain": 12.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 299.99,
+        "date_added": "May 29 2026",
+        "notes": ""
+      },
+      {
+        "id": "67fe790f",
+        "name": "Test Part",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 29 2026",
+        "notes": ""
+      },
+      {
+        "id": "ba2b6de5",
+        "name": "Headers",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 29 2026",
+        "notes": ""
+      },
+      {
+        "id": "000e8d24",
+        "name": "UpdateMe",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "installed",
+        "cost": 0.0,
+        "date_added": "May 29 2026",
+        "notes": ""
+      },
+      {
+        "id": "1df2d4a9",
+        "name": "Dummy",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 0.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 29 2026",
+        "notes": ""
+      },
+      {
+        "id": "e59e7a81",
+        "name": "Tune",
+        "part_number": "",
+        "category": "other",
+        "hp_gain": 30.0,
+        "tq_gain": 0.0,
+        "description": "",
+        "status": "ordered",
+        "cost": 0.0,
+        "date_added": "May 29 2026",
+        "notes": ""
+      }
+    ],
     "mods": [],
-    "total_spent": 0,
+    "total_spent": 299.99,
     "build_start": "2026",
     "target_year": "2031"
+  },
+  "build_specs": {
+    "displacement": "6.0L / 364 ci",
+    "block": "Stock LQ4 Iron",
+    "compression": 9.4,
+    "heads": "Stock 317 Castings",
+    "intake": "Stock Truck Manifold",
+    "throttle_body_size": "Stock 78mm",
+    "fuel_injectors": "Stock 28 lb/hr",
+    "transmission": "4L60E",
+    "rear_gear": "3.73",
+    "tune": "Stock ECM",
+    "cold_air_intake": true,
+    "long_tube_headers": false,
+    "full_exhaust": false,
+    "intake_manifold": false,
+    "throttle_body_upgrade": false,
+    "cam_swap": false,
+    "cam_level": 1,
+    "heads_upgrade": false,
+    "heads_level": 1,
+    "wideband_o2": false,
+    "electric_fan": false,
+    "underdrive_pulley": false,
+    "custom_tune": false,
+    "dyno_rwhp": null,
+    "dyno_rwtq": null,
+    "dyno_date": "",
+    "notes": ""
   },
   "maintenance_log": {
     "oil_change": {
@@ -434,8 +557,15 @@
     "trip_distance": 0.0,
     "session_miles": 0.0,
     "last_location": "",
-    "location_log": []
+    "location_log": [],
+    "lat": null,
+    "lon": null,
+    "location_name": ""
   },
+  "gps_lat": null,
+  "gps_lon": null,
+  "gps_name": "",
+  "weather_alerts": [],
   "nav_places": {
     "test_spot": {
       "lat": 37.64,
@@ -446,6 +576,21 @@
       "lat": 10.0,
       "lon": 20.0,
       "address": "Marker"
+    },
+    "coords_check": {
+      "lat": 42.0,
+      "lon": -93.5,
+      "address": "Iowa"
+    },
+    "alpha": {
+      "lat": 1.0,
+      "lon": 1.0,
+      "address": "A"
+    },
+    "beta": {
+      "lat": 2.0,
+      "lon": 2.0,
+      "address": "B"
     }
   }
 }

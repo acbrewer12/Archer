@@ -43,6 +43,19 @@ sys.stderr = _TeeWriter(sys.stderr)
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
+# ── ENV FILE LOADER — picks up API keys from /etc/archer/archer.env ──────────
+def _load_env_file():
+    for path in ('/etc/archer/archer.env', os.path.expanduser('~/.archer.env')):
+        if os.path.isfile(path):
+            with open(path) as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith('#') and '=' in _line:
+                        _k, _, _v = _line.partition('=')
+                        os.environ.setdefault(_k.strip(), _v.strip())
+            break
+_load_env_file()
+
 # ── BUILD CAPABILITY DETECTION ──────────
 # Parts must be status='installed' to activate a capability.
 # Add a part via add_part(..., status='installed') or update its status.
@@ -111,10 +124,41 @@ os.environ['OLLAMA_NONHISTORY'] = '1'
 from flask import Flask, jsonify, render_template_string, Response, stream_with_context, request
 import logging as _logging
 
-display_app     = Flask(__name__)
+display_app            = Flask(__name__)
+display_app.secret_key = os.environ.get('ARCHER_SECRET', 'archer2500hd')
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
+
+# ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
+_archer_log_buffer = collections.deque(maxlen=500)
+_archer_log_lock   = threading.Lock()
+
+def _archer_log(level, msg, context=None):
+    """Append a structured log entry to the archer log buffer."""
+    entry = {
+        'ts':      datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'level':   level.upper(),
+        'msg':     msg,
+        'context': context or {},
+    }
+    with _archer_log_lock:
+        _archer_log_buffer.append(entry)
+    # Also emit via Python logging
+    _py_logger = _logging.getLogger('archer')
+    getattr(_py_logger, level.lower(), _py_logger.info)(msg)
+
+def log_info(msg, **ctx):  _archer_log('INFO',  msg, ctx)
+def log_warn(msg, **ctx):  _archer_log('WARN',  msg, ctx)
+def log_error(msg, **ctx): _archer_log('ERROR', msg, ctx)
+
+# Configure Python logging handler
+_logging.basicConfig(
+    level=_logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s — %(message)s',
+    datefmt='%H:%M:%S',
+)
+_logging.getLogger('archer').setLevel(_logging.DEBUG)
 
 obd2_display = {
     'connected': False,
@@ -263,8 +307,8 @@ async def _speak_async(text, alert=False):
             )
             return
 
-        voice     = "en-US-GuyNeural"
-        communicate = edge_tts.Communicate(text, voice)
+        voice       = "en-US-ChristopherNeural"
+        communicate = edge_tts.Communicate(text, voice, rate="-8%", pitch="-6Hz")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
             tmp_path = f.name
         await communicate.save(tmp_path)
@@ -507,6 +551,7 @@ def load_state():
         parking_mode.update(data.get('parking_mode', {}))
         audio_system.update(data.get('audio_system', {}))
         location_data.update(data.get('location_data', {}))
+        _recalc_build_spent()
         print("[ARCHER] Memory loaded.")
     except Exception:
         print("[ARCHER] Starting fresh.")
@@ -776,58 +821,300 @@ music_state = {
 # ── WEATHER ──────────────────────────────
 weather = {
     'temp': 70, 'condition': 'clear', 'raining': False,
-    'freezing': False, 'snowing': False, 'wind': 5, 'last_update': 0,
+    'freezing': False, 'snowing': False, 'wind': 5,
+    'feels_like': 70, 'humidity': 50, 'last_update': 0,
 }
-_nws_station_url = None  # cached after first lookup
-
-_nws_forecast_url = None   # cached hourly forecast URL for exact coordinates
+_nws_station_url  = None  # cached after first lookup
+_nws_forecast_url = None  # cached hourly forecast URL for exact coordinates
+_wu_key           = os.environ.get('WUNDERGROUND_KEY', '')
+_vc_key           = os.environ.get('VISUALCROSSING_KEY', '')
 
 def get_weather():
     global _nws_station_url, _nws_forecast_url
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
-    try:
-        hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
-        if not _nws_forecast_url:
+    hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+
+    # Resolve city name from NWS points (one-time, cached)
+    if not _nws_forecast_url:
+        try:
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=6) as r:
                 pts = json.loads(r.read())
-            # Pull city/state from NWS points response
             rel = pts.get('properties', {}).get('relativeLocation', {}).get('properties', {})
-            city  = rel.get('city', '')
-            state = rel.get('state', '')
+            city, state = rel.get('city', ''), rel.get('state', '')
             if city and state and not location_data.get('location_name'):
-                resolved_name = f'{city}, {state}'
-                location_data['location_name'] = resolved_name
-                threading.Thread(target=speak, args=(f'Location locked. {resolved_name}.',), daemon=True).start()
-            _nws_forecast_url  = pts['properties']['forecastHourly']
+                location_data['location_name'] = f'{city}, {state}'
+                threading.Thread(target=speak, args=(f'Location locked. {city}, {state}.',), daemon=True).start()
+            _nws_forecast_url = pts['properties']['forecastHourly']
             stations_url = pts['properties']['observationStations']
             with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=6) as r:
                 stations = json.loads(r.read())
             _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
+        except Exception:
+            pass
 
-        # Use hourly gridpoint forecast (interpolated to exact coordinates) for temp + condition
-        with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
-            fc = json.loads(r.read())
-        period   = fc['properties']['periods'][0]
-        temp_f   = period['temperature']   # already in °F
-        desc     = (period.get('shortForecast') or '').lower()
-        wind_str = (period.get('windSpeed') or '0 mph').split()[0]
-        wind_mph = int(wind_str) if wind_str.isdigit() else 0
+    # WMO weather code → clean condition label (same mapping TWC/Open-Meteo uses)
+    def _wmo_condition(code):
+        code = int(code or 0)
+        if code == 0:                    return 'Clear'
+        elif code in (1, 2):             return 'Partly Cloudy'
+        elif code == 3:                  return 'Cloudy'
+        elif code in (45, 48):           return 'Fog'
+        elif code in (51, 53, 55):       return 'Drizzle'
+        elif code in (56, 57):           return 'Freezing Rain'
+        elif code in (61, 63, 65):       return 'Rain'
+        elif code in (66, 67):           return 'Freezing Rain'
+        elif code in (71, 73, 75, 77):   return 'Snow'
+        elif code in (80, 81, 82):       return 'Rain Showers'
+        elif code in (85, 86):           return 'Snow Showers'
+        elif code in (95, 96, 99):       return 'Thunderstorm'
+        return 'Cloudy'
 
-        if 'thunder' in desc:                                              condition = 'thunderstorm'
-        elif 'snow' in desc or 'blizzard' in desc:                         condition = 'snowing'
-        elif any(w in desc for w in ('rain','shower','drizzle','storm')):  condition = 'raining'
-        elif 'overcast' in desc or 'cloudy' in desc:                       condition = 'cloudy'
-        elif any(w in desc for w in ('partly','mostly')):                  condition = 'partly cloudy'
-        elif any(w in desc for w in ('clear','sunny','fair','few clouds')): condition = 'clear'
-        else:                                                               condition = desc[:20] or 'cloudy'
+    def _parse_condition(desc):
+        desc = (desc or '').lower()
+        if 'thunder' in desc:                                                  return 'Thunderstorm'
+        elif 'snow' in desc or 'blizzard' in desc:                             return 'Snow'
+        elif 'freezing' in desc or 'sleet' in desc or 'ice' in desc:           return 'Freezing Rain'
+        elif 'vicinity' in desc and any(w in desc for w in ('shower','rain')): return 'Scattered Showers'
+        elif 'shower' in desc:                                                  return 'Rain Showers'
+        elif any(w in desc for w in ('rain','drizzle')):                        return 'Rain'
+        elif 'overcast' in desc:                                                return 'Overcast'
+        elif 'mostly cloudy' in desc:                                           return 'Mostly Cloudy'
+        elif 'partly cloudy' in desc or 'partly' in desc:                      return 'Partly Cloudy'
+        elif 'cloudy' in desc:                                                  return 'Cloudy'
+        elif any(w in desc for w in ('clear','sunny','fair','few clouds')):     return 'Clear'
+        elif 'fog' in desc or 'mist' in desc:                                  return 'Fog'
+        else:                                                                   return (desc[:20] or 'Cloudy').title()
 
-        return {'temp': temp_f, 'condition': condition, 'wind': wind_mph, 'precip': 0,
-                'raining': condition in ('raining','thunderstorm'),
-                'freezing': temp_f < 32, 'snowing': condition == 'snowing'}
+    # ── PRIMARY: Visual Crossing temp + NWS Observation condition ──
+    # ── PRIMARY: Visual Crossing temp + smart condition blend ──
+    # VC temp is accurate. For condition: use VC forecast text for clear/cloudy
+    # labels (forecast model matches TWC methodology); override with NWS station
+    # only when it detects active precipitation (station data reliable for rain/snow).
+    if _vc_key:
+        try:
+            vc_url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
+                      f'/{lat:.4f},{lon:.4f}/today'
+                      f'?unitGroup=us&include=current&key={_vc_key}&contentType=json')
+            with urllib.request.urlopen(urllib.request.Request(vc_url, headers=hdr), timeout=8) as r:
+                d = json.loads(r.read())
+            cur      = d['currentConditions']
+            temp_f   = round(float(cur['temp']))
+            wind_mph = round(float(cur.get('windspeed') or 0))
+            precip   = float(cur.get('precip') or 0)
+
+            # VC forecast condition (model-based, matches TWC methodology for clear/cloudy)
+            vc_desc = (cur.get('conditions') or '').lower()
+            vc_cond = _parse_condition(vc_desc) or 'Cloudy'
+
+            # NWS Observation: use for all condition types (real station reading beats VC model)
+            _PRECIP = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+            condition = vc_cond
+            if _nws_station_url:
+                try:
+                    obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+                    with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=5) as r:
+                        obs = json.loads(r.read())
+                    props = obs['properties']
+                    # Reject stale NWS readings older than 90 minutes
+                    import datetime as _dt
+                    obs_time = props.get('timestamp', '')
+                    obs_age_min = 999
+                    if obs_time:
+                        try:
+                            obs_dt = _dt.datetime.fromisoformat(obs_time.replace('Z', '+00:00'))
+                            obs_age_min = ((_dt.datetime.now(_dt.timezone.utc) - obs_dt).total_seconds()) / 60
+                        except Exception:
+                            pass
+                    if obs_age_min <= 90:
+                        text_desc = (props.get('textDescription') or '').strip()
+                        nws_cond = _parse_condition(text_desc) if text_desc else None
+                        w = (props.get('windSpeed') or {}).get('value') or 0
+                        wind_mph = round(float(w) * 2.237) or wind_mph
+                        # Only override VC when NWS confirms active precipitation
+                        if nws_cond and nws_cond in _PRECIP:
+                            condition = nws_cond
+                except Exception:
+                    pass
+
+            def _wind_chill(T, W):
+                """NWS wind chill formula. T in °F, W in mph. Valid below 50°F and W > 3mph."""
+                if T >= 50 or W <= 3:
+                    return T
+                wc = 35.74 + 0.6215 * T - 35.75 * (W ** 0.16) + 0.4275 * T * (W ** 0.16)
+                return round(wc)
+
+            feels_like = _wind_chill(temp_f, wind_mph)
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'feels_like': feels_like,
+                'raining':  condition in _PRECIP,
+                'freezing': temp_f < 32,
+                'snowing':  condition in ('Snow', 'Snow Showers'),
+            }
+        except Exception:
+            pass
+
+    # ── SECONDARY: Weather Underground PWS (nearest personal weather station) ──
+    # TWC ingests WUnderground PWS data — actual thermometers in nearby yards.
+    def _wind_chill_calc(T, W):
+        """NWS wind chill formula. T in °F, W in mph."""
+        if T >= 50 or W <= 3:
+            return T
+        wc = 35.74 + 0.6215 * T - 35.75 * (W ** 0.16) + 0.4275 * T * (W ** 0.16)
+        return round(wc)
+
+    if _wu_key:
+        try:
+            wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
+                      f'?geocode={lat:.4f},{lon:.4f}&limit=1&format=json&units=e&apiKey={_wu_key}')
+            with urllib.request.urlopen(urllib.request.Request(wu_url, headers=hdr), timeout=8) as r:
+                wu = json.loads(r.read())
+            obs = wu['observations'][0]
+            imp = obs.get('imperial', {})
+            temp_f   = int(imp['temp'])
+            wind_mph = round(float(imp.get('windSpeed') or 0))
+            precip   = float(imp.get('precipRate') or 0)
+            wx_phrase = (obs.get('wxPhrase') or '').strip()
+            condition = _parse_condition(wx_phrase) if wx_phrase else 'Cloudy'
+            feels_like = _wind_chill_calc(temp_f, wind_mph)
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'feels_like': feels_like,
+                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'freezing': temp_f < 32,
+                'snowing':  condition == 'Snow',
+            }
+        except Exception:
+            pass
+
+    # ── SECONDARY: wttr.in — sources from Weather.com/TWC, same data as phone weather apps ──
+    try:
+        wttr_url = f'https://wttr.in/{lat:.4f},{lon:.4f}?format=j1'
+        with urllib.request.urlopen(urllib.request.Request(wttr_url, headers=hdr), timeout=8) as r:
+            wttr = json.loads(r.read())
+        cur = wttr['current_condition'][0]
+        temp_f   = round(float(cur['temp_F']))
+        wind_mph = round(float(cur.get('windspeedMiles') or 0))
+        precip   = float(cur.get('precipMM') or 0) * 0.0394  # mm → inches
+        desc_raw = (cur.get('weatherDesc') or [{}])[0].get('value', '')
+        condition = _parse_condition(desc_raw) if desc_raw else 'Cloudy'
+        _PRECIP_W = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm',
+                     'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+        feels_like = _wind_chill_calc(temp_f, wind_mph)
+        return {
+            'temp': temp_f, 'condition': condition, 'desc': condition,
+            'wind': wind_mph, 'precip': precip,
+            'feels_like': feels_like,
+            'raining':  condition in _PRECIP_W,
+            'freezing': temp_f < 32,
+            'snowing':  condition in ('Snow', 'Snow Showers'),
+        }
     except Exception:
-        _nws_station_url = None
+        pass
+
+    # ── TERTIARY: NWS hybrid — hourly forecast temp (grid-adjusted) + obs condition ──
+    # NWS Hourly gives the most accurate temp for exact coordinates.
+    # NWS Observation gives the most accurate current condition (real station reading).    try:
+        obs_condition, obs_wind_mph = None, 0
+        fc_temp_f, fc_condition, fc_wind_mph = None, None, 0
+
+        # Observation → condition + wind (only use if fresh)
+        if _nws_station_url:
+            try:
+                obs_url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+                with urllib.request.urlopen(urllib.request.Request(obs_url, headers=hdr), timeout=6) as r:
+                    obs = json.loads(r.read())
+                props = obs.get('properties', {})
+                import datetime as _dt2
+                obs_ts = props.get('timestamp', '')
+                obs_age_min = 999
+                if obs_ts:
+                    try:
+                        obs_dt = _dt2.datetime.fromisoformat(obs_ts.replace('Z', '+00:00'))
+                        obs_age_min = ((_dt2.datetime.now(_dt2.timezone.utc) - obs_dt).total_seconds()) / 60
+                    except Exception:
+                        pass
+                if obs_age_min <= 90:
+                    raw_w = (props.get('windSpeed') or {}).get('value') or 0
+                    obs_wind_mph = round(float(raw_w) * 2.237)
+                    text_desc = (props.get('textDescription') or '').strip()
+                    if text_desc:
+                        obs_condition = _parse_condition(text_desc)
+            except Exception:
+                pass
+
+        # Hourly forecast → temp + condition (as fallback)
+        if _nws_forecast_url:
+            try:
+                with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+                    fc = json.loads(r.read())
+                periods = fc['properties']['periods']
+                period = periods[0]
+                try:
+                    from datetime import datetime, timezone as _tz
+                    _now = datetime.now(_tz.utc)
+                    for _p in periods:
+                        if datetime.fromisoformat(_p['startTime']) <= _now <= datetime.fromisoformat(_p['endTime']):
+                            period = _p
+                            break
+                except Exception:
+                    pass
+                fc_temp_f   = period['temperature']
+                fc_condition = _parse_condition(period.get('shortForecast') or '')
+                ws = (period.get('windSpeed') or '0 mph').split()[0]
+                fc_wind_mph = int(ws) if ws.isdigit() else 0
+            except Exception:
+                pass
+
+        # Hybrid: forecast temp + condition; obs only overrides for active precip
+        _PRECIP2 = {'Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain', 'Snow', 'Snow Showers'}
+        temp_f    = fc_temp_f
+        condition = fc_condition
+        if obs_condition and obs_condition in _PRECIP2:
+            condition = obs_condition
+        wind_mph  = obs_wind_mph or fc_wind_mph
+
+        if temp_f is not None and condition is not None:
+            precip = 1.0 if condition in ('Rain', 'Rain Showers', 'Scattered Showers',
+                                          'Thunderstorm', 'Drizzle', 'Freezing Rain') else 0.0
+            return {
+                'temp': temp_f, 'condition': condition, 'desc': condition,
+                'wind': wind_mph, 'precip': precip,
+                'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+                'freezing': temp_f < 32,
+                'snowing':  condition == 'Snow',
+            }
+    except Exception:
+        pass
+
+    # ── FALLBACK: Open-Meteo (raw model data, no API key required) ──
+    try:
+        om_url = (
+            f'https://api.open-meteo.com/v1/forecast'
+            f'?latitude={lat:.4f}&longitude={lon:.4f}'
+            f'&current=temperature_2m,weather_code,wind_speed_10m,precipitation'
+            f'&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'
+            f'&timezone=auto'
+        )
+        with urllib.request.urlopen(urllib.request.Request(om_url, headers=hdr), timeout=8) as r:
+            om = json.loads(r.read())
+        cur = om.get('current', {})
+        temp_f    = int(cur['temperature_2m'])
+        condition = _wmo_condition(cur.get('weather_code', 0))
+        wind_mph  = round(float(cur.get('wind_speed_10m') or 0))
+        precip    = float(cur.get('precipitation') or 0)
+        return {
+            'temp': temp_f, 'condition': condition, 'desc': condition,
+            'wind': wind_mph, 'precip': precip,
+            'raining':  condition in ('Rain', 'Rain Showers', 'Scattered Showers', 'Thunderstorm', 'Drizzle', 'Freezing Rain'),
+            'freezing': temp_f < 32,
+            'snowing':  condition == 'Snow',
+        }
+    except Exception:
         return weather
 
 _active_alert_ids = set()
@@ -1175,6 +1462,16 @@ def get_display_data():
         'gps_lat':       location_data.get('lat'),
         'gps_lon':       location_data.get('lon'),
         'gps_name':      location_data.get('location_name', ''),
+        # Trip stats
+        'trip_distance':  round(trip_stats['distance_miles'], 2),
+        'trip_fuel_used': round(trip_stats['fuel_used_gal'], 3),
+        'trip_mpg':       round(trip_stats['avg_mpg'], 1) if trip_stats['avg_mpg'] else None,
+        'trip_mpg_inst':  round(trip_stats['instant_mpg'], 1) if trip_stats['instant_mpg'] else None,
+        # Weather extended
+        'weather_feels_like': weather.get('feels_like', weather['temp']),
+        'weather_wind':       weather.get('wind', 0),
+        # Drive score
+        'drive_score':    awareness.get('drive_quality', 100),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -1254,12 +1551,36 @@ Truck data right now:
     build_ctx += f"\n- Air suspension: {'Installed' if caps['air_suspension'] else 'Not yet installed'}"
     build_ctx += f"\n- HP estimate: {calc_hp_estimate(truck_state['ethanol'], truck_state['boost'])}"
 
-    full_prompt = f"{SYSTEM_PROMPT}\n\n{build_ctx}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. Only reference what you actually know from the truck data above. Do not make up details.\n\nArcher:"
+    full_prompt = f"{SYSTEM_PROMPT}\n\n{build_ctx}\n\n{context}\n{get_tier_label()} says: {user_input}\n\nRemember: Maximum 2 sentences. Never more. For truck data (temps, RPM, codes, vitals) only use the numbers above — never invent readings. For general questions (mechanics, history, advice, anything else) answer from your own knowledge, in Archer's voice — brief, direct, confident.\n\nArcher:"
 
     response = None
 
-    # Try 1 — Local Ollama (Pi only; CPU inference on HF is too slow)
-    if _IS_PI:
+    # Try 1 — Google Gemini (primary: free tier, 1,500 req/day, no cost)
+    if not response:
+        GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
+        if GEMINI_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "gemini-2.0-flash-lite",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] Gemini")
+            except Exception as e:
+                print(f"[AI] Gemini failed: {e}")
+
+    # Try 2 — Local Ollama (Pi only; offline fallback when no internet)
+    if not response and _IS_PI:
         try:
             result = subprocess.run(
                 ['ollama', 'run', 'llama3.2', full_prompt],
@@ -1272,7 +1593,7 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 2 — HuggingFace Inference API (router endpoint)
+    # Try 3 — HuggingFace Inference API
     if not response:
         HF_TOKEN = os.environ.get('HF_TOKEN', '')
         if HF_TOKEN:
@@ -1297,7 +1618,7 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] HF Inference failed: {e}")
 
-    # Try 3 — Groq
+    # Try 4 — Groq
     if not response:
         GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
         if GROQ_KEY:
@@ -1321,7 +1642,7 @@ Truck data right now:
             except Exception:
                 pass
 
-    # Try 4 — Smart fallback
+    # Try 5 — Smart fallback
     if not response:
         response = smart_fallback(user_input)
         print("[AI] Fallback")
@@ -1544,6 +1865,12 @@ build_tracker = {
     'target_year': '2031',
 }
 
+def _recalc_build_spent():
+    build_tracker['total_spent'] = sum(
+        p.get('cost', 0) for p in build_tracker['parts']
+        if p.get('status') in ('purchased', 'installed', 'ordered')
+    )
+
 CATEGORIES = ['engine','suspension','brakes','wheels','audio','electrical','body','interior','misc']
 
 # ── BUILD SPECS ───────────────────────────
@@ -1734,8 +2061,7 @@ def add_part(name, cost, category='misc', status='pending', notes=''):
         'notes':    notes,
     }
     build_tracker['parts'].append(part)
-    build_tracker['total_spent'] = sum(p['cost'] for p in build_tracker['parts']
-                                       if p['status'] in ('purchased', 'installed'))
+    _recalc_build_spent()
     save_state()
     return part
 
@@ -1788,12 +2114,155 @@ def estimate_speed(rpm, gear=1):
 # ── DIAGNOSTICS / OBD2 CODES ─────────────
 fault_codes = []
 
-def add_fault(code, description):
+# Comprehensive DTC code database — covers powertrain, body, chassis, network
+DTC_DATABASE = {
+    # Fuel / Air Metering
+    'P0100': ('Mass Air Flow Sensor Circuit Malfunction', 'high'),
+    'P0101': ('MAF Sensor Range/Performance Problem', 'medium'),
+    'P0102': ('MAF Sensor Circuit Low Input', 'high'),
+    'P0103': ('MAF Sensor Circuit High Input', 'high'),
+    'P0104': ('MAF Sensor Circuit Intermittent', 'medium'),
+    'P0106': ('MAP Sensor Range/Performance Problem', 'medium'),
+    'P0107': ('MAP Sensor Circuit Low Input', 'high'),
+    'P0108': ('MAP Sensor Circuit High Input', 'high'),
+    'P0111': ('Intake Air Temp Sensor Range/Performance', 'low'),
+    'P0112': ('Intake Air Temp Sensor Circuit Low Input', 'medium'),
+    'P0113': ('Intake Air Temp Sensor Circuit High Input', 'medium'),
+    'P0116': ('Engine Coolant Temp Sensor Range/Performance', 'medium'),
+    'P0117': ('Engine Coolant Temp Sensor Circuit Low', 'high'),
+    'P0118': ('Engine Coolant Temp Sensor Circuit High', 'high'),
+    'P0120': ('Throttle Position Sensor A Circuit Malfunction', 'high'),
+    'P0121': ('TPS Circuit Range/Performance Problem', 'medium'),
+    'P0122': ('Throttle/Pedal Position Sensor A Low Input', 'high'),
+    'P0123': ('Throttle/Pedal Position Sensor A High Input', 'high'),
+    # Fuel System
+    'P0171': ('System Too Lean — Bank 1', 'high'),
+    'P0172': ('System Too Rich — Bank 1', 'high'),
+    'P0174': ('System Too Lean — Bank 2', 'high'),
+    'P0175': ('System Too Rich — Bank 2', 'high'),
+    'P0190': ('Fuel Rail Pressure Sensor Circuit Malfunction', 'high'),
+    'P0191': ('Fuel Rail Pressure Sensor Range/Performance', 'medium'),
+    'P0192': ('Fuel Rail Pressure Sensor Circuit Low', 'high'),
+    'P0193': ('Fuel Rail Pressure Sensor Circuit High', 'high'),
+    'P0200': ('Injector Circuit Malfunction', 'high'),
+    'P0201': ('Injector Circuit Malfunction — Cylinder 1', 'high'),
+    'P0202': ('Injector Circuit Malfunction — Cylinder 2', 'high'),
+    'P0203': ('Injector Circuit Malfunction — Cylinder 3', 'high'),
+    'P0204': ('Injector Circuit Malfunction — Cylinder 4', 'high'),
+    'P0205': ('Injector Circuit Malfunction — Cylinder 5', 'high'),
+    'P0206': ('Injector Circuit Malfunction — Cylinder 6', 'high'),
+    'P0207': ('Injector Circuit Malfunction — Cylinder 7', 'high'),
+    'P0208': ('Injector Circuit Malfunction — Cylinder 8', 'high'),
+    # Misfire
+    'P0300': ('Random/Multiple Cylinder Misfire Detected', 'high'),
+    'P0301': ('Cylinder 1 Misfire Detected', 'high'),
+    'P0302': ('Cylinder 2 Misfire Detected', 'high'),
+    'P0303': ('Cylinder 3 Misfire Detected', 'high'),
+    'P0304': ('Cylinder 4 Misfire Detected', 'high'),
+    'P0305': ('Cylinder 5 Misfire Detected', 'high'),
+    'P0306': ('Cylinder 6 Misfire Detected', 'high'),
+    'P0307': ('Cylinder 7 Misfire Detected', 'high'),
+    'P0308': ('Cylinder 8 Misfire Detected', 'high'),
+    # Catalytic Converter / O2 Sensors
+    'P0420': ('Catalyst System Efficiency Below Threshold — Bank 1', 'medium'),
+    'P0430': ('Catalyst System Efficiency Below Threshold — Bank 2', 'medium'),
+    'P0130': ('O2 Sensor Circuit Malfunction — Bank 1 Sensor 1', 'medium'),
+    'P0131': ('O2 Sensor Circuit Low Voltage — Bank 1 Sensor 1', 'medium'),
+    'P0132': ('O2 Sensor Circuit High Voltage — Bank 1 Sensor 1', 'medium'),
+    'P0133': ('O2 Sensor Circuit Slow Response — Bank 1 Sensor 1', 'medium'),
+    'P0134': ('O2 Sensor Circuit No Activity — Bank 1 Sensor 1', 'medium'),
+    'P0135': ('O2 Sensor Heater Circuit Malfunction — Bank 1 Sensor 1', 'medium'),
+    'P0150': ('O2 Sensor Circuit Malfunction — Bank 2 Sensor 1', 'medium'),
+    'P0155': ('O2 Sensor Heater Circuit Malfunction — Bank 2 Sensor 1', 'medium'),
+    # Ignition
+    'P0351': ('Ignition Coil A Primary/Secondary Circuit', 'high'),
+    'P0352': ('Ignition Coil B Primary/Secondary Circuit', 'high'),
+    'P0353': ('Ignition Coil C Primary/Secondary Circuit', 'high'),
+    'P0354': ('Ignition Coil D Primary/Secondary Circuit', 'high'),
+    'P0355': ('Ignition Coil E Primary/Secondary Circuit', 'high'),
+    'P0356': ('Ignition Coil F Primary/Secondary Circuit', 'high'),
+    'P0357': ('Ignition Coil G Primary/Secondary Circuit', 'high'),
+    'P0358': ('Ignition Coil H Primary/Secondary Circuit', 'high'),
+    # Emissions
+    'P0400': ('Exhaust Gas Recirculation Flow Malfunction', 'medium'),
+    'P0401': ('EGR Flow Insufficient Detected', 'medium'),
+    'P0402': ('EGR Excessive Flow Detected', 'medium'),
+    'P0440': ('Evaporative Emission Control System Malfunction', 'low'),
+    'P0441': ('EVAP Emission Control System Incorrect Purge Flow', 'low'),
+    'P0442': ('EVAP Emission Control System Leak Detected (Small)', 'low'),
+    'P0443': ('EVAP Emission Control System Purge Valve Malfunction', 'low'),
+    'P0446': ('EVAP Emission Control System Vent Control Malfunction', 'low'),
+    'P0455': ('EVAP Emission Control System Leak Detected (Large)', 'medium'),
+    'P0456': ('EVAP Emission Control System Leak Detected (Very Small)', 'low'),
+    # Transmission
+    'P0700': ('Transmission Control System Malfunction', 'high'),
+    'P0706': ('Transmission Range Sensor Circuit Range/Performance', 'medium'),
+    'P0711': ('Transmission Fluid Temp Sensor Range/Performance', 'medium'),
+    'P0712': ('Transmission Fluid Temp Sensor Circuit Low Input', 'medium'),
+    'P0713': ('Transmission Fluid Temp Sensor Circuit High Input', 'medium'),
+    'P0715': ('Input/Turbine Speed Sensor Circuit Malfunction', 'high'),
+    'P0720': ('Output Speed Sensor Circuit Malfunction', 'high'),
+    'P0730': ('Incorrect Gear Ratio', 'high'),
+    'P0731': ('Gear 1 Incorrect Ratio', 'high'),
+    'P0732': ('Gear 2 Incorrect Ratio', 'high'),
+    'P0740': ('Torque Converter Clutch Circuit Malfunction', 'high'),
+    'P0741': ('Torque Converter Clutch Circuit Performance', 'medium'),
+    'P0748': ('Pressure Control Solenoid A Electrical', 'high'),
+    'P0753': ('Shift Solenoid A Electrical', 'high'),
+    'P0758': ('Shift Solenoid B Electrical', 'high'),
+    # GM Specific (U-Codes / Network)
+    'U0073': ('Control Module Communication Bus Off', 'high'),
+    'U0100': ('Lost Communication With ECM/PCM', 'high'),
+    'U0101': ('Lost Communication With TCM', 'high'),
+    'U0121': ('Lost Communication With Anti-Lock Brake System', 'high'),
+    'U0140': ('Lost Communication With Body Control Module', 'medium'),
+    # Charging / Battery
+    'P0562': ('System Voltage Low', 'high'),
+    'P0563': ('System Voltage High', 'high'),
+    'P0620': ('Generator Control Circuit Malfunction', 'high'),
+    # Knock / VVT
+    'P0325': ('Knock Sensor 1 Circuit Malfunction — Bank 1', 'high'),
+    'P0326': ('Knock Sensor 1 Circuit Range/Performance', 'medium'),
+    'P0327': ('Knock Sensor 1 Circuit Low Input — Bank 1', 'high'),
+    'P0328': ('Knock Sensor 1 Circuit High Input — Bank 1', 'high'),
+    'P0330': ('Knock Sensor 2 Circuit Malfunction — Bank 2', 'high'),
+    # AFM / Cylinder Deactivation (GM specific)
+    'P3400': ('Cylinder Deactivation System Bank 1', 'medium'),
+    'P3401': ('Cylinder 1 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3404': ('Cylinder 4 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3411': ('Cylinder 5 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    'P3441': ('Cylinder 7 Deactivation/Intake Valve Control Circuit Open', 'medium'),
+    # DEF / Exhaust Aftertreatment (Diesel / Duramax)
+    'P20EE': ('SCR NOx Catalyst Efficiency Below Threshold — Bank 1', 'high'),
+    'P203F': ('Reductant Level Sensor Performance', 'medium'),
+    'P204B': ('Reductant Pump Control Circuit Range/Performance', 'high'),
+    'P2201': ('NOx Sensor Circuit Range/Performance — Bank 1', 'medium'),
+}
+
+def lookup_dtc(code):
+    """Look up a DTC code — returns (description, severity) or None."""
+    code = code.upper().strip()
+    if code in DTC_DATABASE:
+        return DTC_DATABASE[code]
+    # Fuzzy: strip leading zeros in number part
+    return None
+
+def add_fault(code, description=None, severity='medium', status='active'):
+    """Add a fault code. If no description given, auto-look up from DTC_DATABASE."""
+    code = code.upper().strip()
+    if description is None:
+        lookup = DTC_DATABASE.get(code)
+        if lookup:
+            description, severity = lookup[0], lookup[1]
+        else:
+            description = f'Unknown fault — code {code}'
     fault_codes.append({
-        'code':  code,
-        'desc':  description,
-        'time':  datetime.now().strftime('%I:%M %p'),
-        'date':  datetime.now().strftime('%B %d %Y'),
+        'code':     code,
+        'desc':     description,
+        'severity': severity,
+        'status':   status,
+        'time':     datetime.now().strftime('%I:%M %p'),
+        'date':     datetime.now().strftime('%B %d %Y'),
     })
     speak(f'Fault code {code}. {description}')
 
@@ -1808,7 +2277,8 @@ def show_faults():
         return 'No active fault codes.'
     print('\n── FAULT CODES ──────────────────────────')
     for f in fault_codes:
-        print(f'  {f["code"]} — {f["desc"]} — {f["time"]}')
+        sev = f.get('severity', 'medium').upper()
+        print(f'  {f["code"]} [{sev}] — {f["desc"]} — {f["time"]}')
     print('─────────────────────────────────────────\n')
     return f'{len(fault_codes)} active codes.'
 
@@ -1998,11 +2468,46 @@ def update_gforce():
     if len(gforce_history['y']) > 60:
         gforce_history['y'].pop(0)
 
+# ── SENSOR HISTORY RING BUFFERS ────────────────────────────────────────────
+# Stores 1Hz readings per sensor — max 3600 entries (1 hour) per sensor
+_SENSOR_HISTORY_MAX = 3600
+sensor_history: dict = {
+    'rpm':          collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'speed':        collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'coolant_temp': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'oil_temp':     collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'battery_v':    collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'boost_psi':    collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'afr':          collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'throttle_pct': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'oil_pressure': collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'trans_temp':   collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+    'intake_temp':  collections.deque(maxlen=_SENSOR_HISTORY_MAX),
+}
+_sensor_history_lock = threading.Lock()
+_sensor_history_last_append = 0.0
+
+def _append_sensor_history():
+    """Append current sensor readings to history at 1Hz."""
+    global _sensor_history_last_append
+    now = time.time()
+    if now - _sensor_history_last_append < 1.0:
+        return
+    _sensor_history_last_append = now
+    ts = datetime.now().strftime('%H:%M:%S')
+    with _sensor_history_lock:
+        for sensor, deque_ in sensor_history.items():
+            val = sensor_data.get(sensor) or truck_state.get(sensor)
+            if val is not None:
+                deque_.append({'ts': ts, 'v': val, 't': now})
+
 # ── LIVE DATA LOOP ────────────────────────
 def live_data_loop():
     while True:
         update_sensors_from_truck()
         update_gforce()
+        update_trip_stats()
+        _append_sensor_history()
         time.sleep(0.5)
 
 # ══════════════════════════════════════════
@@ -2545,6 +3050,65 @@ def check_heat_soak():
         heat_soak['heat_soak_risk']   = 'low'
         heat_soak['cool_down_needed'] = False
         return f'No heat soak. Intake {intake}F. Ready to run.'
+
+# ══════════════════════════════════════════
+# TRIP STATISTICS TRACKER
+# ══════════════════════════════════════════
+trip_stats = {
+    'distance_miles':  0.0,
+    'fuel_used_gal':   0.0,
+    'avg_mpg':         0.0,
+    'instant_mpg':     0.0,
+    'start_time':      None,
+    'last_update':     None,
+    '_last_speed':     0.0,
+}
+
+def update_trip_stats():
+    """Call approximately every second while engine is running to accumulate trip data."""
+    now = time.time()
+    rpm   = truck_state.get('rpm', 0)
+    speed = truck_state.get('speed', 0)
+
+    if rpm < 400:
+        return  # engine off — don't accumulate
+
+    if trip_stats['start_time'] is None:
+        trip_stats['start_time'] = now
+
+    last = trip_stats.get('last_update') or now
+    dt_hours = (now - last) / 3600.0  # elapsed time in hours
+
+    # Distance: speed (mph) * time (hours)
+    dist_delta = speed * dt_hours
+    trip_stats['distance_miles'] += dist_delta
+
+    # Fuel rate estimate: base idle ~0.3 gph, scales with rpm/speed
+    # Rough approximation: GPH = 0.3 + (rpm/750 - 1) * 0.8 + speed * 0.008
+    gph = max(0.2, 0.3 + (rpm / 750 - 1) * 0.8 + speed * 0.008)
+    fuel_delta = gph * dt_hours
+    trip_stats['fuel_used_gal'] += fuel_delta
+
+    # Instant MPG: speed / GPH (if moving and using fuel)
+    if speed > 5 and gph > 0:
+        trip_stats['instant_mpg'] = min(99.9, speed / gph)
+    elif speed <= 5:
+        trip_stats['instant_mpg'] = 0.0
+
+    # Session avg MPG
+    if trip_stats['fuel_used_gal'] > 0.01:
+        trip_stats['avg_mpg'] = trip_stats['distance_miles'] / trip_stats['fuel_used_gal']
+
+    trip_stats['last_update'] = now
+
+def reset_trip_stats():
+    trip_stats['distance_miles'] = 0.0
+    trip_stats['fuel_used_gal']  = 0.0
+    trip_stats['avg_mpg']        = 0.0
+    trip_stats['instant_mpg']    = 0.0
+    trip_stats['start_time']     = None
+    trip_stats['last_update']    = None
+    return 'Trip stats reset.'
 
 # ══════════════════════════════════════════
 # FUEL LEVEL TRACKER
@@ -3409,7 +3973,7 @@ def get_detailed_weather():
         if w['freezing']: result += ', below freezing'
         return result
     except:
-        return f'{weather["temp"]}F {weather["condition"]}'
+        return f'{weather["temp"]}F {weather.get("desc") or weather["condition"]}'
 
 
 # ══════════════════════════════════════════
@@ -3549,46 +4113,90 @@ def drive_summary_ai():
 # DRIVE SCORE / REPORT CARD
 # ══════════════════════════════════════════
 def calculate_drive_score():
+    """Calculate comprehensive vehicle health/drive score (0-100) with letter grade."""
     score   = 100
     details = []
 
-    # Deductions
+    # ── Battery ──────────────────────────────────────────────
+    bat = truck_state.get('battery_main', 13.8)
+    if bat < 11.5:
+        score -= 25
+        details.append(f'-25 critical battery ({bat}V)')
+    elif bat < 12.0:
+        score -= 15
+        details.append(f'-15 low battery ({bat}V)')
+    elif bat < 12.5:
+        score -= 8
+        details.append(f'-8 weak battery ({bat}V)')
+
+    # ── Active DTC Codes — up to 3 count (-15 each) ──────────
+    active_dtcs = [f for f in fault_codes if f.get('status', 'active') == 'active']
+    dtc_penalty = min(3, len(active_dtcs)) * 15
+    if dtc_penalty > 0:
+        score -= dtc_penalty
+        details.append(f'-{dtc_penalty} active DTCs ({len(active_dtcs)} codes)')
+
+    # ── Coolant Temperature ───────────────────────────────────
+    cool = truck_state.get('coolant_temp', 190)
+    if cool > 240:
+        score -= 20
+        details.append(f'-20 overheating coolant ({cool}°F)')
+    elif cool > 220:
+        score -= 10
+        details.append(f'-10 high coolant temp ({cool}°F)')
+    elif cool > 210:
+        score -= 4
+        details.append(f'-4 elevated coolant ({cool}°F)')
+
+    # ── Oil Temperature ───────────────────────────────────────
+    oil = truck_state.get('oil_temp', 195)
+    if oil > 250:
+        score -= 15
+        details.append(f'-15 overheated oil ({oil}°F)')
+    elif oil > 230:
+        score -= 8
+        details.append(f'-8 high oil temp ({oil}°F)')
+
+    # ── Oil Life ──────────────────────────────────────────────
+    oil_life = truck_state.get('oil_life', 100)
+    if oil_life < 10:
+        score -= 15
+        details.append(f'-15 critical oil life ({oil_life}%)')
+    elif oil_life < 20:
+        score -= 8
+        details.append(f'-8 low oil life ({oil_life}%)')
+    elif oil_life < 35:
+        score -= 3
+        details.append(f'-3 oil change soon ({oil_life}%)')
+
+    # ── Knock Events ──────────────────────────────────────────
     knock = sensor_data.get('knock_count', 0)
     if knock > 0:
         deduct = min(20, knock * 4)
         score -= deduct
         details.append(f'-{deduct} knock events')
 
-    oil = truck_state['oil_temp']
-    if oil > 230:
-        score -= 15
-        details.append('-15 overheated oil')
-    elif oil > 220:
-        score -= 5
-        details.append('-5 high oil temp')
-
-    eth = truck_state['ethanol']
-    boost = truck_state['boost']
+    # ── Ethanol / Boost Safety ────────────────────────────────
+    eth   = truck_state.get('ethanol', 0)
+    boost = truck_state.get('boost', 0)
     if eth < 40 and boost > 8:
         score -= 20
         details.append('-20 low ethanol under boost')
 
-    bat = truck_state['battery_main']
-    if bat < 12.0:
-        score -= 10
-        details.append('-10 low battery')
-
-    # Bonuses
+    # ── Bonuses ───────────────────────────────────────────────
     if eth > 75:
         score += 5
-        details.append('+5 good ethanol')
+        details.append('+5 good ethanol mix')
     if knock == 0 and boost > 5:
         score += 5
-        details.append('+5 clean run under boost')
+        details.append('+5 clean boost run')
+    if bat >= 13.5 and len(active_dtcs) == 0:
+        score += 3
+        details.append('+3 all systems nominal')
 
     score = max(0, min(100, score))
     grade = 'A' if score >= 90 else 'B' if score >= 80 else 'C' if score >= 70 else 'D' if score >= 60 else 'F'
-    detail_str = ' '.join(details) if details else 'No issues found.'
+    detail_str = ' | '.join(details) if details else 'No issues found.'
     return score, grade, detail_str
 
 def show_drive_score():
@@ -3870,7 +4478,7 @@ def check_tow_detection():
 # OFFLINE AI FALLBACK IMPROVEMENTS
 # ══════════════════════════════════════════
 SMART_FALLBACKS = {
-    'weather':     lambda: f'{weather["temp"]}F and {weather["condition"]} in {location_data.get("location_name") or "your area"}.',
+    'weather':     lambda: f'{weather["temp"]}F and {weather.get("desc") or weather["condition"]} in {location_data.get("location_name") or "your area"}.',
     'rpm':         lambda: f'RPM is at {truck_state["rpm"]}.',
     'boost':       lambda: (f'Boost is {truck_state["boost"]} PSI.' if get_build_caps()['supercharged'] else 'No forced induction. Stock six liter, naturally aspirated.'),
     'oil':         lambda: f'Oil temp is {truck_state["oil_temp"]}F.',
@@ -4131,7 +4739,7 @@ def discord_vitals():
         f'**Battery** {truck_state["battery_main"]}V | '
         f'**E85** {truck_state["ethanol"]}% | '
         f'**Exhaust** {truck_state["exhaust"]}%\n'
-        f'**Weather** {weather["temp"]}F {weather["condition"]} | '
+        f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]} | '
         f'**Score** {calculate_drive_score()[0]}/100'
     )
     discord_send(
@@ -4371,7 +4979,20 @@ Archer says:"""
 
         try:
             response = None
-            if _IS_PI:
+            GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
+            if GEMINI_KEY:
+                try:
+                    payload = json.dumps({'model': 'gemini-2.0-flash-lite',
+                                          'messages': [{'role': 'user', 'content': prompt}],
+                                          'max_tokens': 80, 'temperature': 0.8}).encode()
+                    req = urllib.request.Request(
+                        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                        data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                except Exception:
+                    pass
+            if not response and _IS_PI:
                 try:
                     payload = json.dumps({'model': 'llama3.2', 'prompt': prompt, 'stream': False}).encode()
                     req = urllib.request.Request('http://localhost:11434/api/generate', data=payload,
@@ -4947,14 +5568,65 @@ def handle_command(text):
     if 'air horn' in t:
         arduino_send("HORN:AIR"); return "Air horn."
 
+    # ── TRUCK-SPECIFIC STATUS QUERIES ────
+    if any(x in t for x in ['oil life', 'oil percent', 'how much oil life']):
+        oil_life = truck_state.get('oil_life', 100)
+        if oil_life < 15:
+            return f"Oil life is at {oil_life} percent. Change it soon — you are pushing it."
+        elif oil_life < 30:
+            return f"Oil life at {oil_life} percent. Start thinking about a change."
+        return f"Oil life is at {oil_life} percent. Still good."
+
+    if any(x in t for x in ['tire pressure', 'tires', 'psi', 'tpms']) and not any(x in t for x in ['set','change']):
+        fl = tpms.get('fl', {}).get('psi', 0)
+        fr = tpms.get('fr', {}).get('psi', 0)
+        rl = tpms.get('rl', {}).get('psi', 0)
+        rr = tpms.get('rr', {}).get('psi', 0)
+        low = [name for name, psi in [('front left', fl), ('front right', fr), ('rear left', rl), ('rear right', rr)] if psi > 0 and psi < 28]
+        if low:
+            return f"Heads up — {', '.join(low)} is low. Check it when you can."
+        if any(p > 0 for p in [fl, fr, rl, rr]):
+            return f"Tire pressure looks good. FL {fl} FR {fr} RL {rl} RR {rr} PSI."
+        return "TPMS data not available right now."
+
+    if any(x in t for x in ['transmission temp', 'trans temp', 'transmission temperature']):
+        trans = truck_state.get('trans_temp', sensor_data.get('trans_temp', 0))
+        if trans > 220:
+            return f"Transmission is hot — {trans} degrees. Ease up and let it cool."
+        elif trans > 195:
+            return f"Trans temp is elevated at {trans} degrees. Keep an eye on it."
+        elif trans > 0:
+            return f"Transmission temperature is {trans} degrees. Normal range."
+        return "Transmission temperature data not available."
+
+    if any(x in t for x in ['def level', 'diesel exhaust fluid', 'def fluid', 'def tank']):
+        def_level = truck_state.get('def_level', None)
+        if def_level is None:
+            return "DEF level sensor not available on this engine."
+        if def_level < 10:
+            return f"DEF is critically low at {def_level} percent. Fill it before the next start."
+        elif def_level < 25:
+            return f"DEF level at {def_level} percent. Plan a fill-up soon."
+        return f"DEF level is at {def_level} percent."
+
+    if 'tpms' in t and any(x in t for x in ['check','status','all','pressures','read']):
+        fl = tpms.get('fl', {}).get('psi', 0)
+        fr = tpms.get('fr', {}).get('psi', 0)
+        rl = tpms.get('rl', {}).get('psi', 0)
+        rr = tpms.get('rr', {}).get('psi', 0)
+        return f"TPMS readings — Front left {fl}, front right {fr}, rear left {rl}, rear right {rr} PSI."
+
     # ── WEATHER ──────────────────────────
     if any(x in t for x in ['weather','how cold','how hot','raining','outside temp','temperature outside']):
         data = get_weather(); weather.update(data); temp = weather['temp']; condition = weather['condition']
+        feels = weather.get('feels_like', temp)
         if weather['snowing']:  return f"{temp}F and snowing in Salem. 4WD is ready. TC stays on."
         if weather['raining']:  return f"{temp}F and raining. TC locked on. Road will be slick."
         if weather['freezing']: return f"{temp}F. Everything is tighter today. Give me a minute to warm up."
         if temp > 90:           return f"{temp}F outside. Heat is going to build faster today."
-        if temp < 50:           return f"{temp}F. Cold start territory. Oil needs a minute."
+        if temp < 50:
+            feel_str = f" Feels like {feels}" if abs(feels - temp) > 3 else ""
+            return f"{temp}F. Cold start territory. Oil needs a minute.{feel_str}"
         return f"{temp}F in Salem. {condition.title()}. Good day to be out."
 
     # ── ROAD MEMORY ──────────────────────
@@ -6852,7 +7524,7 @@ def build_update_route():
         elif k in build_specs:
             build_specs[k] = v
     save_state()
-    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power()})
+    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power_from_parts()})
 
 def _resolve_location_from_nws(lat, lon):
     print(f'[GPS] resolving location for {lat:.4f},{lon:.4f}')
@@ -6931,6 +7603,7 @@ def build_part_add():
         'notes':       data.get('notes', ''),
     }
     build_tracker['parts'].append(part)
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
@@ -6945,6 +7618,7 @@ def build_part_update():
     for k in ('status', 'hp_gain', 'tq_gain', 'cost', 'notes', 'name', 'part_number'):
         if k in data:
             part[k] = float(data[k]) if k in ('hp_gain','tq_gain','cost') else data[k]
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
@@ -6953,6 +7627,7 @@ def build_part_update():
 def build_part_remove():
     pid = (request.get_json() or {}).get('id')
     build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
+    _recalc_build_spent()
     save_state()
     return jsonify({'ok': True, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
@@ -7071,7 +7746,8 @@ def terminal_page():
 <title>Archer Terminal</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+html,body{height:100%}
+body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;display:flex;flex-direction:column;overflow:hidden}
 #header{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:8px 12px;display:flex;align-items:center;gap:12px;flex-shrink:0}
 #header-title{font-size:11px;letter-spacing:3px;color:#cc0000;flex:1}
 .tab-btn{background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:10px;letter-spacing:2px;padding:4px 10px;border-radius:3px;cursor:pointer;transition:all 0.2s}
@@ -7079,9 +7755,9 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 #pi-status{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
 .pi-online{background:#001a00;color:#00ff00;border:1px solid #00ff00}
 .pi-offline{background:#1a0000;color:#cc0000;border:1px solid #330000}
-#terminal-container{flex:1;display:flex;flex-direction:column;overflow:hidden}
-#output{flex:1;padding:10px 12px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-#log-output{flex:1;padding:10px 12px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
+#terminal-container{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+#log-output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
 .log-spotify{color:#1db954}.log-archer{color:#cc4444}.log-display{color:#cc8800}
 .log-auth{color:#4488ff}.log-voice{color:#44cccc}.log-arduino{color:#ff8800}
 .log-you{color:#ffffff}
@@ -7091,11 +7767,11 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
 #log-toolbar{display:none;padding:6px 8px;border-bottom:1px solid #1a1a1a;background:#050505;flex-shrink:0;gap:8px;align-items:center}
 .log-dot{width:8px;height:8px;border-radius:50%;background:#00ff00;animation:blink 1.5s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
-#input-row{display:flex;padding:8px;border-top:1px solid #1a1a1a;background:#050505;flex-shrink:0}
+#input-row{position:fixed;bottom:0;left:0;right:0;display:flex;padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));border-top:2px solid #1a1a1a;background:#050505;align-items:center;z-index:100}
 .prompt-label{color:#cc0000;padding:6px 8px;font-size:13px;flex-shrink:0}
-#cmd{flex:1;background:#000;color:#ff3333;border:1px solid #1a1a1a;border-radius:4px;padding:6px 8px;font-family:'Courier New',monospace;font-size:12px;outline:none;caret-color:#ff3333}
-#cmd:focus{border-color:#cc0000}
-#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:10px;letter-spacing:1px;padding:6px 14px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0}
+#cmd{flex:1;background:#111;color:#ff3333;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Courier New',monospace;font-size:16px;outline:none;caret-color:#ff3333;-webkit-user-select:text;user-select:text;touch-action:manipulation}
+#cmd:focus{border-color:#cc0000;background:#0d0000}
+#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:11px;letter-spacing:1px;padding:8px 16px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0;touch-action:manipulation;min-width:52px;min-height:40px}
 #send-btn:active{background:#330000}
 .line-prompt{color:#cc0000}
 .line-out{color:#ff6666}
@@ -7115,15 +7791,15 @@ body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;height
   <span id="pi-status" class="pi-offline">PI OFFLINE</span>
 </div>
 <div id="terminal-container">
-  <div id="server-terminal" style="display:flex;flex-direction:column;height:100%">
+  <div id="server-terminal" style="display:flex;flex-direction:column;flex:1;min-height:0">
     <div id="output"></div>
     <div id="input-row">
       <span class="prompt-label">&#9654;</span>
-      <input id="cmd" type="text" placeholder="enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input id="cmd" type="text" placeholder="enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text"/>
       <button id="send-btn" onclick="sendCmd()">RUN</button>
     </div>
   </div>
-  <div id="logs-panel" style="display:none;flex-direction:column;height:100%">
+  <div id="logs-panel" style="display:none;flex-direction:column;flex:1;min-height:0">
     <div id="log-toolbar">
       <div class="log-dot"></div>
       <span style="font-size:9px;color:#444;letter-spacing:2px">LIVE</span>
@@ -7288,6 +7964,18 @@ append('', 'info');
 // poll Pi status every 15s
 checkPiStatus();
 setInterval(checkPiStatus, 15000);
+
+// Keep body height = visual viewport so input stays above keyboard on mobile
+function syncViewport() {
+  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  document.body.style.height = h + 'px';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewport);
+  window.visualViewport.addEventListener('scroll', syncViewport);
+}
+window.addEventListener('resize', syncViewport);
+syncViewport();
 </script>
 </body>
 </html>"""
@@ -7320,31 +8008,43 @@ def terminal_exec():
     if not cmd:
         return jsonify({'stdout': '', 'stderr': ''})
     if cmd.strip() in ('/help', 'help'):
+        maint_state = 'ON' if system_health['maintenance'] else 'OFF'
         help_text = (
             "ARCHER SERVER COMMANDS\n"
             "──────────────────────────────────────────\n"
-            "System\n"
+            "Maintenance\n"
+            f"  maintenance on           — redirect all visitors to maintenance page (currently {maint_state})\n"
+            "  maintenance off          — restore normal access\n"
+            "  maintenance status       — show current state\n"
+            "\nSystem\n"
             "  ps aux | grep archer     — check if archer.py is running\n"
             "  cat /tmp/ollama.log      — view Ollama logs\n"
             "  free -h                  — memory usage\n"
             "  df -h                    — disk usage\n"
             "  uptime                   — system load\n"
-            "\nArcher State  (read-only Python snippets)\n"
-            "  python3 -c \"import json,urllib.request; print('ok')\"\n"
+            "\nArcher State\n"
+            "  curl -s http://localhost:7860/system_health | python3 -m json.tool\n"
+            "  curl -s http://localhost:7860/display_data  | python3 -m json.tool\n"
+            "  curl -s http://localhost:7860/build/part/search?q=engine | python3 -m json.tool\n"
             "\nLogs\n"
-            "  /terminal/log_stream     — live log SSE feed (this panel)\n"
-            "\nNetwork\n"
-            "  curl -s http://localhost:7860/live | python3 -m json.tool\n"
-            "  curl -s http://localhost:7860/health\n"
-            "\nGPS / Location\n"
-            "  curl -X POST http://localhost:7860/location/update \\\n"
-            "    -H 'Content-Type: application/json' \\\n"
-            "    -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
-            "\nBuild\n"
-            "  curl http://localhost:7860/build/parts\n"
+            "  (Logs tab above streams live server output)\n"
+            "\nGPS / Location  (single-line, paste as-is)\n"
+            "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
             "\nType any shell command to run it on the server.\n"
         )
         return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
+
+    # Built-in: maintenance mode toggle
+    cmd_lower = cmd.strip().lower()
+    if cmd_lower in ('maintenance on', 'maintenance mode on', 'maint on'):
+        system_health['maintenance'] = True
+        return jsonify({'stdout': 'MAINTENANCE MODE ON — all visitors redirected to maintenance page.', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('maintenance off', 'maintenance mode off', 'maint off'):
+        system_health['maintenance'] = False
+        return jsonify({'stdout': 'MAINTENANCE MODE OFF — normal access restored.', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('maintenance status', 'maint status', 'maintenance'):
+        state = 'ON' if system_health['maintenance'] else 'OFF'
+        return jsonify({'stdout': f'Maintenance mode: {state}', 'stderr': '', 'returncode': 0})
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
@@ -7423,6 +8123,9 @@ system_health = {
     'last_obd_update': time.time(),
     'failures':        [],
     'start_time':      time.time(),
+    'boot_complete':   False,
+    'maintenance':     False,   # toggled via terminal: "maintenance on/off"
+    'boot_tokens':     {},      # one-time tokens: token -> expiry (unix time)
 }
 
 def log_system_failure(component, reason):
@@ -7543,6 +8246,152 @@ def system_health_api():
         'failures': system_health['failures'][-10:],
     })
 
+@display_app.route('/health')
+def health_endpoint():
+    """Comprehensive system health snapshot consumed by archer_init.html fetchVersionInfo().
+    Returns: build_ts, git_hash, uptime_seconds, obd_status, gps_fix,
+             weather_age_s, active_dtc_count, memory_mb, overall_status.
+    No auth required (boot page uses it before session is established).
+    """
+    import resource as _resource
+    now = time.time()
+    uptime_s = round(now - system_health['start_time'], 1)
+
+    # OBD status
+    if obd2_display.get('connected'):
+        obd_status = 'live'
+    elif beamng_state.get('connected'):
+        obd_status = 'beamng'
+    elif sim_random_enabled:
+        obd_status = 'sim'
+    else:
+        obd_status = 'offline'
+
+    # GPS fix quality
+    gps_lat = location_data.get('lat')
+    gps_lon = location_data.get('lon')
+    gps_fix = bool(gps_lat and gps_lon)
+
+    # Last OBD update age
+    last_obd_age = round(now - system_health.get('last_obd_update', now), 1)
+
+    # Weather data age
+    wx_last = weather.get('last_update', 0)
+    weather_age_s = round(now - wx_last, 0) if wx_last else None
+
+    # Active DTC count
+    active_dtc_count = sum(1 for f in fault_codes if f.get('status', 'active') == 'active')
+
+    # Process memory (RSS) in MB — graceful fallback
+    try:
+        mem_mb = round(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except Exception:
+        mem_mb = None
+
+    # Build metadata from env / git
+    build_ts  = os.environ.get('ARCHER_BUILD_TS', '')
+    git_hash  = os.environ.get('ARCHER_GIT_HASH', '')
+    if not git_hash:
+        try:
+            import subprocess as _sp
+            git_hash = _sp.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                stderr=_sp.DEVNULL, timeout=2
+            ).decode().strip()
+        except Exception:
+            git_hash = 'unknown'
+
+    # Overall status determination
+    issues = get_system_status()
+    if any(f.get('severity') == 'critical' for f in fault_codes if f.get('status') == 'active'):
+        overall = 'critical'
+    elif issues or active_dtc_count > 0:
+        overall = 'degraded'
+    else:
+        overall = 'ok'
+
+    return jsonify({
+        'overall':         overall,
+        'uptime_seconds':  uptime_s,
+        'obd_status':      obd_status,
+        'last_obd_age_s':  last_obd_age,
+        'gps_fix':         gps_fix,
+        'gps_lat':         gps_lat,
+        'gps_lon':         gps_lon,
+        'weather_age_s':   weather_age_s,
+        'weather_temp':    weather.get('temp'),
+        'weather_cond':    weather.get('condition'),
+        'active_dtc_count': active_dtc_count,
+        'memory_mb':       mem_mb,
+        'build_ts':        build_ts,
+        'git_hash':        git_hash,
+        'issues':          issues,
+        'maintenance':     system_health.get('maintenance', False),
+    })
+
+
+@display_app.route('/logs')
+def logs_endpoint():
+    """Return last 50 structured log entries for the Tier 1 debug panel."""
+    from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    with _archer_log_lock:
+        entries = list(_archer_log_buffer)[-50:]
+    return jsonify({'logs': entries, 'total': len(_archer_log_buffer)})
+
+@display_app.route('/sensor_history')
+def sensor_history_endpoint():
+    """Return historical data for a sensor. ?sensor=rpm&minutes=60"""
+    from flask import request as freq
+    sensor  = freq.args.get('sensor', 'rpm').lower()
+    minutes = min(60, max(1, int(freq.args.get('minutes', 10))))
+    cutoff  = time.time() - (minutes * 60)
+    if sensor not in sensor_history:
+        return jsonify({'error': f'Unknown sensor: {sensor}', 'available': list(sensor_history.keys())}), 400
+    with _sensor_history_lock:
+        entries = [{'timestamp': e['ts'], 'value': e['v']}
+                   for e in sensor_history[sensor] if e.get('t', 0) >= cutoff]
+    return jsonify({'sensor': sensor, 'minutes': minutes, 'data': entries, 'count': len(entries)})
+
+@display_app.route('/trip_stats')
+def trip_stats_endpoint():
+    """Return comprehensive trip statistics since engine start."""
+    rpm     = truck_state.get('rpm', 0)
+    start   = trip_stats.get('start_time')
+    elapsed = (time.time() - start) / 60.0 if start else 0.0  # minutes
+    avg_spd = (trip_stats['distance_miles'] / (elapsed / 60.0)) if elapsed > 0 else 0
+
+    # Peak values from awareness
+    peak_rpm   = awareness.get('peak_rpm', 0)
+    peak_speed = truck_state.get('speed', 0)
+
+    # Count high-RPM events (stored in spike_history)
+    high_rpm_events = sum(1 for r in spike_history.get('rpm', []) if r > 4500)
+
+    # Hard braking events from awareness
+    hard_brake = awareness.get('hard_brake_count', 0)
+
+    score, grade, _ = calculate_drive_score()
+
+    return jsonify({
+        'trip_distance_miles':  round(trip_stats['distance_miles'], 2),
+        'trip_time_minutes':    round(elapsed, 1),
+        'avg_speed_mph':        round(avg_spd, 1),
+        'max_speed_mph':        truck_state.get('peak_speed', peak_speed),
+        'avg_rpm':              round(sum(spike_history.get('rpm', [0])) / max(1, len(spike_history.get('rpm', [1]))), 0),
+        'peak_rpm':             peak_rpm,
+        'fuel_used_gallons':    round(trip_stats['fuel_used_gal'], 3),
+        'avg_mpg':              round(trip_stats['avg_mpg'], 1),
+        'instant_mpg':          round(trip_stats['instant_mpg'], 1),
+        'hard_braking_events':  hard_brake,
+        'high_rpm_events':      high_rpm_events,
+        'engine_running':       rpm > 400,
+        'drive_score':          score,
+        'drive_grade':          grade,
+    })
+
 # ── MAC ADDRESS AUTH SYSTEM ─────────────────────────────
 import json as _json_mac
 
@@ -7557,6 +8406,24 @@ DEFAULT_WHITELIST = {
 # One-time code system — generated per person
 # Format: 'CODE123': {'tier': 2, 'name': 'Jake', 'used': False, 'expires': timestamp}
 one_time_codes = {}
+
+# ── MASTER SIGN-IN CODE ───────────────────────────────────────────────────────
+# Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
+# devices are registered so he can always get back in.
+import random as _rand_master
+_master_code = os.environ.get('ARCHER_MASTER_CODE', '250022')
+_master_code_enabled = True   # toggled from Tier 1 dashboard
+
+def _check_master_auto_enable():
+    """Keep master code enabled if no Tier 1 devices are registered."""
+    global _master_code_enabled
+    try:
+        wl = load_mac_whitelist()
+        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
+        if not has_tier1:
+            _master_code_enabled = True
+    except Exception:
+        pass
 
 def generate_one_time_code(name, tier):
     """Generate a 6-digit one-time registration code."""
@@ -7686,8 +8553,10 @@ def index():
         elif tier == 4:
             return get_tier_html(4, name=name)
 
-    # 4. Unknown — registration page
-    return registration_page(mac)
+    # 4. Unknown — show fan page (sign in from there)
+    _check_master_auto_enable()
+    from flask import redirect as _redir
+    return _redir('/fans')
 
 def registration_page(mac=None):
     """Show registration page for unknown devices."""
@@ -7695,97 +8564,211 @@ def registration_page(mac=None):
     return f"""<!DOCTYPE html>
 <html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Archer — Register Device</title>
+<title>Archer — Sign In</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}}
-.wrap{{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:16px}}
-.title{{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:6px;color:#cc0000}}
-.sub{{font-size:11px;color:#444;letter-spacing:2px;text-align:center}}
-.mac{{font-size:10px;color:#333;letter-spacing:1px;background:#0a0a0a;border:1px solid #1a1a1a;padding:6px 12px;border-radius:4px}}
-.card{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:10px;padding:20px;width:100%;display:flex;flex-direction:column;gap:12px}}
-.card-title{{font-size:10px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px}}
-.tier-btn{{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all 0.2s;text-align:left;width:100%}}
-.tier-btn:hover{{border-color:#cc0000}}
-.tier-name{{font-size:14px;color:#fff;letter-spacing:1px}}
-.tier-sub{{font-size:10px;color:#444;margin-top:2px}}
-.tier-arrow{{color:#333;font-size:18px}}
-.code-section{{display:none;flex-direction:column;gap:10px}}
-.code-section.on{{display:flex}}
-.code-label{{font-size:10px;color:#555;letter-spacing:2px}}
-.code-input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:12px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:14px;letter-spacing:3px;outline:none;width:100%;text-align:center}}
-.code-input:focus{{border-color:#cc0000}}
-.submit-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%;transition:all 0.15s}}
-.submit-btn:active{{background:#aa0000}}
-.error{{color:#cc0000;font-size:11px;letter-spacing:1px;text-align:center;display:none}}
-.error.on{{display:block}}
-.fan-note{{font-size:10px;color:#333;letter-spacing:1px;text-align:center;margin-top:4px}}
-.fan-link{{color:#555;text-decoration:none;border-bottom:1px solid #333;padding-bottom:1px}}
+html,body{{height:100%;overflow:hidden}}
+body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;position:relative}}
+/* Animated background canvas */
+#bg-canvas{{position:fixed;inset:0;z-index:0;pointer-events:none}}
+/* Radial glow behind card */
+.bg-glow{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;height:400px;
+  background:radial-gradient(ellipse at center,rgba(180,0,0,0.08) 0%,transparent 70%);
+  border-radius:50%;animation:glowpulse 4s ease-in-out infinite;pointer-events:none;z-index:0}}
+@keyframes glowpulse{{0%,100%{{opacity:0.6;transform:translate(-50%,-50%) scale(1)}}50%{{opacity:1;transform:translate(-50%,-50%) scale(1.15)}}}}
+.wrap{{width:100%;max-width:340px;display:flex;flex-direction:column;align-items:center;gap:20px;position:relative;z-index:1}}
+.logo{{font-family:'Bebas Neue',sans-serif;font-size:56px;letter-spacing:6px;color:#cc0000;line-height:1;text-shadow:0 0 30px rgba(204,0,0,0.4)}}
+.sub{{font-size:10px;color:#555;letter-spacing:3px;text-align:center}}
+.card{{background:rgba(8,8,8,0.92);border:1px solid #1a1a1a;border-top:2px solid #cc0000;border-radius:14px;padding:28px 24px;width:100%;display:flex;flex-direction:column;align-items:center;gap:16px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}}
+.card-title{{font-family:'Bebas Neue',sans-serif;font-size:18px;color:#888;letter-spacing:3px;text-align:center}}
+.card-hint{{font-size:11px;color:#555;letter-spacing:0.5px;text-align:center;line-height:1.7}}
+/* Large phone-friendly boxes */
+@media(max-width:420px){{
+  .code-box{{width:46px;height:62px;font-size:32px}}
+  .card{{padding:24px 16px}}
+}}
+/* ── CODE BOXES ─────────────────────────── */
+.code-boxes{{display:flex;gap:10px;justify-content:center;width:100%}}
+.code-box{{width:44px;height:56px;background:#0d0d0d;border:1px solid #222;border-radius:8px;
+  color:#fff;font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:0;outline:none;
+  text-align:center;transition:border-color 0.2s,box-shadow 0.2s,transform 0.15s;
+  caret-color:transparent;-webkit-appearance:none}}
+.code-box:focus{{border-color:#cc0000;box-shadow:0 0 0 2px rgba(204,0,0,0.2)}}
+.code-box.filled{{border-color:#552200;background:#150500}}
+/* Shake animation for wrong code */
+@keyframes codeshake{{0%,100%{{transform:translateX(0)}}15%{{transform:translateX(-8px)}}30%{{transform:translateX(8px)}}45%{{transform:translateX(-6px)}}60%{{transform:translateX(6px)}}75%{{transform:translateX(-3px)}}90%{{transform:translateX(3px)}}}}
+.code-boxes.shake .code-box{{animation:codeshake 0.5s ease-out;border-color:#cc0000}}
+/* Success animation */
+@keyframes codesuccess{{0%{{transform:scale(1)}}40%{{transform:scale(1.12)}}100%{{transform:scale(1)}}}}
+.code-boxes.success .code-box{{animation:codesuccess 0.4s ease-out;border-color:#00cc44;background:#001a00;color:#00cc44}}
+.submit-btn{{background:#cc0000;border:none;border-radius:8px;padding:14px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;cursor:pointer;width:100%;transition:background 0.15s,transform 0.1s}}
+.submit-btn:hover{{background:#dd0000}}
+.submit-btn:active{{background:#aa0000;transform:scale(0.98)}}
+.submit-btn:disabled{{background:#440000;cursor:default;opacity:0.6}}
+.error{{color:#cc0000;font-size:10px;letter-spacing:1px;text-align:center;height:14px;opacity:0;transition:opacity 0.25s}}
+.error.on{{opacity:1}}
+.fan-note{{font-size:10px;color:#444;letter-spacing:1px;text-align:center}}
+.fan-link{{color:#666;text-decoration:none;border-bottom:1px solid #333;padding-bottom:1px;transition:color 0.2s}}
+.fan-link:hover{{color:#aaa}}
 </style>
 </head><body>
+<canvas id="bg-canvas"></canvas>
+<div class="bg-glow"></div>
 <div class="wrap">
-  <div class="title">ARCHER</div>
+  <div class="logo">ARCHER</div>
   <div class="sub">2006 GMC SIERRA 2500HD</div>
-  <div class="mac">DEVICE: {mac_display}</div>
 
   <div class="card">
-    <div class="card-title">SELECT YOUR ACCESS LEVEL</div>
-
-    <button class="tier-btn" onclick="selectTier(2)">
-      <div><div class="tier-name">PASSENGER</div><div class="tier-sub">Music, climate, comfort controls</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <button class="tier-btn" onclick="selectTier(3)">
-      <div><div class="tier-name">FAMILY</div><div class="tier-sub">Read-only status view</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <button class="tier-btn" onclick="selectTier(4)">
-      <div><div class="tier-name">VALET</div><div class="tier-sub">Limited access, monitored</div></div>
-      <div class="tier-arrow">›</div>
-    </button>
-
-    <div class="code-section" id="code-section">
-      <div class="code-label">ENTER ACCESS CODE</div>
-      <input class="code-input" id="code-input" type="password" placeholder="••••••••" maxlength="20">
-      <div class="error" id="error-msg">Incorrect code. Try again.</div>
-      <button class="submit-btn" onclick="submitCode()">REGISTER DEVICE</button>
+    <div class="card-title">ENTER ACCESS CODE</div>
+    <div class="card-hint">Ayden will give you a 6-digit code.</div>
+    <div class="code-boxes" id="code-boxes">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="one-time-code" id="cb0">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb1">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb2">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb3">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb4">
+      <input class="code-box" type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" id="cb5">
     </div>
+    <div class="error" id="error-msg">Incorrect code — try again</div>
+    <button class="submit-btn" id="submit-btn" onclick="submitCode()">SIGN IN</button>
   </div>
 
   <div class="fan-note">Just here for the show? <a href="/fans" class="fan-link">Fan page →</a></div>
 </div>
 
 <script>
-let _selectedTier = 0;
-function selectTier(tier) {{
-  _selectedTier = tier;
-  document.getElementById('code-section').classList.add('on');
-  document.getElementById('code-input').focus();
+// ── ANIMATED BACKGROUND ───────────────────
+(function() {{
+  const canvas = document.getElementById('bg-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+  function resize() {{
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }}
+  resize();
+  window.addEventListener('resize', resize);
+  // Sparse floating particles (dim red)
+  for (let i = 0; i < 30; i++) {{
+    particles.push({{
+      x: Math.random() * 1000,
+      y: Math.random() * 1000,
+      vy: -0.1 - Math.random() * 0.2,
+      vx: (Math.random() - 0.5) * 0.08,
+      r:  0.5 + Math.random() * 1.5,
+      a:  Math.random() * 0.3
+    }});
+  }}
+  function frame() {{
+    ctx.clearRect(0, 0, W, H);
+    particles.forEach(p => {{
+      p.x = (p.x + p.vx * W / 1000) % W;
+      p.y = (p.y + p.vy * H / 1000 + H) % H;
+      ctx.beginPath();
+      ctx.arc(p.x / 1000 * W, p.y / 1000 * H, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(180,0,0,${{p.a.toFixed(2)}})`;
+      ctx.fill();
+    }});
+    requestAnimationFrame(frame);
+  }}
+  frame();
+}})();
+
+// ── 6-BOX CODE INPUT ──────────────────────
+const boxes = Array.from({{length:6}}, (_,i) => document.getElementById('cb'+i));
+const boxWrap = document.getElementById('code-boxes');
+const errMsg  = document.getElementById('error-msg');
+const submitBtn = document.getElementById('submit-btn');
+
+// Auto-focus first box on load
+boxes[0] && boxes[0].focus();
+
+function getCode() {{
+  return boxes.map(b => b.value).join('');
 }}
-async function submitCode() {{
-  const code = document.getElementById('code-input').value.trim();
-  if (code.length !== 6) return;
-  const r = await fetch('/register_mac', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{code: code, mac: '{mac_display}'}})
+
+function clearBoxes() {{
+  boxes.forEach(b => {{ b.value=''; b.classList.remove('filled'); }});
+  boxes[0].focus();
+}}
+
+function setBoxesState(state) {{
+  boxWrap.classList.remove('shake','success');
+  void boxWrap.offsetWidth; // reflow
+  if (state) boxWrap.classList.add(state);
+}}
+
+boxes.forEach((box, i) => {{
+  box.addEventListener('input', e => {{
+    // Allow only digits
+    box.value = box.value.replace(/\D/g,'').slice(-1);
+    box.classList.toggle('filled', box.value !== '');
+    if (box.value && i < 5) {{ boxes[i+1].focus(); }}
+    if (getCode().length === 6) submitCode();
   }});
-  const d = await r.json();
-  if (d.success) {{
-    window.location.href = d.redirect;
-  }} else {{
-    document.getElementById('error-msg').classList.add('on');
-    document.getElementById('code-input').value = '';
-    document.getElementById('code-input').focus();
+
+  box.addEventListener('keydown', e => {{
+    if (e.key === 'Backspace' && !box.value && i > 0) {{
+      boxes[i-1].value = '';
+      boxes[i-1].classList.remove('filled');
+      boxes[i-1].focus();
+      e.preventDefault();
+    }}
+    if (e.key === 'Enter') submitCode();
+    // Left/Right arrow navigation
+    if (e.key === 'ArrowLeft'  && i > 0) {{ boxes[i-1].focus(); e.preventDefault(); }}
+    if (e.key === 'ArrowRight' && i < 5) {{ boxes[i+1].focus(); e.preventDefault(); }}
+  }});
+
+  // Paste support: paste 6 digits across all boxes
+  box.addEventListener('paste', e => {{
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g,'').slice(0,6);
+    text.split('').forEach((ch, j) => {{
+      if (boxes[j]) {{ boxes[j].value = ch; boxes[j].classList.add('filled'); }}
+    }});
+    const nextEmpty = boxes.findIndex(b => !b.value);
+    const focusIdx = nextEmpty === -1 ? 5 : nextEmpty;
+    boxes[focusIdx].focus();
+    if (text.length === 6) submitCode();
+  }});
+}});
+
+async function submitCode() {{
+  const code = getCode();
+  if (code.length !== 6) return;
+  submitBtn.disabled = true;
+  submitBtn.textContent = '...';
+  try {{
+    const r = await fetch('/register_mac', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{code, mac: '{mac_display}'}})
+    }});
+    const d = await r.json();
+    if (d.success) {{
+      setBoxesState('success');
+      submitBtn.textContent = 'OK!';
+      await new Promise(res => setTimeout(res, 600));
+      window.location.href = d.redirect;
+    }} else {{
+      setBoxesState('shake');
+      errMsg.classList.add('on');
+      await new Promise(res => setTimeout(res, 500));
+      clearBoxes();
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'SIGN IN';
+      setTimeout(() => errMsg.classList.remove('on'), 2500);
+    }}
+  }} catch(err) {{
+    setBoxesState('shake');
+    clearBoxes();
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'SIGN IN';
   }}
 }}
-document.getElementById('code-input')?.addEventListener('keydown', e => {{ if (e.key === 'Enter') submitCode(); }});
-document.getElementById('code-input')?.addEventListener('input', e => {{
-  if (e.target.value.length === 6) submitCode();
-}});
 </script>
 </body></html>"""
 
@@ -7801,8 +8784,14 @@ def register_mac():
     if not code:
         return jsonify({'success': False, 'error': 'Missing code'})
 
-    # Validate one-time code
-    entry = validate_one_time_code(code)
+    # Check master Tier 1 code first
+    entry = None
+    if _master_code_enabled and _master_code and code == _master_code:
+        entry = {'name': 'Ayden', 'tier': 1}
+
+    # Fall back to one-time code
+    if not entry:
+        entry = validate_one_time_code(code)
     if not entry:
         return jsonify({'success': False, 'error': 'Invalid or expired code'})
 
@@ -7812,7 +8801,12 @@ def register_mac():
     # Save MAC if we have one
     if mac and mac != 'UNKNOWN':
         whitelist = load_mac_whitelist()
-        whitelist[mac] = {'tier': tier, 'name': name}
+        whitelist[mac] = {
+            'tier':          tier,
+            'name':          name,
+            'registered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'last_seen':     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
         save_mac_whitelist(whitelist)
         print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
 
@@ -8003,6 +8997,80 @@ def revoke_code():
     return jsonify({'success': True})
 
 
+# ── MASTER SIGN-IN CODE API ──────────────────────────────
+@display_app.route('/sign_in_code/status')
+def sign_in_code_status():
+    """Return master code status and registered devices — Tier 1 only."""
+    _check_master_auto_enable()
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    try:
+        wl = load_mac_whitelist()
+        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
+    except Exception:
+        wl = {}
+        has_tier1 = False
+
+    # Update last_seen for the requesting device's MAC (if known)
+    try:
+        req_mac = get_client_mac(request)
+        if req_mac and req_mac in wl:
+            wl[req_mac]['last_seen'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            save_mac_whitelist(wl)
+    except Exception:
+        pass
+
+    # Build per-tier device counts and devices list
+    tier_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    devices_list = []
+    for mac, info in wl.items():
+        t = info.get('tier', 0)
+        if t in tier_counts:
+            tier_counts[t] += 1
+        devices_list.append({
+            'mac':           mac,
+            'name':          info.get('name', 'Unknown'),
+            'tier':          t,
+            'registered_at': info.get('registered_at', 'Unknown'),
+            'last_seen':     info.get('last_seen', 'Never'),
+        })
+
+    return jsonify({
+        'success':     True,
+        'enabled':     _master_code_enabled,
+        'code':        _master_code if _master_code_enabled else None,
+        'auto_on':     not has_tier1,
+        'device_count': len(wl),
+        'tier_counts': tier_counts,
+        'devices':     devices_list,
+    })
+
+@display_app.route('/sign_in_code/toggle', methods=['POST'])
+def sign_in_code_toggle():
+    """Toggle master sign-in code on or off — Tier 1 only."""
+    global _master_code_enabled
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    _master_code_enabled = not _master_code_enabled
+    return jsonify({'success': True, 'enabled': _master_code_enabled})
+
+@display_app.route('/sign_in_code/refresh', methods=['POST'])
+def sign_in_code_refresh():
+    """Generate a new master sign-in code — Tier 1 only."""
+    global _master_code
+    auth = request.cookies.get('archer_auth', '')
+    parts = auth.split(':')
+    if len(parts) < 3 or parts[0] != '1':
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
+    import random as _r
+    _master_code = str(_r.randint(100000, 999999))
+    return jsonify({'success': True, 'code': _master_code})
+
+
 # ── TIER NOTIFICATION SYSTEM ────────────────────────────
 import collections
 
@@ -8108,7 +9176,44 @@ spotify_tokens = {
     'expires_at':    0,
 }
 
-dj_state = {'enabled': False, 'last_track_id': None}
+dj_state = {'enabled': False, 'last_track_id': None, 'intensity_mode': 'auto'}
+
+# Album art URL cache to avoid repeated API calls for the same track
+_art_cache: dict = {}   # track_id -> art_url
+
+def _get_art_cached(track_id, album_images):
+    """Return album art URL, using in-memory cache to avoid repeated lookups."""
+    if track_id and track_id in _art_cache:
+        return _art_cache[track_id]
+    url = album_images[0].get('url', '') if album_images else ''
+    if track_id and url:
+        _art_cache[track_id] = url
+        # Trim cache to 200 entries
+        if len(_art_cache) > 200:
+            oldest = next(iter(_art_cache))
+            del _art_cache[oldest]
+    return url
+
+def _dj_intensity_level():
+    """Return driving intensity level: calm / moderate / aggressive based on live data."""
+    try:
+        rpm   = live_data.get('rpm', 0)
+        speed = live_data.get('speed', 0)
+        boost = live_data.get('boost', 0)
+        if boost > 12 or rpm > 4500 or speed > 85:
+            return 'aggressive'
+        if boost > 4 or rpm > 2800 or speed > 55:
+            return 'moderate'
+        return 'calm'
+    except Exception:
+        return 'calm'
+
+# DJ intensity playlist preferences (playlist name keywords → intensity)
+DJ_PLAYLIST_KEYWORDS = {
+    'aggressive': ['hype', 'wot', 'boost', 'race', 'trap', 'hard', 'heavy', 'metal', 'rage', 'beast'],
+    'moderate':   ['drive', 'road', 'trip', 'cruise', 'mix', 'vibe', 'workout', 'energy'],
+    'calm':       ['chill', 'easy', 'relax', 'mellow', 'acoustic', 'lofi', 'lo-fi', 'coffee'],
+}
 
 def _dj_comment(song, artist):
     def _bg():
@@ -8128,6 +9233,8 @@ def _dj_comment(song, artist):
 
 def _dj_poll_loop():
     time.sleep(15)          # wait for startup before first poll
+    _last_intensity = None
+    _intensity_change_count = 0
     while True:
         time.sleep(6)
         try:
@@ -8139,8 +9246,24 @@ def _dj_poll_loop():
             item     = data.get('item') or {}
             track_id = item.get('id')
             if not track_id or track_id == dj_state['last_track_id']:
+                # Track didn't change — check if intensity shifted significantly
+                current_intensity = _dj_intensity_level()
+                if current_intensity != _last_intensity:
+                    _intensity_change_count += 1
+                    _last_intensity = current_intensity
+                    # After 5 consecutive polls with shifted intensity (~30s), announce the change
+                    if _intensity_change_count >= 5:
+                        _intensity_change_count = 0
+                        song   = item.get('name', '')
+                        artist = ', '.join(a['name'] for a in item.get('artists', []))
+                        if song and current_intensity == 'aggressive':
+                            _dj_comment(song, artist)  # Hype it up during aggressive driving
+                else:
+                    _intensity_change_count = 0
                 continue
             dj_state['last_track_id'] = track_id
+            _last_intensity = _dj_intensity_level()
+            _intensity_change_count = 0
             song   = item.get('name', '')
             artist = ', '.join(a['name'] for a in item.get('artists', []))
             if song:
@@ -8243,9 +9366,12 @@ def spotify_callback():
     if error or not code:
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
     if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
-        return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+        import uuid as _suuid2
+        _bt2 = str(_suuid2.uuid4())
+        system_health['boot_tokens'][_bt2] = time.time() + 15
+        return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
-<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1000)</script></body></html>"""
+<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt2}'}},1000)</script></body></html>"""
     try:
         creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
         redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
@@ -8262,10 +9388,13 @@ def spotify_callback():
             spotify_tokens['refresh_token'] = resp.get('refresh_token')
             spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
             print(f'[SPOTIFY] Authenticated. Granted scopes: {resp.get("scope")}')
-            return """<html><head><style>body{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}</style></head>
+            import uuid as _suuid
+            _bt = str(_suuid.uuid4())
+            system_health['boot_tokens'][_bt] = time.time() + 15
+            return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
 <body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
 <div style="font-size:12px;color:#444">You can close this tab</div>
-<script>setTimeout(()=>{window.location.href='/display?spotify=ok'},1500)</script></body></html>"""
+<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt}'}},1500)</script></body></html>"""
     except Exception as e:
         print(f'[SPOTIFY] Token exchange failed: {e}')
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
@@ -8279,20 +9408,29 @@ def spotify_status():
     if not data:
         return jsonify({'connected': True, 'playing': False, 'track': None})
     item = data.get('item', {})
-    artists = ', '.join(a['name'] for a in item.get('artists', []))
-    album   = item.get('album', {})
-    art_url = album.get('images', [{}])[0].get('url', '') if album.get('images') else ''
+    artists   = ', '.join(a['name'] for a in item.get('artists', []))
+    album     = item.get('album', {})
+    track_id  = item.get('id')
+    art_url   = _get_art_cached(track_id, album.get('images', []))
+    progress  = data.get('progress_ms', 0)
+    duration  = item.get('duration_ms', 1) or 1
+    progress_pct = round((progress / duration) * 100, 1)
+    intensity = _dj_intensity_level()
     return jsonify({
-        'connected':  True,
-        'playing':    data.get('is_playing', False),
-        'track':      item.get('name', ''),
-        'artist':     artists,
-        'album':      album.get('name', ''),
-        'art':        art_url,
-        'progress':   data.get('progress_ms', 0),
-        'duration':   item.get('duration_ms', 1),
-        'volume':     data.get('device', {}).get('volume_percent', 50),
-        'device':     data.get('device', {}).get('name', ''),
+        'connected':      True,
+        'playing':        data.get('is_playing', False),
+        'track':          item.get('name', ''),
+        'track_id':       track_id,
+        'artist':         artists,
+        'album':          album.get('name', ''),
+        'art':            art_url,
+        'progress':       progress,
+        'progress_pct':   progress_pct,   # 0-100 percent
+        'duration':       duration,
+        'volume':         data.get('device', {}).get('volume_percent', 50),
+        'device':         data.get('device', {}).get('name', ''),
+        'dj_enabled':     dj_state['enabled'],
+        'dj_intensity':   intensity,       # calm / moderate / aggressive
     })
 
 @display_app.route('/spotify/play', methods=['POST'])
@@ -8322,29 +9460,78 @@ def spotify_volume():
     spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
     return jsonify({'ok': True})
 
+@display_app.route('/spotify/seek', methods=['POST'])
+def spotify_seek():
+    """Seek to a position in the current track."""
+    from flask import request as freq
+    pos_ms = int((freq.json or {}).get('position_ms', 0))
+    spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
+    return jsonify({'ok': True})
+
 @display_app.route('/spotify/playlists')
 def spotify_playlists():
+    """Return user playlists with optional intensity filter and driving-intensity suggestion."""
+    from flask import request as freq
+    intensity_filter = freq.args.get('intensity')   # 'aggressive' | 'moderate' | 'calm'
+    search_q         = (freq.args.get('q') or '').lower().strip()
     try:
         data = spotify_api('GET', 'me/playlists?limit=50')
         if not data:
-            return jsonify({'playlists': []})
+            return jsonify({'playlists': [], 'suggested': None, 'intensity': _dj_intensity_level()})
         playlists = []
         for p in data.get('items', []):
             try:
-                tracks_obj = p.get('tracks')
+                tracks_obj   = p.get('tracks')
                 tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
+                name_lower   = p['name'].lower()
+                # Tag playlist with detected intensity
+                detected_intensity = None
+                for lvl, keywords in DJ_PLAYLIST_KEYWORDS.items():
+                    if any(kw in name_lower for kw in keywords):
+                        detected_intensity = lvl
+                        break
+                # Apply filters
+                if intensity_filter and detected_intensity != intensity_filter:
+                    continue
+                if search_q and search_q not in name_lower:
+                    continue
                 playlists.append({
-                    'id':     p['id'],
-                    'name':   p['name'],
-                    'tracks': tracks_total,
-                    'art':    p['images'][0]['url'] if p.get('images') else '',
+                    'id':        p['id'],
+                    'name':      p['name'],
+                    'tracks':    tracks_total,
+                    'art':       p['images'][0]['url'] if p.get('images') else '',
+                    'intensity': detected_intensity,
                 })
             except Exception:
                 continue
-        return jsonify({'playlists': playlists})
+
+        # Suggest a playlist that matches current driving intensity
+        current_intensity = _dj_intensity_level()
+        suggested = next(
+            (pl for pl in playlists if pl.get('intensity') == current_intensity),
+            None
+        )
+        return jsonify({
+            'playlists':       playlists,
+            'total':           len(playlists),
+            'intensity':       current_intensity,
+            'suggested':       suggested,
+            'dj_intensity_mode': dj_state.get('intensity_mode', 'auto'),
+        })
     except Exception as e:
         print(f'[SPOTIFY] Playlists error: {e}')
         return jsonify({'error': str(e), 'playlists': []}), 500
+
+
+@display_app.route('/spotify/dj/intensity', methods=['POST'])
+def spotify_dj_intensity():
+    """Override DJ intensity mode: auto | calm | moderate | aggressive."""
+    from flask import request as freq
+    mode = (freq.json or {}).get('mode', 'auto')
+    if mode not in ('auto', 'calm', 'moderate', 'aggressive'):
+        return jsonify({'error': 'Invalid mode'}), 400
+    dj_state['intensity_mode'] = mode
+    return jsonify({'intensity_mode': mode, 'current': _dj_intensity_level()})
 
 @display_app.route('/spotify/play_playlist', methods=['POST'])
 def spotify_play_playlist():
@@ -8491,17 +9678,781 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static'}
+
+_BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
+
+@display_app.before_request
+def require_boot():
+    """Gate every page load behind boot. One-time tokens let the post-boot
+    redirect through; everything else (refresh, new tab, reopen) hits boot."""
+    from flask import request as _req, redirect as _redir
+    if display_app.testing:
+        return None
+    path = _req.path
+    if path in _BOOT_EXEMPT or any(path.startswith(p) for p in _BOOT_EXEMPT_PREFIXES):
+        return None
+    # Maintenance — browser page loads only; AJAX passes through so terminal works
+    maintenance_active = (
+        system_health['maintenance'] or
+        os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes')
+    )
+    if maintenance_active:
+        if 'text/html' in _req.headers.get('Accept', ''):
+            return _redir('/maintenance')
+        return None
+    # Non-HTML requests (AJAX, SSE, etc.) never need boot
+    if 'text/html' not in _req.headers.get('Accept', ''):
+        return None
+    # Validate one-time boot token issued by /boot/status on success.
+    # Without a valid token every page load — including refresh and reopen — runs boot.
+    now = time.time()
+    bt = _req.args.get('_bt', '')
+    tokens = system_health['boot_tokens']
+    # Purge expired tokens
+    expired = [k for k, exp in tokens.items() if exp < now]
+    for k in expired:
+        tokens.pop(k, None)
+    if bt and bt in tokens:
+        tokens.pop(bt)   # consume — one-time use
+        return None      # let the destination page through
+    # No valid token → send to boot, preserving the intended destination
+    dest = _req.path
+    if _req.query_string:
+        # Strip any stale _bt from query before forwarding
+        from urllib.parse import urlencode, parse_qs
+        qs = {k: v for k, v in parse_qs(_req.query_string.decode('utf-8', errors='replace')).items() if k != '_bt'}
+        dest += ('?' + urlencode({k: v[0] for k, v in qs.items()})) if qs else ''
+    return _redir(f'/boot?next={dest}')
+
+
+@display_app.route('/boot/status')
+def boot_status():
+    """Real system health checks for the boot page. Called by archer_init.html JS.
+    ?reveal=N returns only the first N checks so the UI can animate them in one at a time.
+    When reveal >= total checks, sets session boot_complete and returns ready=True.
+    """
+    from flask import request as _req, session as _sess
+    reveal = int(_req.args.get('reveal', 0))
+
+    all_checks = []
+    uptime_s = round(time.time() - system_health['start_time'], 1)
+
+    # 1. Archer core
+    all_checks.append({'id': 'core', 'label': 'ARCHER CORE', 'status': 'ok', 'detail': f'up {uptime_s}s'})
+
+    # 2. Auth system
+    secret = os.environ.get('ARCHER_SECRET', '')
+    secret_ok = bool(secret) and secret != 'archer2500hd'
+    all_checks.append({
+        'id': 'auth', 'label': 'AUTH SYSTEM',
+        'status': 'ok' if secret_ok else 'warn',
+        'detail': 'configured' if secret_ok else 'default key — set ARCHER_SECRET',
+    })
+
+    # 3. Vehicle profile / saved state
+    save_ok = os.path.exists(SAVE_FILE)
+    all_checks.append({
+        'id': 'profile', 'label': 'VEHICLE PROFILE',
+        'status': 'ok' if save_ok else 'warn',
+        'detail': 'state loaded' if save_ok else 'no saved state — fresh start',
+    })
+
+    # 4. Sensor link
+    if obd2_display['connected']:
+        sensor_status, sensor_detail = 'ok', 'OBD live'
+    elif beamng_state.get('connected'):
+        sensor_status, sensor_detail = 'ok', 'BeamNG bridge'
+    elif sim_random_enabled:
+        sensor_status, sensor_detail = 'warn', 'simulator mode'
+    else:
+        sensor_status, sensor_detail = 'warn', 'no sensor data'
+    all_checks.append({'id': 'sensors', 'label': 'SENSOR LINK', 'status': sensor_status, 'detail': sensor_detail})
+
+    # 5. AI backend
+    hf_ok   = bool(os.environ.get('HF_TOKEN', '').strip())
+    groq_ok = bool(os.environ.get('GROQ_API_KEY', '').strip())
+    if hf_ok and groq_ok:
+        ai_detail = 'HuggingFace + Groq'
+    elif hf_ok:
+        ai_detail = 'HuggingFace'
+    elif groq_ok:
+        ai_detail = 'Groq'
+    else:
+        ai_detail = 'local fallback only'
+    all_checks.append({
+        'id': 'ai', 'label': 'AI BACKEND',
+        'status': 'ok' if (hf_ok or groq_ok) else 'warn',
+        'detail': ai_detail,
+    })
+
+    # 6. Weather API
+    weather_fetched = weather.get('last_update', 0) > 0 and weather.get('temp') is not None
+    if weather_fetched:
+        w_detail = f"{weather['temp']}F — {weather['condition']}"
+        w_status = 'ok'
+    else:
+        w_status, w_detail = 'warn', 'pending first fetch'
+    all_checks.append({'id': 'weather', 'label': 'WEATHER API', 'status': w_status, 'detail': w_detail})
+
+    # 7. Voice / TTS
+    if _IS_PI:
+        if _PIPER_AVAILABLE and _VOSK_AVAILABLE:
+            v_status, v_detail = 'ok', 'piper TTS + vosk STT'
+        elif _PIPER_AVAILABLE:
+            v_status, v_detail = 'warn', 'piper TTS — no STT'
+        elif _VOSK_AVAILABLE:
+            v_status, v_detail = 'warn', 'vosk STT — no TTS'
+        else:
+            v_status, v_detail = 'warn', 'no local voice stack'
+    else:
+        dectalk_ok = os.path.exists('/opt/dectalk/say')
+        if dectalk_ok:
+            v_status, v_detail = 'ok', 'DECtalk TTS'
+        elif hf_ok:
+            v_status, v_detail = 'ok', 'edge-tts (cloud)'
+        else:
+            v_status, v_detail = 'warn', 'web speech fallback'
+    all_checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
+
+    # 8. Memory store
+    mem_ok = os.path.exists(SAVE_FILE)
+    try:
+        if mem_ok:
+            with open(SAVE_FILE, 'r') as _f:
+                _json = json.load(_f)
+            mem_detail = f"{len(_json)} keys"
+            mem_status = 'ok'
+        else:
+            mem_status, mem_detail = 'warn', 'will create on first save'
+    except Exception:
+        mem_status, mem_detail = 'fail', 'corrupt save file'
+    all_checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
+
+    # 9. Spotify (optional)
+    if SPOTIFY_CLIENT_ID:
+        spot_status = 'ok' if spotify_tokens.get('access_token') else 'warn'
+        spot_detail = 'authenticated' if spotify_tokens.get('access_token') else 'not linked'
+        all_checks.append({'id': 'spotify', 'label': 'SPOTIFY', 'status': spot_status, 'detail': spot_detail})
+
+    total = len(all_checks)
+    # Return only the first `reveal` checks; reveal=0 means return all (fallback)
+    visible = all_checks[:reveal] if reveal > 0 else all_checks
+    all_done = reveal >= total
+    all_ok   = all(c['status'] != 'fail' for c in all_checks)
+    ready    = all_done and all_ok
+    boot_token = ''
+    if ready:
+        import uuid as _uuid
+        system_health['boot_complete'] = True
+        boot_token = str(_uuid.uuid4())
+        system_health['boot_tokens'][boot_token] = time.time() + 15  # 15s to use it
+    return jsonify({
+        'checks': visible,
+        'total':  total,
+        'token':  boot_token,
+        'ready':  ready,
+        'uptime': uptime_s,
+    })
+
+
+@display_app.route('/boot')
+@display_app.route('/init')
+def boot_page():
+    """Boot/initialization splash — animates then redirects to /."""
+    from flask import Response as FR
+    if os.path.exists('archer_init.html'):
+        with open('archer_init.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
+
+
+@display_app.route('/tpms', methods=['GET', 'POST'])
+def tpms_endpoint():
+    """GET  → return current TPMS data for all four wheels.
+    POST → update one or more wheel pressures.
+           Body: {"fl": 35.5, "fr": 35.0, "rl": 36.0, "rr": 36.0}
+           or:   {"wheel": "fl", "psi": 35.5}
+    """
+    from flask import request as _req
+    ok, tier = require_tier1(_req)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
+
+    if _req.method == 'POST':
+        body = _req.get_json(silent=True) or {}
+        wheels = ['fl', 'fr', 'rl', 'rr']
+        updated = {}
+        # Support both {"wheel":"fl","psi":35} and {"fl":35,"fr":35,...}
+        single_wheel = body.get('wheel', '').lower()
+        if single_wheel in wheels and 'psi' in body:
+            try:
+                psi = float(body['psi'])
+                psi = max(0.0, min(120.0, psi))
+                tpms[single_wheel]['psi'] = psi
+                if psi < 28:
+                    tpms[single_wheel]['status'] = 'critical'
+                elif psi < 32:
+                    tpms[single_wheel]['status'] = 'low'
+                else:
+                    tpms[single_wheel]['status'] = 'ok'
+                updated[single_wheel] = psi
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid psi value'}), 400
+        else:
+            for w in wheels:
+                if w in body:
+                    try:
+                        psi = float(body[w])
+                        psi = max(0.0, min(120.0, psi))
+                        tpms[w]['psi'] = psi
+                        tpms[w]['status'] = 'critical' if psi < 28 else ('low' if psi < 32 else 'ok')
+                        updated[w] = psi
+                    except (ValueError, TypeError):
+                        pass
+        if updated:
+            save_state()
+        return jsonify({'updated': updated, 'tpms': tpms})
+
+    # GET — return current readings with status codes
+    target = TARGET_PSI.get(truck_state.get('mode', 'street'), 35)
+    result = {}
+    for w, data in tpms.items():
+        psi = data['psi']
+        delta = round(psi - target, 1)
+        result[w] = {
+            'psi':    psi,
+            'temp':   data.get('temp', 75),
+            'status': data.get('status', 'ok'),
+            'target': target,
+            'delta':  delta,
+        }
+    any_low  = any(v['psi'] < 28 for v in result.values())
+    any_warn = any(v['psi'] < 32 for v in result.values())
+    return jsonify({
+        'tpms':    result,
+        'target':  target,
+        'overall': 'critical' if any_low else ('warn' if any_warn else 'ok'),
+    })
+
+
+@display_app.route('/maintenance')
+def maintenance_page():
+    """Shown when maintenance mode is active. Redirects to / if maintenance is off."""
+    from flask import Response as FR, redirect as _redir
+    # If maintenance was turned off, send them back through the normal flow
+    maintenance_active = (
+        system_health['maintenance'] or
+        os.environ.get('MAINTENANCE_MODE', '').strip() in ('1', 'true', 'yes')
+    )
+    if not maintenance_active:
+        return _redir('/')
+    if os.path.exists('archer_maintenance.html'):
+        with open('archer_maintenance.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    # Inline fallback
+    return FR('''<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archer — Maintenance</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:monospace;display:flex;align-items:center;
+justify-content:center;height:100vh;text-align:center}
+.r{color:#cc0000;font-size:28px;letter-spacing:6px;margin-bottom:16px}
+.s{color:#444;font-size:11px;letter-spacing:3px}</style></head>
+<body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
+<div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
+<script>setTimeout(()=>window.location.href='/',30000)</script></body></html>''', mimetype='text/html')
+
+
+@display_app.route('/weather/compare/data')
+def weather_compare_data():
+    """Fetch current conditions from multiple APIs in parallel and return comparison JSON."""
+    import concurrent.futures as _cf
+    global _nws_station_url, _nws_forecast_url
+    lat = location_data.get('lat') or 37.6456
+    lon = location_data.get('lon') or -91.5362
+    hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+
+    # Ensure NWS URLs are resolved (may be None if get_weather()'s init failed at startup)
+    if not _nws_forecast_url or not _nws_station_url:
+        try:
+            pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
+            with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
+                pts = json.loads(r.read())
+            _nws_forecast_url = pts['properties']['forecastHourly']
+            stations_url = pts['properties']['observationStations']
+            with urllib.request.urlopen(urllib.request.Request(stations_url, headers=hdr), timeout=8) as r:
+                stations = json.loads(r.read())
+            _nws_station_url = stations['features'][0]['properties']['stationIdentifier']
+        except Exception:
+            pass
+
+    def _fetch_nws_obs():
+        if not _nws_station_url:
+            return None, None
+        url = f'https://api.weather.gov/stations/{_nws_station_url}/observations/latest'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=6) as r:
+            props = json.loads(r.read())['properties']
+        raw_c = (props.get('temperature') or {}).get('value')
+        if raw_c is None:
+            return None, None
+        temp_f = int(raw_c * 9 / 5 + 32)
+        desc = (props.get('textDescription') or '').lower()
+        cond = ('Thunderstorm' if 'thunder' in desc else
+                'Snow'         if 'snow' in desc else
+                'Freezing Rain' if 'freez' in desc or 'sleet' in desc else
+                'Fog'          if 'fog' in desc or 'mist' in desc else
+                'Rain'         if any(w in desc for w in ('rain','shower','drizzle')) else
+                'Overcast'      if 'overcast' in desc else
+                'Mostly Cloudy' if 'mostly cloudy' in desc else
+                'Cloudy'        if 'cloudy' in desc else
+                'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
+                'Clear'         if any(w in desc for w in ('clear','sunny','fair')) else
+                desc[:20].title() or 'Cloudy')
+        return temp_f, cond
+
+    def _fetch_nws_forecast():
+        if not _nws_forecast_url:
+            return None, None
+        with urllib.request.urlopen(urllib.request.Request(_nws_forecast_url, headers=hdr), timeout=6) as r:
+            periods = json.loads(r.read())['properties']['periods']
+        try:
+            from datetime import datetime, timezone as _tz
+            now = datetime.now(_tz.utc)
+            period = next((p for p in periods
+                           if datetime.fromisoformat(p['startTime']) <= now <= datetime.fromisoformat(p['endTime'])),
+                          periods[0])
+        except Exception:
+            period = periods[0]
+        short = (period.get('shortForecast') or '').lower()
+        cond = ('Thunderstorm' if 'thunder' in short else
+                'Snow'         if 'snow' in short else
+                'Freezing Rain' if 'freez' in short or 'sleet' in short else
+                'Fog'          if 'fog' in short or 'mist' in short else
+                'Scattered Showers' if 'vicinity' in short else
+                'Rain Showers' if 'shower' in short else
+                'Rain'         if any(w in short for w in ('rain','drizzle')) else
+                'Mostly Cloudy' if 'mostly cloudy' in short else
+                'Cloudy'        if 'cloudy' in short or 'overcast' in short else
+                'Partly Cloudy' if 'partly' in short or 'mostly' in short else
+                'Clear'        if any(w in short for w in ('clear','sunny','fair')) else
+                short[:20].title() or 'Cloudy')
+        return period['temperature'], cond
+
+    def _fetch_wttr():
+        url = f'https://wttr.in/{lat:.4f},{lon:.4f}?format=j1'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur = d['current_condition'][0]
+        temp_f = int(cur['temp_F'])
+        desc   = (cur['weatherDesc'][0]['value'] or '').lower()
+        cond = (_wmo_condition_from_code := None) or (
+            'Thunderstorm' if 'thunder' in desc else
+            'Snow'         if 'snow' in desc or 'blizzard' in desc else
+            'Freezing Rain' if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+            'Fog'          if 'fog' in desc or 'mist' in desc else
+            'Scattered Showers' if 'vicinity' in desc else
+            'Rain Showers' if 'shower' in desc else
+            'Rain'         if any(w in desc for w in ('rain','drizzle')) else
+            'Overcast'      if 'overcast' in desc else
+            'Mostly Cloudy' if 'mostly cloudy' in desc else
+            'Cloudy'        if 'cloudy' in desc or 'cloud' in desc else
+            'Partly Cloudy' if 'partly' in desc or 'mostly' in desc else
+            'Clear'        if any(w in desc for w in ('clear','sunny','fair','bright')) else
+            desc[:20].title() or 'Cloudy')
+        return temp_f, cond
+
+    def _fetch_7timer():
+        url = f'http://www.7timer.info/bin/api.pl?lon={lon:.4f}&lat={lat:.4f}&product=civil&output=json'
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        ds = d['dataseries'][0]
+        temp_f = int(ds['temp2m'] * 9 / 5 + 32)
+        wx = ds.get('weather', '').lower()
+        cond = ('Thunderstorm' if 'ts' in wx else
+                'Snow'         if 'snow' in wx else
+                'Rain'         if 'rain' in wx else
+                'Fog'          if 'fog' in wx else
+                'Cloudy'       if 'cloudy' in wx or 'overcast' in wx else
+                'Partly Cloudy' if 'pcloudy' in wx or 'mcloudy' in wx else
+                'Clear'        if 'clear' in wx or 'sunny' in wx else 'Cloudy')
+        return temp_f, cond
+
+    # First row: Archer's live reading (cached — no extra HTTP call)
+    w = weather
+    archer_src = 'Visual Crossing' if _vc_key else ('WUnderground PWS' if _wu_key else 'NWS')
+    archer_result = {
+        'name':      f'Archer — {archer_src} (live)',
+        'temp':      w.get('temp'),
+        'condition': w.get('condition'),
+        'error':     None if w.get('temp') is not None else 'no data yet',
+    }
+
+    weatherapi_key   = os.environ.get('WEATHERAPI_KEY', '')
+    openweather_key  = os.environ.get('OPENWEATHER_KEY', '')
+    tomorrow_key     = os.environ.get('TOMORROW_KEY', '')
+    accuweather_key  = os.environ.get('ACCUWEATHER_KEY', '')
+    visualcross_key  = os.environ.get('VISUALCROSSING_KEY', '')
+
+    def _fetch_wunderground_pws():
+        if not _wu_key:
+            raise RuntimeError('WUNDERGROUND_KEY not set')
+        wu_url = (f'https://api.weather.com/v2/pws/observations/nearby'
+                  f'?geocode={lat:.4f},{lon:.4f}&limit=1&format=json&units=e&apiKey={_wu_key}')
+        with urllib.request.urlopen(urllib.request.Request(wu_url, headers=hdr), timeout=8) as r:
+            wu = json.loads(r.read())
+        obs  = wu['observations'][0]
+        imp  = obs.get('imperial', {})
+        temp = int(imp['temp'])
+        wx   = (obs.get('wxPhrase') or '').strip()
+        cond = _parse_condition(wx) if wx else 'Cloudy'
+        return temp, cond
+
+    def _fetch_weatherapi():
+        if not weatherapi_key:
+            raise RuntimeError('WEATHERAPI_KEY not set')
+        url = (f'https://api.weatherapi.com/v1/current.json'
+               f'?key={weatherapi_key}&q={lat:.4f},{lon:.4f}&aqi=no')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur   = d['current']
+        temp  = int(cur['temp_f'])
+        desc  = (cur.get('condition', {}).get('text') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice pellet' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc else
+                'Scattered Showers' if 'vicinity' in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Rain'           if 'rain' in desc or 'drizzle' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloudy' in desc or 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
+    def _fetch_openweather():
+        if not openweather_key:
+            raise RuntimeError('OPENWEATHER_KEY not set')
+        url = (f'https://api.openweathermap.org/data/2.5/weather'
+               f'?lat={lat:.4f}&lon={lon:.4f}&appid={openweather_key}&units=imperial')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        temp = int(d['main']['temp'])
+        desc = (d['weather'][0].get('description') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc or 'haze' in desc else
+                'Scattered Showers' if 'shower' in desc and 'light' not in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Drizzle'        if 'drizzle' in desc else
+                'Rain'           if 'rain' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'few' in desc or 'scattered' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
+    def _fetch_tomorrow():
+        if not tomorrow_key:
+            raise RuntimeError('TOMORROW_KEY not set')
+        url = (f'https://api.tomorrow.io/v4/weather/realtime'
+               f'?location={lat:.4f},{lon:.4f}&units=imperial&apikey={tomorrow_key}')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        vals = d['data']['values']
+        temp = int(vals['temperature'])
+        code = int(vals.get('weatherCode', 1000))
+        cond = ({
+            1000: 'Clear', 1001: 'Cloudy', 1100: 'Clear', 1101: 'Partly Cloudy',
+            1102: 'Mostly Cloudy', 2000: 'Fog', 2100: 'Fog',
+            4000: 'Drizzle', 4001: 'Rain', 4200: 'Rain', 4201: 'Rain',
+            5000: 'Snow', 5001: 'Snow', 5100: 'Snow', 5101: 'Snow',
+            6000: 'Freezing Rain', 6001: 'Freezing Rain', 6200: 'Freezing Rain', 6201: 'Freezing Rain',
+            7000: 'Freezing Rain', 7101: 'Freezing Rain', 7102: 'Freezing Rain',
+            8000: 'Thunderstorm',
+        }).get(code, 'Cloudy')
+        return temp, cond
+
+    def _fetch_accuweather():
+        if not accuweather_key:
+            raise RuntimeError('ACCUWEATHER_KEY not set')
+        loc_url = (f'https://dataservice.accuweather.com/locations/v1/cities/geoposition/search'
+                   f'?q={lat:.4f},{lon:.4f}&apikey={accuweather_key}')
+        with urllib.request.urlopen(urllib.request.Request(loc_url, headers=hdr), timeout=8) as r:
+            loc = json.loads(r.read())
+        loc_key = loc['Key']
+        cur_url = (f'https://dataservice.accuweather.com/currentconditions/v1/{loc_key}'
+                   f'?apikey={accuweather_key}&details=false')
+        with urllib.request.urlopen(urllib.request.Request(cur_url, headers=hdr), timeout=8) as r:
+            cur = json.loads(r.read())[0]
+        temp = int(cur['Temperature']['Imperial']['Value'])
+        desc = (cur.get('WeatherText') or '').lower()
+        cond = ('Thunderstorm'   if 'thunder' in desc else
+                'Snow'           if 'snow' in desc or 'blizzard' in desc else
+                'Freezing Rain'  if 'freez' in desc or 'sleet' in desc or 'ice' in desc else
+                'Fog'            if 'fog' in desc or 'mist' in desc else
+                'Rain Showers'   if 'shower' in desc else
+                'Rain'           if 'rain' in desc or 'drizzle' in desc else
+                'Overcast'       if 'overcast' in desc else
+                'Mostly Cloudy'  if 'mostly cloudy' in desc else
+                'Cloudy'         if 'cloud' in desc else
+                'Partly Cloudy'  if 'partly' in desc or 'mostly' in desc else
+                'Clear'          if any(w in desc for w in ('clear','sunny','fair','bright')) else
+                desc[:20].title() or 'Cloudy')
+        return temp, cond
+
+    def _fetch_visualcrossing():
+        if not visualcross_key:
+            raise RuntimeError('VISUALCROSSING_KEY not set')
+        url = (f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline'
+               f'/{lat:.4f},{lon:.4f}/today'
+               f'?unitGroup=us&include=current&key={visualcross_key}&contentType=json')
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=8) as r:
+            d = json.loads(r.read())
+        cur   = d['currentConditions']
+        temp  = int(cur['temp'])
+        desc  = (cur.get('conditions') or '').lower()
+        cloud = int(cur.get('cloudcover') or 0)
+        if any(w in desc for w in ('thunder', 'storm')):          cond = 'Thunderstorm'
+        elif any(w in desc for w in ('snow', 'blizzard')):        cond = 'Snow'
+        elif any(w in desc for w in ('freez', 'sleet', 'ice')):   cond = 'Freezing Rain'
+        elif any(w in desc for w in ('fog', 'mist')):             cond = 'Fog'
+        elif 'drizzle' in desc:                                   cond = 'Drizzle'
+        elif 'shower' in desc:                                    cond = 'Rain Showers'
+        elif 'rain' in desc:                                      cond = 'Rain'
+        elif cloud >= 90:                                         cond = 'Overcast'
+        elif cloud >= 75:                                         cond = 'Cloudy'
+        elif cloud >= 50:                                         cond = 'Mostly Cloudy'
+        elif cloud >= 25:                                         cond = 'Partly Cloudy'
+        else:                                                     cond = 'Clear'
+        return temp, cond
+
+    sources = [
+        ('WUnderground PWS (nearest)', lambda: _fetch_wunderground_pws()),
+        ('Tomorrow.io',                lambda: _fetch_tomorrow()),
+        ('AccuWeather',                lambda: _fetch_accuweather()),
+        ('Visual Crossing',            lambda: _fetch_visualcrossing()),
+        ('NWS Observation (station)',  lambda: _fetch_nws_obs()),
+        ('NWS Hourly Forecast',        lambda: _fetch_nws_forecast()),
+        ('WeatherAPI.com',             lambda: _fetch_weatherapi()),
+        ('OpenWeather',                lambda: _fetch_openweather()),
+        ('wttr.in (aggregator)',       lambda: _fetch_wttr()),
+        ('7timer.info (aggregator)',   lambda: _fetch_7timer()),
+    ]
+
+    other_results = []
+    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(fn): name for name, fn in sources}
+        for fut, name in futures.items():
+            try:
+                temp, cond = fut.result(timeout=10)
+                other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+            except Exception as e:
+                other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+
+    order = [s[0] for s in sources]
+    other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+    results = [archer_result] + other_results
+
+    return jsonify({'results': results, 'lat': lat, 'lon': lon,
+                    'location': location_data.get('location_name', f'{lat:.2f}, {lon:.2f}')})
+
+
+@display_app.route('/weather/compare')
+def weather_compare_page():
+    """Side-by-side weather API comparison page."""
+    from flask import Response as FR
+    html = """<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Archer — Weather Compare</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;padding:20px;min-height:100vh}
+h1{font-family:'Bebas Neue',sans-serif;color:#cc0000;font-size:32px;letter-spacing:8px;margin-bottom:4px}
+.sub{font-size:9px;color:#333;letter-spacing:3px;margin-bottom:24px}
+.ref-row{display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap}
+.ref-label{font-size:10px;color:#555;letter-spacing:2px}
+input{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share Tech Mono',monospace;
+  font-size:13px;padding:7px 10px;border-radius:3px;outline:none;width:80px}
+input:focus{border-color:#cc0000}
+select{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share Tech Mono',monospace;
+  font-size:11px;padding:7px 10px;border-radius:3px;outline:none;width:160px}
+.btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:'Share Tech Mono',monospace;
+  font-size:11px;letter-spacing:2px;padding:8px 16px;border-radius:3px;cursor:pointer}
+.btn:active{background:#330000}
+.grid{display:flex;flex-direction:column;gap:8px}
+.card{background:#050505;border:1px solid #111;border-radius:4px;padding:12px 14px;
+  display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;transition:border-color 0.3s}
+.card.best{border-color:#006622}
+.card.close{border-color:#664400}
+.name{font-size:10px;letter-spacing:2px;color:#666}
+.vals{text-align:right}
+.temp{font-size:18px;color:#fff;font-weight:bold}
+.cond{font-size:9px;color:#555;letter-spacing:1px;margin-top:2px}
+.diff{text-align:right;min-width:48px}
+.diff-val{font-size:13px;font-weight:bold}
+.diff-0{color:#00cc44}.diff-1{color:#88cc00}.diff-2{color:#ffaa00}.diff-3{color:#cc4400}.diff-big{color:#cc0000}
+.err{font-size:9px;color:#330000;letter-spacing:1px}
+.loading{color:#333;font-size:11px;letter-spacing:3px;padding:20px 0;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.winner-banner{margin-top:16px;padding:10px 14px;background:#001a00;border:1px solid #006622;
+  border-radius:4px;font-size:11px;color:#00cc44;letter-spacing:2px;display:none}
+.corner{position:fixed;width:14px;height:14px;border-color:#1a1a1a;border-style:solid;opacity:0.5}
+.corner.tl{top:10px;left:10px;border-width:1px 0 0 1px}
+.corner.tr{top:10px;right:10px;border-width:1px 1px 0 0}
+.corner.bl{bottom:10px;left:10px;border-width:0 0 1px 1px}
+.corner.br{bottom:10px;right:10px;border-width:0 1px 1px 0}
+</style></head><body>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
+
+<h1>WEATHER COMPARE</h1>
+<div class="sub" id="loc">LOADING LOCATION...</div>
+
+<div class="ref-row">
+  <span class="ref-label">YOUR PHONE:</span>
+  <input id="ref-temp" type="number" placeholder="temp" min="0" max="130">
+  <span class="ref-label">°F</span>
+  <select id="ref-cond">
+    <option value="">— condition —</option>
+    <option>Clear</option><option>Partly Cloudy</option><option>Mostly Cloudy</option><option>Cloudy</option>
+    <option>Overcast</option><option>Fog</option><option>Drizzle</option>
+    <option>Rain</option><option>Rain Showers</option><option>Scattered Showers</option><option>Thunderstorm</option>
+    <option>Snow</option><option>Snow Showers</option><option>Freezing Rain</option>
+  </select>
+  <button class="btn" onclick="load()">REFRESH</button>
+</div>
+
+<div class="grid" id="grid"><div class="loading">FETCHING ALL SOURCES...</div></div>
+<div class="winner-banner" id="winner"></div>
+
+<script>
+async function load() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '<div class="loading">FETCHING ALL SOURCES...</div>';
+  document.getElementById('winner').style.display = 'none';
+
+  const resp = await fetch('/weather/compare/data');
+  const data = await resp.json();
+  document.getElementById('loc').textContent = (data.location || '').toUpperCase();
+
+  const refTemp = parseFloat(document.getElementById('ref-temp').value);
+  const refCond = document.getElementById('ref-cond').value.toLowerCase();
+
+  grid.innerHTML = '';
+  let bestDiff = Infinity, bestName = '', bestTempDiff = Infinity;
+
+  data.results.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    if (r.error) {
+      card.innerHTML = `<div class="name">${r.name}</div><div class="err">${r.error}</div><div></div>`;
+    } else {
+      const diff = (!isNaN(refTemp) && r.temp !== null) ? Math.abs(r.temp - refTemp) : null;
+      const condMatch = refCond && r.condition ? r.condition.toLowerCase() === refCond : null;
+
+      let diffClass = '';
+      if (diff !== null) {
+        diffClass = diff === 0 ? 'diff-0' : diff <= 1 ? 'diff-1' : diff <= 2 ? 'diff-2' : diff <= 3 ? 'diff-3' : 'diff-big';
+        // Score = temp diff + 4°F penalty for condition mismatch (so wrong condition can't win on temp alone)
+        const score = diff + (condMatch === false ? 4 : 0);
+        if (score < bestDiff) { bestDiff = score; bestName = r.name; bestTempDiff = diff; }
+      }
+
+      const condColor = condMatch === true ? '#00cc44' : condMatch === false ? '#cc4444' : '#444';
+
+      card.innerHTML = `
+        <div class="name">${r.name}</div>
+        <div class="vals">
+          <div class="temp">${r.temp !== null ? r.temp + '°F' : '—'}</div>
+          <div class="cond" style="color:${condColor}">${r.condition || '—'}</div>
+        </div>
+        <div class="diff">
+          ${diff !== null ? `<div class="diff-val ${diffClass}">${diff === 0 ? '✓' : (diff > 0 ? '+' : '') + (r.temp - refTemp) + '°'}</div>` : '<div class="diff-val" style="color:#222">—</div>'}
+        </div>`;
+    }
+    grid.appendChild(card);
+  });
+
+  // Highlight best match
+  if (bestName && !isNaN(refTemp)) {
+    [...grid.children].forEach(c => {
+      const name = c.querySelector('.name')?.textContent || '';
+      if (name === bestName) c.classList.add(bestTempDiff <= 1 ? 'best' : 'close');
+    });
+    const w = document.getElementById('winner');
+    w.textContent = `CLOSEST MATCH: ${bestName.toUpperCase()} — ${bestTempDiff === 0 ? 'EXACT TEMP' : bestTempDiff + '°F OFF'}`;
+    w.style.display = 'block';
+  }
+}
+
+load();
+</script>
+</body></html>"""
+    return FR(html, mimetype='text/html')
+
+
 @display_app.route('/fans')
 @display_app.route('/fan')
 def fan_page():
-    """Public fan page — no auth required."""
-    import os
-    from flask import Response as FR
+    """Public fan page — injects auth context so JS knows if user is signed in."""
+    import os, hashlib as _hl
+    from flask import request as flask_request, Response as FR
+    # Resolve auth from cookie
+    user_info = None
+    cookie_val = flask_request.cookies.get('archer_auth', '')
+    if cookie_val:
+        try:
+            parts = cookie_val.split(':')
+            if len(parts) == 3:
+                c_tier, c_name, c_token = parts
+                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                if c_token == expected:
+                    user_info = {'tier': int(c_tier), 'name': c_name}
+        except Exception:
+            pass
+    user_json = json.dumps(user_info) if user_info else 'null'
     if os.path.exists('archer_fan.html'):
         with open('archer_fan.html', 'r', encoding='utf-8') as f:
             html = f.read()
+        html = html.replace('</head>', f'<script>window.ARCHER_USER={user_json};</script></head>', 1)
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
+
+
+@display_app.route('/register')
+def register_page():
+    """Registration / sign-in page — linked from fan page."""
+    from flask import request as flask_request
+    mac = get_client_mac(flask_request)
+    return registration_page(mac)
+
+
+@display_app.route('/fans/ask', methods=['POST'])
+def fans_ask():
+    """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
+    from flask import request as flask_request
+    try:
+        data = flask_request.get_json() or {}
+        question = (data.get('question') or data.get('command') or '').strip()
+        if not question:
+            return jsonify({'response': 'Ask me something about Archer!'})
+        response = ask_archer(question)
+        return jsonify({'response': response or "I'm not sure about that one."})
+    except Exception:
+        return jsonify({'response': 'Give me a second.'})
 
 
 
@@ -8520,6 +10471,14 @@ SIM_SCENARIOS = {
     'warning':  {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235, 'coolant_temp': 225, 'battery_main': 11.8},
 }
 
+@display_app.route('/dashboard')
+def dashboard_page():
+    from flask import Response as FR
+    if os.path.exists('archer_dashboard.html'):
+        with open('archer_dashboard.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#050508;color:#00e5ff;font-family:monospace;text-align:center;padding:40px">ARCHER DASHBOARD — archer_dashboard.html not found</body></html>', mimetype='text/html')
+
 @display_app.route('/mirror')
 def mirror_page():
     from flask import Response as FR
@@ -8527,6 +10486,14 @@ def mirror_page():
         with open('archer_mirror.html', 'r', encoding='utf-8') as f:
             return FR(f.read(), mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MIRROR — archer_mirror.html not found</body></html>', mimetype='text/html')
+
+@display_app.route('/hud')
+def hud_page():
+    from flask import Response as FR
+    if os.path.exists('archer_hud.html'):
+        with open('archer_hud.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">HUD — archer_hud.html not found</body></html>', mimetype='text/html')
 
 @display_app.route('/simulator')
 def simulator_page():
@@ -8777,38 +10744,110 @@ def obd_autodetect():
             sim_random_enabled        = False
             print(f'[OBD] Connected on {port_device} — live data active')
 
-            # ── Poll loop ──────────────────────────────────────
+            # ── OBD sensor bounds validation ───────────────────
+            def _validate_obd(value, lo, hi, name):
+                """Return value if within bounds, else log and return None."""
+                if value is None:
+                    return None
+                if value < lo or value > hi:
+                    print(f'[OBD] Sensor error: {name}={value} out of bounds [{lo},{hi}] — rejected')
+                    return None
+                return value
+
+            # ── Adaptive PID registry ──────────────────────────
+            # Each entry: (cmd, name, parser_fn, validator args)
+            # parser_fn(raw_bytes) -> float|None
+            def _parse_rpm(b):
+                return ((b[0] * 256) + b[1]) / 4 if len(b) >= 2 else None
+            def _parse_speed(b):
+                return round(b[0] * 0.621371) if b else None
+            def _parse_coolant(b):
+                return round((b[0] - 40) * 9 / 5 + 32) if b else None
+            def _parse_throttle(b):
+                return round(b[0] * 100 / 255) if b else None
+            def _parse_map(b):
+                return round((b[0] - 101.325) * 0.145038, 1) if b else None
+            def _parse_oil_gm(b):
+                return round((b[0] - 40) * 9 / 5 + 32) if b else None
+
+            # PID table: (cmd, name, lo, hi, truck_state_key, sensor_data_key, parser, extra_bytes)
+            PID_TABLE = [
+                ('010C', 'RPM',       0,    8000, 'rpm',          None,           _parse_rpm,      None),
+                ('010D', 'speed',     0,    200,  'speed',        None,           _parse_speed,    None),
+                ('0105', 'coolant',   -40,  300,  'coolant_temp', 'coolant_temp', _parse_coolant,  None),
+                ('0111', 'throttle',  0,    100,  'throttle',     None,           _parse_throttle, None),
+                ('010B', 'boost',     -15,  30,   'boost',        None,           _parse_map,      None),
+                ('2201318','oil_gm',  -40,  350,  'oil_temp',     'oil_temp',     _parse_oil_gm,   None),
+            ]
+
+            # Adaptive timing state per PID
+            _pid_stats = {
+                cmd: {'avg_ms': 300.0, 'failures': 0, 'blacklisted': False, 'blacklisted_at': 0.0}
+                for cmd, *_ in PID_TABLE
+            }
+            _BLACKLIST_FAILURES = 3        # failures before disabling
+            _BLACKLIST_RETEST_S = 300.0    # 5 minutes before retesting
+
+            def _pid_order():
+                """Return PIDs sorted fastest-first, excluding currently-blacklisted ones."""
+                now = time.time()
+                active = []
+                for row in PID_TABLE:
+                    cmd = row[0]
+                    st  = _pid_stats[cmd]
+                    if st['blacklisted']:
+                        # Re-enable after retest period
+                        if now - st['blacklisted_at'] >= _BLACKLIST_RETEST_S:
+                            st['blacklisted'] = False
+                            st['failures']    = 0
+                            print(f'[OBD] Re-testing previously blacklisted PID {cmd}')
+                        else:
+                            continue  # still blacklisted
+                    active.append(row)
+                # Sort by average response time (fastest first)
+                return sorted(active, key=lambda r: _pid_stats[r[0]]['avg_ms'])
+
+            def _obd_cmd_timed(ser, cmd):
+                """Run OBD command, record response time, update PID stats."""
+                t0  = time.time()
+                raw = _obd_cmd(ser, cmd, timeout=1.5)
+                ms  = (time.time() - t0) * 1000
+                st  = _pid_stats[cmd]
+                has_data = bool(_obd_bytes(raw)) or (cmd == 'ATRV' and 'V' in raw)
+                if has_data:
+                    # Exponential moving average of response time
+                    st['avg_ms']  = st['avg_ms'] * 0.85 + ms * 0.15
+                    st['failures'] = 0
+                else:
+                    st['failures'] += 1
+                    if st['failures'] >= _BLACKLIST_FAILURES:
+                        st['blacklisted']    = True
+                        st['blacklisted_at'] = time.time()
+                        print(f'[OBD] PID {cmd} blacklisted after {_BLACKLIST_FAILURES} failures (avg {st["avg_ms"]:.0f}ms)')
+                return raw
+
+            # ── Poll loop (adaptive) ───────────────────────────
             while True:
                 try:
-                    # RPM — PID 010C: ((A*256)+B)/4
-                    b = _obd_bytes(_obd_cmd(ser, '010C'))
-                    if len(b) >= 2:
-                        truck_state['rpm'] = ((b[0] * 256) + b[1]) / 4
+                    for row in _pid_order():
+                        cmd, name, lo, hi, ts_key, sd_key, parser, _ = row
+                        raw = _obd_cmd_timed(ser, cmd)
+                        b   = _obd_bytes(raw)
+                        val = parser(b)
+                        val = _validate_obd(val, lo, hi, name)
+                        if val is not None:
+                            truck_state[ts_key] = val
+                            if sd_key:
+                                sensor_data[sd_key] = val
 
-                    # Speed — PID 010D: A km/h → mph
-                    b = _obd_bytes(_obd_cmd(ser, '010D'))
-                    if b:
-                        truck_state['speed'] = round(b[0] * 0.621371)
-
-                    # Coolant temp — PID 0105: A-40 °C → °F
-                    b = _obd_bytes(_obd_cmd(ser, '0105'))
-                    if b:
-                        sensor_data['coolant_temp'] = round((b[0] - 40) * 9 / 5 + 32)
-
-                    # Throttle — PID 0111: A*100/255 %
-                    b = _obd_bytes(_obd_cmd(ser, '0111'))
-                    if b:
-                        truck_state['throttle'] = round(b[0] * 100 / 255)
-
-                    # MAP/boost — PID 010B: A kPa → psi above atmosphere
-                    b = _obd_bytes(_obd_cmd(ser, '010B'))
-                    if b:
-                        truck_state['boost'] = round((b[0] - 101.325) * 0.145038, 1)
-
-                    # Battery voltage — AT command (ELM327 internal)
+                    # Battery voltage — AT command outside PID table (no bytes to parse)
                     raw_v = _obd_cmd(ser, 'ATRV')
                     try:
-                        truck_state['battery'] = round(float(raw_v.replace('V', '').strip()), 1)
+                        raw_bat = round(float(raw_v.replace('V', '').strip()), 1)
+                        val = _validate_obd(raw_bat, 0, 20, 'battery_v')
+                        if val is not None:
+                            truck_state['battery_main'] = val
+                            sensor_data['battery_v']    = val
                     except ValueError:
                         pass
 
@@ -8818,7 +10857,7 @@ def obd_autodetect():
                     print(f'[OBD] read error: {e}')
                     break
 
-                time.sleep(0.2)
+                time.sleep(0.15)
 
         except Exception as e:
             print(f'[OBD] connection error on {port_device}: {e}')

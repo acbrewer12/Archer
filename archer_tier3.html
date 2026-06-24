@@ -7,7 +7,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Quicksand:wght@400;600;700&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column}
+html{height:100%}
+body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column}
 
 /* THEME */
 :root{
@@ -39,24 +40,24 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .status-location{font-size:10px;color:var(--label);letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-left:auto}
 
 /* CONTENT */
-.content{flex:1;padding:12px;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+.content{flex:1;padding:8px 12px;display:flex;flex-direction:column;gap:7px;overflow-y:auto}
 
 /* ARCHER MESSAGE */
-.archer-card{background:var(--bg2);border:1px solid var(--blue);border-radius:10px;padding:14px 16px;display:flex;align-items:flex-start;gap:10px}
+.archer-card{background:var(--bg2);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;display:flex;align-items:flex-start;gap:10px}
 .archer-icon{font-size:20px;flex-shrink:0;margin-top:1px}
 .archer-label{font-size:8px;color:var(--blue);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px}
 .archer-text{font-size:13px;color:#ccd;line-height:1.5;font-style:italic}
 
 /* BIG STAT */
-.big-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.big-stat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 10px;text-align:center}
+.big-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.big-stat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 8px;text-align:center}
 .big-val{font-family:'Bebas Neue',sans-serif;font-size:42px;line-height:1;letter-spacing:1px}
 .big-unit{font-size:10px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
 .big-label{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
 
 /* HEALTH GRID */
-.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.health-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;transition:border-color 0.3s}
+.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.health-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;transition:border-color 0.3s}
 .health-name{font-size:9px;color:var(--text3);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
 .health-val{font-size:16px;font-weight:700;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 .health-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-left:6px}
@@ -68,24 +69,24 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .section-hdr{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding:2px 0 6px;border-bottom:1px solid var(--border);margin-bottom:2px}
 
 /* TRIP CARD */
-.trip-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.trip-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 12px}
 .trip-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #0d0d18}
 .trip-row:last-child{border-bottom:none}
 .trip-label{font-size:9px;color:var(--text3);letter-spacing:1px;font-family:'Share Tech Mono',monospace}
 .trip-val{font-size:12px;font-weight:700;color:var(--text2);font-family:'Share Tech Mono',monospace}
 
 /* WEATHER */
-.weather-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+.weather-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:10px}
 .weather-icon{font-size:32px}
 .weather-temp{font-family:'Bebas Neue',sans-serif;font-size:36px;color:#fff}
 .weather-cond{font-size:10px;color:var(--text3);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
 .weather-location{font-size:9px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:1px}
 
 /* SAFE INDICATOR */
-.safe-card{background:linear-gradient(135deg,#001a0e,#0a0a12);border:2px solid var(--green);border-radius:12px;padding:16px;text-align:center}
-.safe-icon{font-size:48px;margin-bottom:8px}
-.safe-title{font-size:14px;color:var(--green);letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:4px}
-.safe-sub{font-size:10px;color:var(--text3);letter-spacing:1px;line-height:1.6}
+.safe-card{background:linear-gradient(135deg,#001a0e,#0a0a12);border:2px solid var(--green);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:12px}
+.safe-icon{font-size:28px;flex-shrink:0}
+.safe-title{font-size:13px;color:var(--green);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
+.safe-sub{font-size:10px;color:var(--text3);letter-spacing:0px;line-height:1.4}
 
 /* FOOTER */
 .footer{background:var(--bg2);border-top:1px solid var(--border);padding:6px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
@@ -159,9 +160,11 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
 
   <!-- SAFE STATUS -->
   <div class="safe-card" id="safe-card">
-    <div class="safe-icon">✅</div>
-    <div class="safe-title" id="safe-title">ALL SYSTEMS GOOD</div>
-    <div class="safe-sub" id="safe-sub">Truck is running normally.<br>No warnings or alerts active.</div>
+    <div class="safe-icon" id="safe-icon">✅</div>
+    <div>
+      <div class="safe-title" id="safe-title">ALL SYSTEMS GOOD</div>
+      <div class="safe-sub" id="safe-sub">Truck is running normally. No warnings active.</div>
+    </div>
   </div>
 
   <!-- ARCHER MESSAGE -->
@@ -215,7 +218,7 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
     <div class="health-card">
       <div>
         <div class="health-name">E85</div>
-        <div class="health-val" id="t3-fuel">82%</div>
+        <div class="health-val" id="t3-fuel">---</div>
       </div>
       <div class="health-dot good-dot" id="t3-fuel-dot"></div>
     </div>
@@ -269,6 +272,12 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;min-height
 
 </div>
 
+<div style="background:var(--bg2);border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;gap:6px;flex-shrink:0">
+  <button id="mic-btn-t3" onclick="toggleVoice3()" style="width:32px;height:32px;border-radius:50%;background:var(--bg3);border:1px solid var(--blue);color:var(--blue);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s">🎤</button>
+  <input id="voice-input-t3" type="text" placeholder="Ask about the truck..." onkeydown="if(event.key==='Enter')sendVoice3()" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:7px 12px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;letter-spacing:0.5px">
+  <button onclick="sendVoice3()" style="width:32px;height:32px;border-radius:50%;background:var(--blue);border:none;color:#fff;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">↑</button>
+</div>
+
 <div class="footer">
   <div class="footer-item">FAMILY ACCESS</div>
   <div class="footer-item" id="f-time2">--:--</div>
@@ -310,7 +319,7 @@ function getWeatherIcon(condition) {
 
 function updateSafeCard(d) {
   const card  = document.getElementById('safe-card');
-  const icon  = document.getElementById('safe-card')?.querySelector('.safe-icon');
+  const icon  = document.getElementById('safe-icon');
   const title = document.getElementById('safe-title');
   const sub   = document.getElementById('safe-sub');
   const warn  = document.getElementById('warn-banner');
@@ -377,26 +386,34 @@ async function poll() {
     // Oil
     const oil = d.oil_temp || 195;
     const oilCls = oil > 225 ? 'bad' : oil > 210 ? 'warn' : 'good';
-    setEl('t3-oil', oil + 'F');
+    setEl('t3-oil', Math.round(oil) + 'F');
     setColor('t3-oil', oilCls); setDot('t3-oil-dot', oilCls);
 
     // Battery
     const bat = d.battery || 13.8;
     const batCls = bat < 12 ? 'bad' : bat < 12.8 ? 'warn' : 'good';
-    setEl('t3-bat', bat + 'V');
+    setEl('t3-bat', parseFloat(bat).toFixed(1) + 'V');
     setColor('t3-bat', batCls); setDot('t3-bat-dot', batCls);
 
     // Coolant
     const cool = d.coolant || 190;
     const coolCls = cool > 230 ? 'bad' : cool > 215 ? 'warn' : 'good';
-    setEl('t3-cool', cool + 'F');
+    setEl('t3-cool', Math.round(cool) + 'F');
     setColor('t3-cool', coolCls); setDot('t3-cool-dot', coolCls);
 
-    // E85 ethanol
-    const eth3 = d.ethanol != null ? d.ethanol : 82;
-    const fuelCls = eth3 < 30 ? 'bad' : eth3 < 55 ? 'warn' : 'good';
-    setEl('t3-fuel', eth3 + '%');
-    setColor('t3-fuel', fuelCls); setDot('t3-fuel-dot', fuelCls);
+    // E85 ethanol — treat 0 as sensor offline
+    const eth3raw = d.ethanol;
+    if (eth3raw != null && eth3raw > 0) {
+      const fuelCls = eth3raw < 30 ? 'bad' : eth3raw < 55 ? 'warn' : 'good';
+      setEl('t3-fuel', eth3raw + '%');
+      setColor('t3-fuel', fuelCls); setDot('t3-fuel-dot', fuelCls);
+    } else {
+      setEl('t3-fuel', '---');
+      const fuelEl2 = document.getElementById('t3-fuel');
+      if (fuelEl2) { fuelEl2.className = fuelEl2.className.replace(/\bgood\b|\bwarn\b|\bbad\b/g,'').trim(); fuelEl2.style.color = 'var(--text3)'; }
+      const fuelDot = document.getElementById('t3-fuel-dot');
+      if (fuelDot) { fuelDot.style.background = 'var(--label)'; fuelDot.style.boxShadow = 'none'; }
+    }
 
     // TC
     const tcOn = d.tc_on;
@@ -423,7 +440,8 @@ async function poll() {
     setEl('t3-score', grade + ' — ' + score + '/100');
     document.getElementById('t3-score').style.color = score >= 90 ? 'var(--green)' : score >= 70 ? 'var(--yellow)' : 'var(--red)';
     setEl('t3-range', (d.fuel_range || '--') + ' mi');
-    setEl('t3-road', (d.road || '--').substring(0, 22));
+    const road3 = (d.road && d.road.toLowerCase() !== 'none') ? d.road : '--';
+    setEl('t3-road', road3.substring(0, 22));
     const faults = d.fault_count || 0;
     setEl('t3-faults', faults > 0 ? faults + ' ACTIVE' : 'NONE');
     setColor('t3-faults', faults > 0 ? 'bad' : 'good');
@@ -432,7 +450,8 @@ async function poll() {
     updateSafeCard(d);
 
     // Status bar
-    setEl('status-location', (d.road || 'SALEM MO').toUpperCase().substring(0,20));
+    const roadName = (d.road && d.road.toLowerCase() !== 'none' && d.road !== '--') ? d.road : 'SALEM, MO';
+    setEl('status-location', roadName.toUpperCase().substring(0,20));
 
   } catch(e) {}
 }
@@ -441,5 +460,61 @@ setInterval(updateClock, 1000);
 setInterval(poll, 2000);
 updateClock();
 poll();
+
+// ─── TIER 3 VOICE (Family — informational only) ───
+const SR3 = window.SpeechRecognition || window.webkitSpeechRecognition;
+let sr3 = null, sr3Active = false;
+
+function toggleVoice3() {
+  if (sr3Active) { if (sr3) sr3.stop(); return; }
+  if (!SR3) { document.getElementById('voice-input-t3').focus(); return; }
+  sr3 = new SR3();
+  sr3.lang = 'en-US';
+  sr3.interimResults = false;
+  sr3.onresult = e => {
+    document.getElementById('voice-input-t3').value = e.results[0][0].transcript;
+    sendVoice3();
+  };
+  sr3.onend = () => { sr3Active = false; setMicState3(false); };
+  sr3.onerror = () => { sr3Active = false; setMicState3(false); };
+  sr3.start();
+  sr3Active = true;
+  setMicState3(true);
+}
+
+function setMicState3(on) {
+  const btn = document.getElementById('mic-btn-t3');
+  btn.style.background = on ? 'rgba(68,136,255,0.2)' : 'var(--bg3)';
+  btn.textContent = on ? '⏹' : '🎤';
+}
+
+async function sendVoice3() {
+  const inp = document.getElementById('voice-input-t3');
+  const cmd = inp.value.trim();
+  if (!cmd) return;
+  inp.value = '';
+  setEl('archer-msg', 'Thinking...');
+  try {
+    const r = await fetch('/voice_command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: cmd})
+    });
+    const d = await r.json();
+    const resp = d.response || 'Got it.';
+    setEl('archer-msg', resp);
+    tts3(resp);
+  } catch(e) {
+    setEl('archer-msg', "Can't connect to Archer.");
+  }
+}
+
+function tts3(text) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0; u.pitch = 1;
+  speechSynthesis.speak(u);
+}
 </script>
 </body></html>

@@ -2,21 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=480, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Mirror</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+html{width:100%;height:100%;background:#000}
+body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
 
 /* ── LAYOUT ─────────────────────────────── */
-#app{display:grid;grid-template-rows:26px 1fr 28px 32px 20px;height:272px;width:480px}
+#app{display:grid;grid-template-rows:26px 1fr 28px 32px 18px 20px;height:272px;width:480px}
 
 /* ── TOP BAR ────────────────────────────── */
 #topbar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#080808;border-bottom:1px solid #111}
 #tb-logo{font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:4px;color:#cc0000}
-#tb-clock{font-size:11px;letter-spacing:2px;color:#555}
-#tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:#444}
+#tb-clock{display:flex;flex-direction:column;align-items:center;line-height:1}
+#tb-clock-time{font-family:'Share Tech Mono',monospace;font-size:13px;letter-spacing:3px;color:#888;font-weight:400}
+#tb-clock-date{font-family:'Share Tech Mono',monospace;font-size:7px;letter-spacing:1px;color:#444;margin-top:1px}
+#tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:#555}
 #obd-dot{width:7px;height:7px;border-radius:50%;background:#333;transition:background 0.4s}
 #obd-dot.live{background:#00ff44;box-shadow:0 0 5px #00ff44}
 #obd-dot.sim{background:#ff6600;box-shadow:0 0 5px #ff6600}
@@ -24,35 +27,47 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
 /* ── CENTER — SPEED ─────────────────────── */
 #center{display:flex;align-items:center;justify-content:space-between;padding:0 14px}
 #speed-wrap{text-align:center;line-height:1}
-#speed-num{font-family:'Bebas Neue',sans-serif;font-size:96px;color:#ffffff;line-height:0.9;letter-spacing:-2px;transition:color 0.3s}
-#speed-num.fast{color:#ff4400}
+#speed-num{font-family:'Bebas Neue',sans-serif;font-size:96px;color:#ffffff;line-height:0.9;letter-spacing:-2px;transition:color 0.3s;will-change:color;transform:translateZ(0)}
+#speed-num.fast{color:#ff4400;text-shadow:0 0 30px rgba(255,68,0,0.35)}
 #speed-unit{font-size:9px;letter-spacing:4px;color:#333;margin-top:2px}
 
 /* ── RIGHT STATS ────────────────────────── */
 #right-stats{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .rstat{text-align:right}
 .rstat-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1;transition:color 0.3s}
-.rstat-lbl{font-size:7px;letter-spacing:2px;color:#333}
+.rstat-lbl{font-size:7px;letter-spacing:2px;color:#888}  /* WCAG AA: #888 on #000 = 5.9:1 */
 #rs-rpm .rstat-val{color:#ffaa00}
 #rs-boost .rstat-val{color:#ff6600}
 
 /* ── RPM BAR ────────────────────────────── */
 #rpm-bar-wrap{padding:0 10px;position:relative}
 #rpm-track{background:#0d0d0d;height:10px;border-radius:2px;overflow:hidden;border:1px solid #111}
-#rpm-fill{height:100%;width:12%;background:linear-gradient(90deg,#00cc44,#ffaa00,#cc0000);border-radius:2px;transition:width 0.15s ease-out}
-#rpm-labels{display:flex;justify-content:space-between;margin-top:2px;font-size:7px;color:#222;letter-spacing:0}
+#rpm-fill{height:100%;width:12%;background:linear-gradient(90deg,#00cc44,#ffaa00,#cc0000);border-radius:2px;transition:width 0.15s ease-out;will-change:width;transform:translateZ(0)}
+#rpm-labels{display:flex;justify-content:space-between;margin-top:2px;font-size:7px;color:#444;letter-spacing:0}
 #rpm-num-overlay{position:absolute;right:14px;top:-1px;font-size:9px;color:#ffaa00;letter-spacing:1px}
 
 /* ── BOTTOM STATS ───────────────────────── */
 #bottombar{display:grid;grid-template-columns:repeat(5,1fr);align-items:center;padding:0 8px;border-top:1px solid #0d0d0d;background:#050505}
 .bstat{text-align:center}
 .bstat-val{font-family:'Bebas Neue',sans-serif;font-size:18px;line-height:1;transition:color 0.3s}
-.bstat-lbl{font-size:6px;letter-spacing:1px;color:#333;margin-top:1px}
+.bstat-lbl{font-size:6px;letter-spacing:1px;color:#555;margin-top:1px}
 #bs-boost .bstat-val{color:#ff6600}
 #bs-oil .bstat-val{color:#ffaa00}
 #bs-bat .bstat-val{color:#00cc44}
 #bs-eth .bstat-val{color:#4488ff}
 #bs-mood .bstat-val{font-size:11px;color:#cc0000;letter-spacing:1px}
+
+/* ── WEATHER STRIP ──────────────────────── */
+#wx-strip{display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#060606;border-top:1px solid #0d0d0d;overflow:hidden}
+#wx-left{display:flex;align-items:center;gap:5px}
+#wx-icon{font-size:11px;line-height:1}
+#wx-temp{font-family:'Bebas Neue',sans-serif;font-size:13px;color:#aaa;letter-spacing:1px}
+#wx-feels{font-size:7px;color:#555;letter-spacing:1px}
+#wx-right{display:flex;align-items:center;gap:8px}
+#wx-humidity{font-size:7px;color:#4488ff;letter-spacing:1px}
+#wx-uv-wrap{display:flex;align-items:center;gap:3px}
+#wx-uv-lbl{font-size:6px;color:#555;letter-spacing:1px}
+#wx-uv{font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;transition:color 0.3s}
 
 /* ── ARCHER MESSAGE ─────────────────────── */
 #msg-bar{display:flex;align-items:center;gap:8px;padding:0 10px;background:#080808;border-top:1px solid #111;overflow:hidden}
@@ -72,7 +87,10 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
   <!-- TOP BAR -->
   <div id="topbar">
     <div id="tb-logo">ARCHER</div>
-    <div id="tb-clock">—</div>
+    <div id="tb-clock">
+      <div id="tb-clock-time">--:--</div>
+      <div id="tb-clock-date">--- -- ----</div>
+    </div>
     <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
   </div>
 
@@ -100,7 +118,7 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
     <div id="rpm-labels">
       <span>0</span><span>1000</span><span>2000</span><span>3000</span><span>4000</span><span>5000</span><span>6200</span>
     </div>
-    <div id="rpm-num-overlay" id="rpm-overlay">750 RPM</div>
+    <div id="rpm-num-overlay">750 RPM</div>
   </div>
 
   <!-- BOTTOM STATS -->
@@ -118,7 +136,7 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
       <div class="bstat-lbl">BATTERY</div>
     </div>
     <div class="bstat" id="bs-eth">
-      <div class="bstat-val" id="b-eth">82%</div>
+      <div class="bstat-val" id="b-eth">---</div>
       <div class="bstat-lbl">E85</div>
     </div>
     <div class="bstat" id="bs-mood">
@@ -127,7 +145,23 @@ html,body{width:480px;height:272px;overflow:hidden;background:#000;color:#fff;fo
     </div>
   </div>
 
-  <!-- ARCHER MESSAGE (5th grid row) -->
+  <!-- WEATHER STRIP (5th grid row) -->
+  <div id="wx-strip">
+    <div id="wx-left">
+      <span id="wx-icon">--</span>
+      <span id="wx-temp">--°</span>
+      <span id="wx-feels">FEELS --°</span>
+    </div>
+    <div id="wx-right">
+      <span id="wx-humidity">--%RH</span>
+      <div id="wx-uv-wrap">
+        <span id="wx-uv-lbl">UV</span>
+        <span id="wx-uv" style="color:#888">--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARCHER MESSAGE (6th grid row) -->
   <div id="msg-bar">
     <span id="msg-prefix">ARCHER</span>
     <span id="msg-text">Online. Everything looks good.</span>
@@ -143,13 +177,58 @@ function $(id){ return document.getElementById(id); }
 function set(id, v){ const e=$(id); if(e) e.textContent = v; }
 function color(id, c){ const e=$(id); if(e) e.style.color = c; }
 
+// ── WEATHER HELPERS ───────────────────────
+function _wxIcon(cond) {
+  if (!cond) return '--';
+  const c = cond.toLowerCase();
+  if (c.includes('thunder') || c.includes('storm')) return '⚡';
+  if (c.includes('snow') || c.includes('blizzard') || c.includes('flurr')) return '❄';
+  if (c.includes('sleet') || c.includes('freezing rain') || c.includes('ice')) return '🌧';
+  if (c.includes('rain') || c.includes('shower') || c.includes('drizzle')) return '🌧';
+  if (c.includes('fog') || c.includes('mist') || c.includes('haze')) return '🌫';
+  if (c.includes('cloud') || c.includes('overcast')) return '☁';
+  if (c.includes('partly') || c.includes('mostly cloudy')) return '⛅';
+  if (c.includes('clear') || c.includes('sunny') || c.includes('fair')) return '☀';
+  if (c.includes('wind') || c.includes('breezy')) return '💨';
+  return '🌡';
+}
+
+function _uvColor(uv) {
+  if (uv <= 2)  return '#00cc44'; // green   — low
+  if (uv <= 5)  return '#ffdd00'; // yellow  — moderate
+  if (uv <= 7)  return '#ff8800'; // orange  — high
+  return '#ff3300';               // red     — very high / extreme
+}
+
+function updateWeather(wx) {
+  if (!wx) return;
+  const cond  = wx.condition   || '';
+  const temp  = wx.temp        ?? null;
+  const feels = wx.feels_like  ?? null;
+  const hum   = wx.humidity    ?? null;
+  const uv    = wx.uv_index    ?? null;
+
+  set('wx-icon',   _wxIcon(cond));
+  set('wx-temp',   temp   !== null ? Math.round(temp)   + '°'                  : '--°');
+  set('wx-feels',  feels  !== null ? 'FEELS ' + Math.round(feels) + '°'        : 'FEELS --°');
+  set('wx-humidity', hum  !== null ? Math.round(hum)    + '% RH'                   : '--% RH');
+
+  if (uv !== null) {
+    set('wx-uv', uv);
+    color('wx-uv', _uvColor(uv));
+  } else {
+    set('wx-uv', '--');
+    color('wx-uv', '#888');
+  }
+}
+
 function applyData(d) {
   const rpm   = d.rpm   ?? 750;
   const speed = d.speed ?? 0;
   const boost = d.boost ?? 0;
   const oil   = d.oil_temp ?? 195;
   const bat   = d.battery  ?? 13.8;
-  const eth   = d.ethanol  ?? 82;
+  const eth   = d.ethanol  ?? null;
   const mood  = (d.mood || 'ready').toUpperCase();
   const msg   = d.archer_msg || '';
   const warn  = d.warning ?? false;
@@ -180,10 +259,19 @@ function applyData(d) {
   color('b-bat', bat < 12.0 ? '#ff3300' : bat < 12.8 ? '#ffaa00' : '#00cc44');
 
   // Ethanol
-  set('b-eth', Math.round(eth) + '%');
+  if (eth !== null && eth > 0) {
+    set('b-eth', Math.round(eth) + '%');
+    color('b-eth', '#4488ff');
+  } else {
+    set('b-eth', '---');
+    color('b-eth', '#444');
+  }
 
   // Mood
-  set('b-mood', mood.substring(0, 6));
+  set('b-mood', mood.substring(0, 8));
+
+  // Weather strip
+  updateWeather(d.weather || null);
 
   // Warning flash
   document.getElementById('app').classList.toggle('warning', warn);
@@ -211,9 +299,22 @@ function updateObd(d) {
   }
 }
 
+const _DAYS  = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const _MONTHS= ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
 function updateClock() {
-  set('tb-clock', new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+  const now = new Date();
+  const h   = String(now.getHours()).padStart(2,'0');
+  const m   = String(now.getMinutes()).padStart(2,'0');
+  const s   = String(now.getSeconds()).padStart(2,'0');
+  const timeStr = h + ':' + m + ':' + s;
+  const dateStr = _DAYS[now.getDay()] + ' ' + _MONTHS[now.getMonth()] + ' ' + String(now.getDate()).padStart(2,'0');
+  set('tb-clock-time', timeStr);
+  set('tb-clock-date', dateStr);
 }
+
+// Tick clock every second independently of OBD poll
+setInterval(updateClock, 1000);
 
 // ── POLL ──────────────────────────────────
 let pollTick = 0;
@@ -232,6 +333,21 @@ async function poll() {
 
 poll();
 setInterval(poll, 800);
+
+function scaleToFit() {
+  const app = document.getElementById('app');
+  const s = Math.min(window.innerWidth / 480, window.innerHeight / 272);
+  const scaledW = 480 * s;
+  const scaledH = 272 * s;
+  const ml = (window.innerWidth  - scaledW) / 2;
+  const mt = (window.innerHeight - scaledH) / 2;
+  app.style.transformOrigin = 'top left';
+  app.style.transform  = `scale(${s})`;
+  app.style.marginLeft = ml + 'px';
+  app.style.marginTop  = mt + 'px';
+}
+window.addEventListener('resize', scaleToFit);
+scaleToFit();
 </script>
 </body>
 </html>

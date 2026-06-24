@@ -1,0 +1,48 @@
+name: Build Archer OS Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/archer-truck-ai-system-TlfGE]
+    paths:
+      - 'archer-os/**'
+      - 'usb-os/**'
+      - 'pi/**'
+      - 'archer.py'
+      - 'archer_*.html'
+      - 'requirements.txt'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Archer OS VM image
+        run: |
+          chmod +x archer-os/build-vm.sh
+          sudo ARCHER_LOCAL_SRC="$GITHUB_WORKSPACE" bash archer-os/build-vm.sh
+
+      - name: Publish to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-build --yes 2>/dev/null || true
+          git push origin :refs/tags/latest-build 2>/dev/null || true
+
+          # Build file list — raw.gz always included, VMDK only if under 2GB limit
+          FILES="archer-os.img.gz"
+          VMDK_SIZE=$(stat -c%s archer-os.vmdk 2>/dev/null || echo 0)
+          if [ "$VMDK_SIZE" -lt 2000000000 ]; then
+            FILES="$FILES archer-os.vmdk"
+          fi
+
+          gh release create latest-build \
+            --title "Archer OS — Latest Build" \
+            --notes "Built from commit $(git rev-parse --short HEAD) on $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --prerelease \
+            $FILES

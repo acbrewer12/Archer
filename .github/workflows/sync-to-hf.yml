@@ -9,15 +9,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          lfs: true
 
       - name: Push to HuggingFace Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          # Build a clean deploy tree — only files HF Spaces needs.
+          # Excludes archer-os/, pi/, usb-os/ and all compiled binaries
+          # so HuggingFace never sees binary files in history.
+          mkdir /tmp/hf-deploy
+          cd /tmp/hf-deploy
+          git init
           git config user.email "archer@ayden.local"
           git config user.name "Archer"
+
+          cp $GITHUB_WORKSPACE/archer.py .
+          cp $GITHUB_WORKSPACE/requirements.txt .
+          cp $GITHUB_WORKSPACE/archer_*.html . 2>/dev/null || true
+          [ -f $GITHUB_WORKSPACE/README.md ] && cp $GITHUB_WORKSPACE/README.md .
+
+          git add .
+          git commit -m "Deploy $(cd $GITHUB_WORKSPACE && git rev-parse --short HEAD)"
+
           git remote add hf https://aydencatman:${HF_TOKEN}@huggingface.co/spaces/aydencatman/Archer
           git push hf HEAD:main --force

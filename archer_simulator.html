@@ -4,74 +4,96 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Simulator</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;min-height:100vh;padding:12px}
-h1{font-size:13px;letter-spacing:4px;color:#cc0000;text-align:center;margin-bottom:4px}
-.subtitle{font-size:9px;letter-spacing:2px;color:#333;text-align:center;margin-bottom:16px}
+html{overflow-x:hidden}
+body{background:#0a0a0a;color:#cc4400;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:12px 12px 24px;overflow-x:hidden;width:100vw;max-width:100vw}
+
+/* Header */
+.hdr{text-align:center;margin-bottom:14px;padding:12px 14px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;border-bottom:2px solid #cc0000}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:#cc0000;overflow:hidden;white-space:nowrap}
+.hdr-sub{font-size:9px;letter-spacing:1px;color:#444;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Status bar */
-#status-bar{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:7px 12px;margin-bottom:14px;font-size:10px;letter-spacing:1px}
+#status-bar{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:10px;letter-spacing:1px}
 #obd-dot{width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0;transition:background 0.4s}
 #obd-dot.live{background:#00ff44;box-shadow:0 0 6px #00ff44}
 #obd-dot.sim{background:#ff6600;box-shadow:0 0 6px #ff6600}
-#status-text{flex:1;color:#666}
-#status-text span{color:#cc0000}
+#status-text{flex:1;color:#555}
+#status-text span{color:#cc4400}
+
+/* Section labels */
+.section-label{font-size:9px;letter-spacing:2px;color:#995500;margin-bottom:8px;text-transform:uppercase;border-left:2px solid #cc0000;padding-left:7px;overflow:hidden}
+
+/* Scenario select row */
+#scn-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%}
+#scn-select{flex:1;background:#0d0d0d;border:1px solid #2a2a2a;color:#cc4400;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px;padding:7px 10px;border-radius:5px;cursor:pointer;outline:none;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='%23cc4400' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+#scn-select:focus{border-color:#cc0000}
+#scn-select option{background:#0a0a0a;color:#cc4400}
+#btn-apply-scn{background:#1a0500;border:1px solid #cc0000;color:#ff6600;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;padding:7px 12px;border-radius:5px;cursor:pointer;text-transform:uppercase;white-space:nowrap;transition:all 0.15s}
+#btn-apply-scn:hover{background:#2a0800;box-shadow:0 0 8px rgba(204,0,0,0.2)}
+#btn-randomize{background:#0a1a0a;border:1px solid #006622;color:#00cc44;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;padding:7px 10px;border-radius:5px;cursor:pointer;text-transform:uppercase;white-space:nowrap;transition:all 0.15s}
+#btn-randomize:hover{background:#0d2a0d;box-shadow:0 0 8px rgba(0,204,68,0.2)}
+#btn-randomize.spinning{animation:randspin 0.4s ease-out}
+@keyframes randspin{0%{transform:scale(1)}50%{transform:scale(0.9) rotate(-5deg)}100%{transform:scale(1)}}
 
 /* Scenario buttons */
-.section-label{font-size:9px;letter-spacing:3px;color:#333;margin-bottom:8px;text-transform:uppercase}
-#scenarios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px}
-.scn-btn{background:#0d0d0d;border:1px solid #1a1a1a;color:#555;font-family:'Courier New',monospace;font-size:9px;letter-spacing:2px;padding:8px 4px;border-radius:3px;cursor:pointer;text-align:center;transition:all 0.15s;text-transform:uppercase}
-.scn-btn:hover{border-color:#cc0000;color:#cc0000;background:#100000}
-.scn-btn.active{border-color:#cc0000;color:#ff3333;background:#1a0000}
+#scenarios{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px;width:100%}
+.scn-btn{background:#111;border:1px solid #2a2a2a;color:#666;font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;padding:8px 4px;border-radius:5px;cursor:pointer;text-align:center;transition:all 0.15s;text-transform:uppercase;min-width:0}
+.scn-btn:hover{border-color:#aa3300;color:#cc4400;background:#100800}
+.scn-btn.active{border-color:#cc0000;color:#ff6600;background:#1a0500;box-shadow:0 0 8px rgba(204,0,0,0.15)}
 
 /* Sliders */
-#sliders{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.slider-card{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:10px 12px}
+#sliders{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.slider-card{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px}
 .slider-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .slider-name{font-size:9px;letter-spacing:2px;color:#666;text-transform:uppercase}
-.slider-val{font-size:14px;color:#ff3333;font-weight:bold;min-width:60px;text-align:right}
-input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#1a1a1a;outline:none;cursor:pointer}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#cc0000;cursor:pointer;border:2px solid #ff3333}
-input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #ff3333;cursor:pointer}
-.slider-range{display:flex;justify-content:space-between;font-size:8px;color:#333;margin-top:3px}
+.slider-val{font-family:'Bebas Neue',sans-serif;font-size:18px;color:#cc4400;min-width:50px;text-align:right;line-height:1;transition:color 0.2s}
+.slider-val.changed{color:#ff8800}
+input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#1a1a1a;outline:none;cursor:pointer;transition:background 0.3s}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#cc0000;cursor:pointer;border:2px solid #ff4400}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #ff4400;cursor:pointer}
+.slider-range{display:flex;justify-content:space-between;font-size:8px;color:#444;margin-top:3px}
 
 /* Live readout */
-#readout{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:10px 12px;margin-bottom:14px}
-.readout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px}
-.readout-item{text-align:center}
-.readout-lbl{font-size:8px;letter-spacing:1px;color:#333;text-transform:uppercase;display:block;margin-bottom:2px}
-.readout-num{font-size:13px;color:#ff6666;font-weight:bold}
-.readout-num.warn{color:#ff4400}
+#readout{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;margin-bottom:10px;width:100%}
+.readout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.readout-item{text-align:center;padding:6px 4px;border:1px solid #222;border-radius:4px;background:#0d0d0d;min-width:0;overflow:hidden}
+.readout-lbl{font-size:8px;letter-spacing:1px;color:#555;text-transform:uppercase;display:block;margin-bottom:2px}
+.readout-num{font-family:'Bebas Neue',sans-serif;font-size:20px;color:#cc4400}
+.readout-num.warn{color:#ff4400;text-shadow:0 0 6px rgba(255,68,0,0.4)}
 
 /* Random toggle */
-#rand-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;margin-bottom:14px}
-.rand-label{font-size:9px;letter-spacing:2px;color:#666;flex:1}
+#rand-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;margin-bottom:10px}
+.rand-label{font-size:9px;letter-spacing:1px;color:#555;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toggle{position:relative;width:36px;height:20px;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0}
 .toggle-track{position:absolute;inset:0;border-radius:10px;background:#1a1a1a;border:1px solid #2a2a2a;cursor:pointer;transition:background 0.2s}
-.toggle input:checked+.toggle-track{background:#330000;border-color:#cc0000}
+.toggle input:checked+.toggle-track{background:#2a0800;border-color:#cc0000}
 .toggle-thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#444;transition:transform 0.2s,background 0.2s;pointer-events:none}
 .toggle input:checked~.toggle-thumb{transform:translateX(16px);background:#cc0000}
 
 /* BeamNG status card */
-#beamng-card{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:7px 12px;margin-bottom:14px;font-size:10px;letter-spacing:1px}
+#beamng-card{display:flex;align-items:center;gap:10px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:7px 12px;margin-bottom:10px;font-size:10px;letter-spacing:1px}
 #beamng-dot{width:8px;height:8px;border-radius:50%;background:#333;flex-shrink:0;transition:background 0.4s}
 #beamng-dot.live{background:#00aaff;box-shadow:0 0 6px #00aaff}
-#beamng-label{flex:1;color:#666}
+#beamng-label{flex:1;color:#555}
 #beamng-label span{color:#0088cc}
 #beamng-car{font-size:9px;color:#333;letter-spacing:1px}
 
 /* Log */
-#log{background:#050505;border:1px solid #111;border-radius:4px;padding:8px 10px;height:80px;overflow-y:auto;font-size:10px;color:#444;line-height:1.6}
+#log{background:#050505;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px;height:90px;overflow-y:auto;font-size:10px;color:#555;line-height:1.6}
 #log .entry{color:#555}
-#log .entry.ok{color:#cc6600}
-#log .entry.live{color:#00aa33}
+#log .entry.ok{color:#996622}
+#log .entry.live{color:#008833}
 </style>
 </head>
 <body>
 
-<h1>ARCHER SIMULATOR</h1>
-<p class="subtitle">2006 GMC SIERRA 2500HD — OBD CONTROL PANEL</p>
+<div class="hdr">
+  <div class="hdr-title">ARCHER SIMULATOR</div>
+  <div class="hdr-sub">2006 GMC SIERRA 2500HD — OBD CONTROL PANEL</div>
+</div>
 
 <!-- BeamNG status -->
 <div id="beamng-card">
@@ -89,6 +111,26 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 
 <!-- Scenarios -->
 <div class="section-label">Quick Scenarios</div>
+<div id="scn-row">
+  <select id="scn-select">
+    <option value="">-- Select Scenario --</option>
+    <option value="idle">Idle — Engine at rest, 750 RPM</option>
+    <option value="warmup">Warm Up — Cold engine climbing to temp</option>
+    <option value="city">City — Stop-and-go, 0-45 mph</option>
+    <option value="cruise">Cruise — Steady 65 mph highway</option>
+    <option value="highway">Highway — 80 mph full throttle</option>
+    <option value="towing">Towing — Heavy load, high temps</option>
+    <option value="race_track">Race Track — Max RPM, peak boost</option>
+    <option value="cold_start">Cold Start — Below-zero crank scenario</option>
+    <option value="overheating">Overheating — Coolant &amp; oil dangerzone</option>
+    <option value="launch">Launch — Staged launch control</option>
+    <option value="cooldown">Cool Down — Post-run idle</option>
+    <option value="warning">Warning — Active fault codes</option>
+    <option value="wot">WOT — Wide open throttle burst</option>
+  </select>
+  <button id="btn-apply-scn" onclick="applySelectedScenario()">APPLY</button>
+  <button id="btn-randomize" onclick="randomizeAll()">RANDOM</button>
+</div>
 <div id="scenarios">
   <button class="scn-btn" onclick="applyScenario('idle')">Idle</button>
   <button class="scn-btn" onclick="applyScenario('warmup')">Warm Up</button>
@@ -221,9 +263,99 @@ let pendingSet = {};
 let sendTimer = null;
 let activeScn = null;
 
+// ── SCENARIO PRESETS (client-side targets) ────────────────
+const SCENARIO_PRESETS = {
+  idle:       {rpm:750,  speed:0,   boost:0,  ethanol:82, oil_temp:195, coolant_temp:195, battery_main:13.8},
+  warmup:     {rpm:1100, speed:0,   boost:0,  ethanol:82, oil_temp:130, coolant_temp:140, battery_main:13.6},
+  city:       {rpm:1800, speed:28,  boost:2,  ethanol:82, oil_temp:205, coolant_temp:200, battery_main:14.0},
+  cruise:     {rpm:2100, speed:65,  boost:4,  ethanol:82, oil_temp:210, coolant_temp:200, battery_main:14.2},
+  highway:    {rpm:2800, speed:80,  boost:8,  ethanol:82, oil_temp:215, coolant_temp:205, battery_main:14.2},
+  towing:     {rpm:2400, speed:55,  boost:14, ethanol:82, oil_temp:235, coolant_temp:225, battery_main:13.9},
+  race_track: {rpm:5500, speed:95,  boost:22, ethanol:85, oil_temp:240, coolant_temp:215, battery_main:14.0},
+  cold_start: {rpm:1400, speed:0,   boost:0,  ethanol:82, oil_temp:40,  coolant_temp:20,  battery_main:12.2},
+  overheating:{rpm:2000, speed:45,  boost:6,  ethanol:82, oil_temp:248, coolant_temp:238, battery_main:13.5},
+  launch:     {rpm:3200, speed:0,   boost:18, ethanol:85, oil_temp:220, coolant_temp:210, battery_main:13.8},
+  cooldown:   {rpm:800,  speed:0,   boost:0,  ethanol:82, oil_temp:220, coolant_temp:215, battery_main:13.5},
+  warning:    {rpm:1200, speed:15,  boost:0,  ethanol:82, oil_temp:195, coolant_temp:195, battery_main:11.8},
+  wot:        {rpm:5800, speed:70,  boost:24, ethanol:85, oil_temp:230, coolant_temp:212, battery_main:13.7}
+};
+
+// Animate a slider from current value to target value over ~400ms
+function animateSlider(slId, lblId, target, unit, decimals) {
+  const sl  = document.getElementById(slId);
+  const lb  = document.getElementById(lblId);
+  if (!sl || !lb) return;
+  const start   = parseFloat(sl.value);
+  const end     = target;
+  const dur     = 400;
+  const t0      = performance.now();
+  lb.classList.add('changed');
+  function step(now) {
+    const p = Math.min(1, (now - t0) / dur);
+    const ease = p < 0.5 ? 2*p*p : -1+(4-2*p)*p; // ease-in-out
+    const val = start + (end - start) * ease;
+    sl.value = val;
+    const display = decimals ? val.toFixed(decimals) : Math.round(val);
+    lb.textContent = display + unit;
+    if (p < 1) { requestAnimationFrame(step); }
+    else {
+      sl.value = end;
+      lb.textContent = (decimals ? end.toFixed(decimals) : Math.round(end)) + unit;
+      setTimeout(() => lb.classList.remove('changed'), 600);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+function applySelectedScenario() {
+  const sel = document.getElementById('scn-select');
+  const name = sel.value;
+  if (!name) return;
+  applyScenario(name);
+}
+
+function randomizeAll() {
+  const btn = document.getElementById('btn-randomize');
+  btn.classList.remove('spinning');
+  void btn.offsetWidth; // reflow to restart animation
+  btn.classList.add('spinning');
+
+  const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+  const vals = {
+    rpm:          Math.round(rand(700, 5500) / 50) * 50,
+    speed:        Math.round(rand(0, 100)),
+    boost:        Math.round(rand(0, 22)),
+    ethanol:      Math.round(rand(0, 85)),
+    oil_temp:     Math.round(rand(130, 240)),
+    coolant_temp: Math.round(rand(130, 235)),
+    battery_main: parseFloat(rand(11.8, 14.6).toFixed(1))
+  };
+
+  // Animate sliders
+  animateSlider('sl-rpm',   'lbl-rpm',   vals.rpm,          '', 0);
+  animateSlider('sl-spd',   'lbl-spd',   vals.speed,        '', 0);
+  animateSlider('sl-boost', 'lbl-boost', vals.boost,        '', 0);
+  animateSlider('sl-eth',   'lbl-eth',   vals.ethanol,      '', 0);
+  animateSlider('sl-oil',   'lbl-oil',   vals.oil_temp,     '', 0);
+  animateSlider('sl-cool',  'lbl-cool',  vals.coolant_temp, '', 0);
+  animateSlider('sl-bat',   'lbl-bat',   vals.battery_main, '', 1);
+
+  // Send to server after animation
+  setTimeout(() => {
+    Object.assign(pendingSet, vals);
+    flushSet();
+    appendLog('randomized all values', 'ok');
+  }, 420);
+}
+
 // Debounced sender — batch rapid slider moves into one request
 function sliderChange(key, val, lblId, unit) {
-  document.getElementById(lblId).textContent = val + unit;
+  const lb = document.getElementById(lblId);
+  if (lb) {
+    lb.textContent = val + unit;
+    lb.classList.add('changed');
+    setTimeout(() => lb.classList.remove('changed'), 500);
+  }
   pendingSet[key] = parseFloat(val);
   clearTimeout(sendTimer);
   sendTimer = setTimeout(flushSet, 80);
@@ -247,10 +379,27 @@ function flushSet() {
 }
 
 function applyScenario(name) {
-  // Highlight active button
+  // Highlight active button (works from both buttons and dropdown)
   document.querySelectorAll('.scn-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (event && event.target && event.target.classList.contains('scn-btn')) {
+    event.target.classList.add('active');
+  }
+  // Sync dropdown to match
+  const sel = document.getElementById('scn-select');
+  if (sel) sel.value = name;
   activeScn = name;
+
+  // Apply client-side preset with animated sliders immediately for responsive feel
+  const preset = SCENARIO_PRESETS[name];
+  if (preset) {
+    if (preset.rpm         !== undefined) animateSlider('sl-rpm',   'lbl-rpm',   preset.rpm,          '', 0);
+    if (preset.speed       !== undefined) animateSlider('sl-spd',   'lbl-spd',   preset.speed,        '', 0);
+    if (preset.boost       !== undefined) animateSlider('sl-boost', 'lbl-boost', preset.boost,        '', 0);
+    if (preset.ethanol     !== undefined) animateSlider('sl-eth',   'lbl-eth',   preset.ethanol,      '', 0);
+    if (preset.oil_temp    !== undefined) animateSlider('sl-oil',   'lbl-oil',   preset.oil_temp,     '', 0);
+    if (preset.coolant_temp !== undefined) animateSlider('sl-cool', 'lbl-cool',  preset.coolant_temp, '', 0);
+    if (preset.battery_main !== undefined) animateSlider('sl-bat',  'lbl-bat',   preset.battery_main, '', 1);
+  }
 
   fetch('/sim/scenario', {
     method: 'POST',
@@ -261,15 +410,15 @@ function applyScenario(name) {
   .then(d => {
     if (d.error) { appendLog('scenario error: ' + d.error, ''); return; }
     appendLog(`scenario → ${name}`, 'ok');
-    // Sync sliders to new values
-    const s = d.state;
-    if (s.rpm        !== undefined) setSlider('sl-rpm',   'lbl-rpm',   s.rpm,         '');
-    if (s.speed      !== undefined) setSlider('sl-spd',   'lbl-spd',   s.speed,       '');
-    if (s.boost      !== undefined) setSlider('sl-boost', 'lbl-boost', s.boost,       '');
-    if (s.ethanol    !== undefined) setSlider('sl-eth',   'lbl-eth',   s.ethanol,     '');
-    if (s.oil_temp   !== undefined) setSlider('sl-oil',   'lbl-oil',   s.oil_temp,    '');
-    if (s.coolant_temp !== undefined) setSlider('sl-cool','lbl-cool',  s.coolant_temp,'');
-    if (s.battery_main !== undefined) setSlider('sl-bat', 'lbl-bat',   s.battery_main,'');
+    // Reconcile with server state (may differ slightly from preset)
+    const s = d.state || {};
+    if (s.rpm         !== undefined) setSlider('sl-rpm',   'lbl-rpm',   s.rpm,          '');
+    if (s.speed       !== undefined) setSlider('sl-spd',   'lbl-spd',   s.speed,        '');
+    if (s.boost       !== undefined) setSlider('sl-boost', 'lbl-boost', s.boost,        '');
+    if (s.ethanol     !== undefined) setSlider('sl-eth',   'lbl-eth',   s.ethanol,      '');
+    if (s.oil_temp    !== undefined) setSlider('sl-oil',   'lbl-oil',   s.oil_temp,     '');
+    if (s.coolant_temp !== undefined) setSlider('sl-cool', 'lbl-cool',  s.coolant_temp, '');
+    if (s.battery_main !== undefined) setSlider('sl-bat',  'lbl-bat',   s.battery_main, '');
   })
   .catch(e => appendLog('scenario error: ' + e, ''));
 }
@@ -349,7 +498,7 @@ function poll() {
       setText('rd-oil',  d.oil_temp, d.oil_temp > 225);
       setText('rd-cool', d.coolant, d.coolant > 220);
       setText('rd-bat',  d.battery, d.battery < 12.0);
-      setText('rd-eth',  d.ethanol + '%');
+      setText('rd-eth',  (d.ethanol != null && d.ethanol > 0) ? d.ethanol + '%' : '---');
       const sd = d.sensor_data || {};
       setText('rd-afr',  sd.afr || '—');
       setText('rd-tim',  sd.timing_deg || '—');
