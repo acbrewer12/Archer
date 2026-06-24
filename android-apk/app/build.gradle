@@ -1,5 +1,7 @@
 plugins {
     id 'com.android.application'
+    id 'com.google.gms.google-services'
+    id 'com.google.firebase.crashlytics'
 }
 
 android {
@@ -8,10 +10,10 @@ android {
 
     defaultConfig {
         applicationId "com.archer.truck"
-        minSdk 26          // Android 8.0+ (2017+)
+        minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "2.0"
+        versionCode 3
+        versionName "3.0"
     }
 
     buildTypes {
@@ -23,8 +25,6 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Sign with your keystore for Play Store uploads:
-            // signingConfig signingConfigs.release
         }
     }
 
@@ -35,5 +35,15 @@ android {
 }
 
 dependencies {
-    // Pure WebView wrapper — no external deps needed
+    // Firebase BOM — manages all Firebase library versions together
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-messaging'
+    implementation 'com.google.firebase:firebase-crashlytics'
+    implementation 'com.google.firebase:firebase-database'
+
+    // Google Sign-In
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
 }

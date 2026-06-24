@@ -46,7 +46,11 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      # ── 5. Patch Archer URL ───────────────────────────────────────────────
+      # ── 5. Write google-services.json from secret ────────────────────────
+      - name: Write google-services.json
+        run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android-apk/app/google-services.json
+
+      # ── 6. Patch Archer URL ───────────────────────────────────────────────
       - name: Set Archer URL
         run: |
           URL="${{ github.event.inputs.archer_url }}"
@@ -57,7 +61,7 @@ jobs:
           find android-apk -name "*.java" \
             -exec sed -i "s|ARCHER_URL_PLACEHOLDER|$URL|g" {} +
 
-      # ── 6. Build debug APK (auto-signed, sideloadable) ────────────────────
+      # ── 7. Build debug APK (auto-signed, sideloadable) ────────────────────
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --project-dir android-apk
 

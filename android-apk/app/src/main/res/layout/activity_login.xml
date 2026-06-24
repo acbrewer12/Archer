@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#000000"
+    android:padding="48dp">
+
+    <!-- Logo / Title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ARCHER"
+        android:textColor="#FF3333"
+        android:textSize="52sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.3"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="TRUCK AI SYSTEM"
+        android:textColor="#888888"
+        android:textSize="13sp"
+        android:letterSpacing="0.2"
+        android:layout_marginBottom="64dp" />
+
+    <!-- Red divider line -->
+    <View
+        android:layout_width="80dp"
+        android:layout_height="2dp"
+        android:background="#FF3333"
+        android:layout_marginBottom="64dp" />
+
+    <!-- Google Sign-In button -->
+    <com.google.android.gms.common.SignInButton
+        android:id="@+id/sign_in_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Status / error text -->
+    <TextView
+        android:id="@+id/login_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="#888888"
+        android:textSize="13sp"
+        android:gravity="center" />
+
+</LinearLayout>

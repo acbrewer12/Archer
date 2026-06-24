@@ -1,0 +1,9 @@
+.gradle/
+.idea/
+build/
+local.properties
+*.iml
+
+# Firebase config — never commit this, contains API keys
+# Add as GitHub secret GOOGLE_SERVICES_JSON instead
+app/google-services.json
