@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
 
     steps:
       # ── 1. Checkout ───────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ jobs:
       # ── 9. Upload to Firebase App Distribution ───────────────────────────
       #      Skipped automatically if FIREBASE_APP_ID secret is not configured.
       - name: Upload to Firebase App Distribution
-        if: ${{ secrets.FIREBASE_APP_ID != '' }}
+        if: env.FIREBASE_APP_ID != ''
         uses: wzieba/Firebase-Distribution-Github-Action@v1
         with:
           appId: ${{ secrets.FIREBASE_APP_ID }}
