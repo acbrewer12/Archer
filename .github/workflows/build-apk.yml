@@ -48,7 +48,18 @@ jobs:
 
       # ── 5. Write google-services.json from secret ────────────────────────
       - name: Write google-services.json
-        run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android-apk/app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "ERROR: GOOGLE_SERVICES_JSON secret is not set."
+            echo "Go to repo Settings -> Secrets -> Actions and add GOOGLE_SERVICES_JSON"
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON" > android-apk/app/google-services.json
+          # Verify it's valid JSON before continuing
+          python3 -c "import json,sys; json.load(open('android-apk/app/google-services.json'))" \
+            || { echo "ERROR: GOOGLE_SERVICES_JSON secret is not valid JSON"; exit 1; }
 
       # ── 6. Patch Archer URL ───────────────────────────────────────────────
       - name: Set Archer URL
