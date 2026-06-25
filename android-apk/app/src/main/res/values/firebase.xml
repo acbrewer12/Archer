@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Injected at build time by CI from GOOGLE_WEB_CLIENT_ID secret.
+         Find this in Firebase Console -> Project Settings -> Your app
+         -> or Google Cloud Console -> APIs & Services -> Credentials
+         -> "Web client (auto created by Google Service)" -->
+    <string name="google_web_client_id" translatable="false">GOOGLE_WEB_CLIENT_ID_PLACEHOLDER</string>
+</resources>

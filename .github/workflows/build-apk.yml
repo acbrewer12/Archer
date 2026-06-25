@@ -69,7 +69,18 @@ jobs:
           print("google-services.json written OK")
           EOF
 
-      # ── 6. Patch Archer URL ───────────────────────────────────────────────
+      # ── 6. Inject Google web client ID for Sign-In ───────────────────────
+      - name: Inject Google web client ID
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          if [ -z "$GOOGLE_WEB_CLIENT_ID" ]; then
+            echo "WARNING: GOOGLE_WEB_CLIENT_ID secret not set - Google Sign-In will not work"
+          fi
+          sed -i "s|GOOGLE_WEB_CLIENT_ID_PLACEHOLDER|${GOOGLE_WEB_CLIENT_ID:-missing}|" \
+            android-apk/app/src/main/res/values/firebase.xml
+
+      # ── 7. Patch Archer URL ───────────────────────────────────────────────
       - name: Set Archer URL
         run: |
           URL="${{ github.event.inputs.archer_url }}"
