@@ -3,7 +3,9 @@ name: Build Archer APK
 on:
   push:
     branches: [main, 'claude/**']
-    paths: ['android-apk/**']
+    paths:
+      - 'android-apk/**'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
     inputs:
       archer_url:
