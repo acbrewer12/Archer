@@ -134,6 +134,5 @@ jobs:
         with:
           appId: ${{ secrets.FIREBASE_APP_ID }}
           serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          groups: testers
           file: android-apk/app/build/outputs/apk/debug/Archer.apk
           releaseNotes: "Build ${{ github.run_number }} — commit ${{ github.sha }}"
