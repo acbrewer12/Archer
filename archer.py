@@ -8703,7 +8703,7 @@ function setBoxesState(state) {{
 boxes.forEach((box, i) => {{
   box.addEventListener('input', e => {{
     // Allow only digits
-    box.value = box.value.replace(/\D/g,'').slice(-1);
+    box.value = box.value.replace(/\\D/g,'').slice(-1);
     box.classList.toggle('filled', box.value !== '');
     if (box.value && i < 5) {{ boxes[i+1].focus(); }}
     if (getCode().length === 6) submitCode();
@@ -8725,7 +8725,7 @@ boxes.forEach((box, i) => {{
   // Paste support: paste 6 digits across all boxes
   box.addEventListener('paste', e => {{
     e.preventDefault();
-    const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g,'').slice(0,6);
+    const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\\D/g,'').slice(0,6);
     text.split('').forEach((ch, j) => {{
       if (boxes[j]) {{ boxes[j].value = ch; boxes[j].classList.add('filled'); }}
     }});
@@ -10668,6 +10668,60 @@ def beamng_status():
         'connected': beamng_state['connected'],
         'car':       beamng_state['car'],
         'packets':   beamng_state.get('packets', 0),
+    })
+
+# ── OBD AUTH STATUS ──────────────────────────────────────
+@display_app.route('/obd_auth')
+def obd_auth_status():
+    """Gatekeeper / OBD auth status page — shows relay state and last auth result."""
+    connected   = obd2_display.get('connected', False)
+    mode        = obd2_display.get('mode', 'default')
+    last_update = system_health.get('last_obd_update', 0)
+    age         = round(time.time() - last_update, 1) if last_update else None
+
+    # Query gatekeeper systemd unit status if on Pi
+    gk_status = 'n/a'
+    if _IS_PI:
+        try:
+            import subprocess as _sp
+            r = _sp.run(['systemctl', 'is-active', 'obd_gatekeeper'],
+                        capture_output=True, text=True, timeout=3)
+            gk_status = r.stdout.strip()
+        except Exception:
+            gk_status = 'unknown'
+
+    return jsonify({
+        'obd_connected':      connected,
+        'obd_mode':           mode,
+        'last_update_age_s':  age,
+        'gatekeeper_service': gk_status,
+        'relay_unlocked':     connected and mode == 'live',
+        'auth_key_path':      '/etc/archer/obd_auth.key',
+    })
+
+# ── ARCHER OS STATUS ──────────────────────────────────────
+@display_app.route('/archer_os')
+def archer_os_status():
+    """Archer OS / USB-OS status — shows connection state and build info."""
+    usb_connected = False
+    usb_info      = {}
+    if _IS_PI:
+        try:
+            import subprocess as _sp
+            # Check if the USB OS client is active (obd_auth_client connects over serial)
+            r = _sp.run(['systemctl', 'is-active', 'obd_gatekeeper'],
+                        capture_output=True, text=True, timeout=3)
+            usb_connected = r.stdout.strip() == 'active'
+        except Exception:
+            pass
+
+    return jsonify({
+        'archer_os_connected': usb_connected,
+        'platform':            'raspberry_pi' if _IS_PI else 'cloud',
+        'obd_authenticated':   obd2_display.get('connected', False) and obd2_display.get('mode') == 'live',
+        'auth_client':         '/archer-os/obd-auth/obd_auth_client.py',
+        'key_gen':             '/archer-os/obd-auth/keygen.sh',
+        'build_script':        '/archer-os/build.sh',
     })
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────
