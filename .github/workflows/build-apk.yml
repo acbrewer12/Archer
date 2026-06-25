@@ -1,5 +1,4 @@
 name: Build Archer APK
-
 on:
   push:
     branches: [main, 'claude/**']
