@@ -81,8 +81,9 @@ public class LoginActivity extends Activity {
             GoogleSignInAccount account = task.getResult(ApiException.class);
             firebaseAuthWithGoogle(account.getIdToken());
         } catch (ApiException e) {
-            if (statusText != null) statusText.setText("Sign in failed. Try again.");
-            Toast.makeText(this, "Sign in failed", Toast.LENGTH_SHORT).show();
+            String msg = "Sign in failed (code " + e.getStatusCode() + ")";
+            if (statusText != null) statusText.setText(msg);
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
         }
     }
 
