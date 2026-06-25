@@ -69,15 +69,26 @@ jobs:
           print("google-services.json written OK")
           EOF
 
-      # ── 6. Inject Google web client ID for Sign-In ───────────────────────
+      # ── 6. Inject Google web client ID (extracted from google-services.json)
       - name: Inject Google web client ID
-        env:
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
-          if [ -z "$GOOGLE_WEB_CLIENT_ID" ]; then
-            echo "WARNING: GOOGLE_WEB_CLIENT_ID secret not set - Google Sign-In will not work"
+          CLIENT_ID=$(python3 -c "
+          import json, sys
+          data = json.load(open('android-apk/app/google-services.json'))
+          for client in data.get('client', []):
+              for oauth in client.get('oauth_client', []):
+                  if oauth.get('client_type') == 3:
+                      print(oauth['client_id'])
+                      sys.exit(0)
+          print('NOT_FOUND')
+          ")
+          if [ "$CLIENT_ID" = "NOT_FOUND" ]; then
+            echo "ERROR: No web client (client_type 3) found in google-services.json"
+            echo "Enable Google Sign-In in Firebase Auth and re-download google-services.json"
+            exit 1
           fi
-          sed -i "s|GOOGLE_WEB_CLIENT_ID_PLACEHOLDER|${GOOGLE_WEB_CLIENT_ID:-missing}|" \
+          echo "Web client ID found: $CLIENT_ID"
+          sed -i "s|GOOGLE_WEB_CLIENT_ID_PLACEHOLDER|$CLIENT_ID|" \
             android-apk/app/src/main/res/values/firebase.xml
 
       # ── 7. Patch Archer URL ───────────────────────────────────────────────
@@ -115,7 +126,9 @@ jobs:
             android-apk/app/build/outputs/apk/debug/Archer.apk
 
       # ── 9. Upload to Firebase App Distribution ───────────────────────────
+      #      Skipped automatically if FIREBASE_APP_ID secret is not configured.
       - name: Upload to Firebase App Distribution
+        if: ${{ secrets.FIREBASE_APP_ID != '' }}
         uses: wzieba/Firebase-Distribution-Github-Action@v1
         with:
           appId: ${{ secrets.FIREBASE_APP_ID }}
