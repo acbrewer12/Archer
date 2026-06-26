@@ -672,13 +672,62 @@ def get_tier_label():
 
 # ── TRUCK STATE ─────────────────────────
 truck_state = {
+    # ── Core engine ───────────────────────────────────────────
     'oil_temp': 195, 'coolant_temp': 190, 'rpm': 750, 'speed': 0,
     'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': 13.6,
     'exhaust': 30, 'tc_locked': False, 'tc_on': True, 'cool_on': False,
     'idle_on': False, 'bed_lights': False, 'hood_lights': False,
     'ghost_mode': False, 'octane': 87, 'octane_mode': 'AKI',
+    # ── ECU live PIDs ─────────────────────────────────────────
+    'throttle':      5,      # throttle position %
+    'engine_load':   15,     # calculated engine load %
+    'iat':           75,     # intake air temp °F
+    'maf':           3.2,    # MAF g/s
+    'fuel_pressure': 58,     # fuel pressure PSI
+    'timing':        10.0,   # timing advance degrees
+    'stft_b1':       0.0,    # short term fuel trim bank 1
+    'stft_b2':       0.0,    # short term fuel trim bank 2
+    'ltft_b1':       0.0,    # long term fuel trim bank 1
+    'ltft_b2':       0.0,    # long term fuel trim bank 2
+    'o2_b1s1':       0.45,   # O2 sensor voltage bank 1 sensor 1
+    'o2_b2s1':       0.45,   # O2 sensor voltage bank 2 sensor 1
+    # ── TCU (4L80E) ───────────────────────────────────────────
+    'gear':          'P',    # current gear
+    'target_gear':   'P',
+    'tft':           160,    # transmission fluid temp °F
+    'line_pressure': 90,     # line pressure PSI
+    'tcc_state':     'UNLOCKED',  # LOCKED/UNLOCKED/SLIPPING
+    'sol_a':         'OFF',
+    'sol_b':         'OFF',
+    'prndl':         'P',
+    # ── BCM ────────────────────────────────────────────────────
     'headlights': False, 'high_beams': False, 'fog_lights': False,
-    'hazards': False, 'ac_on': False, 'heat_on': False, 'fan_speed': 0,
+    'hazards': False,
+    'door_fl':       False,  # open=True
+    'door_fr':       False,
+    'door_rl':       False,
+    'door_rr':       False,
+    'interior_lights': False,
+    'alt_output':    14.2,
+    # ── ABS/EBCM ──────────────────────────────────────────────
+    'wheel_speed_fl': 0.0,
+    'wheel_speed_fr': 0.0,
+    'wheel_speed_rl': 0.0,
+    'wheel_speed_rr': 0.0,
+    'brake_pressure': 0,
+    'abs_active':    False,
+    'tcs_active':    False,
+    # ── TPMS ──────────────────────────────────────────────────
+    'tpms_fl_psi':   35.0, 'tpms_fr_psi': 35.0,
+    'tpms_rl_psi':   35.0, 'tpms_rr_psi': 35.0,
+    'tpms_fl_temp':  70,   'tpms_fr_temp': 70,
+    'tpms_rl_temp':  70,   'tpms_rr_temp': 70,
+    # ── SDM (airbag) ──────────────────────────────────────────
+    'airbag_status': 'OK',
+    'seatbelt_fl':   True,
+    'seatbelt_fr':   False,
+    # ── Climate / accessories ──────────────────────────────────
+    'ac_on': False, 'heat_on': False, 'fan_speed': 0,
     'temp_setting': 70, 'windows': {'fl': 'up', 'fr': 'up', 'rl': 'up', 'rr': 'up'},
     'wipers': 'off', 'mirrors_folded': False, 'drive_mode': 'sport',
 }
@@ -1472,6 +1521,21 @@ def get_display_data():
         'weather_wind':       weather.get('wind', 0),
         # Drive score
         'drive_score':    awareness.get('drive_quality', 100),
+        # Gatekeeper / OBD security
+        'gatekeeper': {
+            'auth_state':      gatekeeper_state['auth_state'],
+            'key_type':        gatekeeper_state['key_type'],
+            'session_start':   gatekeeper_state['session_start'],
+            'failed_attempts': gatekeeper_state['failed_attempts'],
+            'lockout_until':   gatekeeper_state['lockout_until'],
+        },
+        # Module online status
+        'module_states': {k: {'online': v['online'], 'name': v['name'], 'address': v['address']}
+                          for k, v in module_states.items()},
+        # Active fault codes (full descriptions)
+        'active_faults': list(active_faults),
+        # OBD mode: EMULATED / REAL_OBD / DISCONNECTED
+        'obd_mode': ('EMULATED' if USE_EMULATOR else 'REAL_OBD') if truck_state['rpm'] > 0 else 'DISCONNECTED',
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -2237,6 +2301,79 @@ DTC_DATABASE = {
     'P203F': ('Reductant Level Sensor Performance', 'medium'),
     'P204B': ('Reductant Pump Control Circuit Range/Performance', 'high'),
     'P2201': ('NOx Sensor Circuit Range/Performance — Bank 1', 'medium'),
+    # ── Additional engine / sensors ────────────────────────────────────
+    'P0128': ('Coolant Thermostat Below Regulating Temperature', 'medium'),
+    'P0507': ('Idle Control System RPM High', 'medium'),
+    'P0335': ('Crankshaft Position Sensor A Circuit', 'high'),
+    'P0340': ('Camshaft Position Sensor A Circuit — Bank 1', 'high'),
+    'P0751': ('Shift Solenoid A Performance or Stuck Off', 'high'),
+    'P0756': ('Shift Solenoid B Performance or Stuck Off', 'high'),
+    # ── GM P1xxx manufacturer specific ─────────────────────────────────
+    'P1133': ('HO2S Insufficient Switching — Bank 1 Sensor 1', 'medium'),
+    'P1134': ('HO2S Transition Time Ratio — Bank 1 Sensor 1', 'medium'),
+    'P1153': ('HO2S Insufficient Switching — Bank 2 Sensor 1', 'medium'),
+    'P1345': ('Camshaft-to-Crankshaft Position Correlation', 'high'),
+    'P1380': ('Rough Road Detected — ABS Module', 'low'),
+    'P1515': ('Command vs Desired Throttle Body Position', 'high'),
+    'P1516': ('Throttle Actuator Control Module Throttle Actuator Position Performance', 'high'),
+    'P1626': ('Theft Deterrent Fuel Enable Signal Lost', 'high'),
+    'P1810': ('TFP Valve Position Switch Circuit — Park/Neutral to Drive/Reverse', 'medium'),
+    'P1860': ('TCC PWM Solenoid Circuit Electrical', 'high'),
+    'P1870': ('Transmission Component Slipping', 'high'),
+    # ── C0xxx Chassis / ABS / 4WD ───────────────────────────────────────
+    'C0035': ('Left Front Wheel Speed Sensor Circuit', 'high'),
+    'C0036': ('Left Front Wheel Speed Sensor Circuit Range/Performance', 'medium'),
+    'C0040': ('Right Front Wheel Speed Sensor Circuit', 'high'),
+    'C0041': ('Right Front Wheel Speed Sensor Circuit Range/Performance', 'medium'),
+    'C0045': ('Left Rear Wheel Speed Sensor Circuit', 'high'),
+    'C0046': ('Left Rear Wheel Speed Sensor Circuit Range/Performance', 'medium'),
+    'C0050': ('Right Rear Wheel Speed Sensor Circuit', 'high'),
+    'C0051': ('Right Rear Wheel Speed Sensor Circuit Range/Performance', 'medium'),
+    'C0110': ('Pump Motor Circuit', 'high'),
+    'C0121': ('Valve Relay Circuit', 'high'),
+    'C0161': ('ABS/TCS Brake Switch Circuit', 'medium'),
+    'C0201': ('ABS Enable Relay Contact Circuit Open — EBCM Ground Fault', 'high'),
+    'C0265': ('EBCM Relay Circuit — Cracked Solder Joints on EBCM (TSB 04-05-25-002D)', 'high'),
+    'C0266': ('EBCM Relay Circuit Open', 'high'),
+    'C0283': ('Traction Control Switch Circuit Shorted to Ground', 'medium'),
+    'C0292': ('Requested Torque Fault', 'medium'),
+    'C0300': ('Rear Propshaft Speed Sensor Circuit', 'high'),
+    'C0306': ('Transfer Case Motor Circuit', 'high'),
+    'C0327': ('Transfer Case Encoder Circuit', 'high'),
+    'C0369': ('Transfer Case Range Sensor Circuit', 'medium'),
+    'C0374': ('Four Wheel Drive System Fault', 'high'),
+    'C0750': ('Tire Pressure System Sensor FL Circuit', 'medium'),
+    'C0755': ('Tire Pressure System Sensor FR Circuit', 'medium'),
+    'C0760': ('Tire Pressure System Sensor RL Circuit', 'medium'),
+    'C0765': ('Tire Pressure System Sensor RR Circuit', 'medium'),
+    'C0775': ('Tire Pressure Low — Left Front', 'low'),
+    'C0780': ('Tire Pressure Low — Right Front', 'low'),
+    'C0785': ('Tire Pressure Low — Left Rear', 'low'),
+    'C0790': ('Tire Pressure Low — Right Rear', 'low'),
+    # ── B0xxx/B1xxx/B2xxx Body ──────────────────────────────────────────
+    'B0001': ('Driver Frontal Stage 1 Deployment Control', 'critical'),
+    'B0002': ('Passenger Frontal Stage 1 Deployment Control', 'critical'),
+    'B0051': ('Driver Side Air Bag Deployment Loop Resistance Low — Deployment Commanded', 'critical'),
+    'B1000': ('ECU Malfunction', 'high'),
+    'B1001': ('Option Configuration Error — Module Swap Without Reprogramming', 'high'),
+    'B1004': ('System Configuration Error', 'high'),
+    'B1325': ('Control Module Ignition Off Timer Performance', 'medium'),
+    'B2960': ('Security System Sensor Data Circuit High', 'high'),
+    'B3055': ('Park Brake Switch Circuit Shorted to Ground', 'low'),
+    # ── U0xxx SAE generic CAN (NOT applicable to 2006 GMT800 — uses Class 2) ──
+    'U0001': ('[NOT APPLICABLE — Class 2 bus] High Speed CAN Communication Bus', 'low'),
+    'U0073': ('[NOT APPLICABLE — Class 2 bus] Control Module Communication Bus Off', 'low'),
+    # ── U1xxx GM Class 2 network (PRIMARY for this truck) ──────────────
+    'U1000': ('Class 2 Communication Malfunction — Check All Module Grounds', 'high'),
+    'U1016': ('Lost Communication With PCM', 'high'),
+    'U1026': ('Lost Communication With Transfer Case Control Module (4WD)', 'high'),
+    'U1041': ('Lost Communication With Electronic Brake Control Module', 'high'),
+    'U1064': ('Lost Communication With Body Control Module', 'high'),
+    'U1096': ('Lost Communication With Instrument Panel Cluster', 'medium'),
+    'U1192': ('Lost Communication With Theft Deterrent Module', 'high'),
+    'U1255': ('Class 2 Communication Malfunction — Usually Bad Ground or Failing Module', 'high'),
+    'U1300': ('Class 2 Short to Ground', 'high'),
+    'U1301': ('Class 2 Short to Battery', 'high'),
 }
 
 def lookup_dtc(code):
@@ -2281,6 +2418,32 @@ def show_faults():
         print(f'  {f["code"]} [{sev}] — {f["desc"]} — {f["time"]}')
     print('─────────────────────────────────────────\n')
     return f'{len(fault_codes)} active codes.'
+
+# ── MODULE STATES ─────────────────────────────────────────
+module_states = {
+    'ECU':  {'online': True,  'address': '0x7E0', 'name': 'Engine Control Unit'},
+    'TCU':  {'online': True,  'address': '0x7E1', 'name': 'Transmission Control Unit (4L80E)'},
+    'BCM':  {'online': True,  'address': 'Class2:064', 'name': 'Body Control Module'},
+    'EBCM': {'online': True,  'address': 'Class2:041', 'name': 'Electronic Brake Control Module'},
+    'TPMS': {'online': True,  'address': 'RF',    'name': 'Tire Pressure Monitoring System'},
+    'SDM':  {'online': True,  'address': 'Class2:088', 'name': 'Supplemental Restraint Module'},
+}
+
+# Active faults per module (separate from fault_codes voice log — used by modules page)
+active_faults = []   # {code, desc, module, severity, injected_at}
+
+# ── GATEKEEPER STATE ──────────────────────────────────────
+gatekeeper_state = {
+    'auth_state':        'LOCKED',    # LOCKED / UNLOCKED
+    'key_type':          None,        # OWNER / MECHANIC / READONLY
+    'session_start':     None,
+    'failed_attempts':   0,
+    'last_seen':         None,
+    'lockout_until':     None,
+}
+
+# ── EMULATOR FLAG ─────────────────────────────────────────
+USE_EMULATOR = True   # False when real OBDLink MX+ is detected
 
 # ── RACE / TRACK MODE ────────────────────
 race_session = {
@@ -10461,14 +10624,21 @@ def fans_ask():
 # ══════════════════════════════════════════
 
 SIM_SCENARIOS = {
-    'idle':     {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 195, 'coolant_temp': 190, 'battery_main': 13.8},
-    'warmup':   {'rpm': 900,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 160, 'coolant_temp': 150, 'battery_main': 14.1},
-    'cruise':   {'rpm': 1800, 'speed': 55, 'boost': 2,  'ethanol': 82, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8},
-    'highway':  {'rpm': 2200, 'speed': 75, 'boost': 4,  'ethanol': 82, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9},
-    'wot':      {'rpm': 4500, 'speed': 90, 'boost': 18, 'ethanol': 82, 'oil_temp': 215, 'coolant_temp': 210, 'battery_main': 13.5},
-    'launch':   {'rpm': 5200, 'speed': 15, 'boost': 22, 'ethanol': 82, 'oil_temp': 220, 'coolant_temp': 215, 'battery_main': 13.2},
-    'cooldown': {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 82, 'oil_temp': 230, 'coolant_temp': 220, 'battery_main': 13.8},
-    'warning':  {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235, 'coolant_temp': 225, 'battery_main': 11.8},
+    'idle':       {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 195, 'coolant_temp': 190, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 165},
+    'warmup':     {'rpm': 850,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 100, 'coolant_temp': 70,  'battery_main': 14.2, 'throttle': 5,  'engine_load': 15, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 80,  'iat': 70, 'timing': 6.0, 'stft_b1': 6.0, 'stft_b2': 6.0},
+    'warm_idle':  {'rpm': 650,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 195, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 170},
+    'cruise':     {'rpm': 2000, 'speed': 55, 'boost': 0,  'ethanol': 0, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 18, 'engine_load': 32, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 175, 'timing': 18.0, 'wheel_speed_fl': 55, 'wheel_speed_fr': 55, 'wheel_speed_rl': 55, 'wheel_speed_rr': 55},
+    'highway':    {'rpm': 2400, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9, 'throttle': 22, 'engine_load': 38, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 178, 'timing': 20.0, 'wheel_speed_fl': 80, 'wheel_speed_fr': 80, 'wheel_speed_rl': 80, 'wheel_speed_rr': 80},
+    'hard_pull':  {'rpm': 5500, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 215, 'coolant_temp': 208, 'battery_main': 13.5, 'throttle': 100,'engine_load': 95, 'gear': 3,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 190, 'timing': 28.0, 'stft_b1': -2.0, 'stft_b2': -2.0},
+    'wot':        {'rpm': 4500, 'speed': 90, 'boost': 0,  'ethanol': 0, 'oil_temp': 215, 'coolant_temp': 210, 'battery_main': 13.5, 'throttle': 100,'engine_load': 92, 'gear': 3,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 188},
+    'launch':     {'rpm': 5200, 'speed': 15, 'boost': 0,  'ethanol': 0, 'oil_temp': 220, 'coolant_temp': 215, 'battery_main': 13.2, 'throttle': 100,'engine_load': 98, 'gear': 1,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 195},
+    'stop':       {'rpm': 0,   'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 210, 'coolant_temp': 205, 'battery_main': 12.6, 'throttle': 0,  'engine_load': 0,  'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 185},
+    'cooldown':   {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 230, 'coolant_temp': 220, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 198},
+    'warning':    {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235,'coolant_temp': 225, 'battery_main': 11.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 200},
+    # Drive cycle scenarios for modules page
+    'cold_start': {'rpm': 850,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 70,  'coolant_temp': 70,  'battery_main': 14.2, 'throttle': 5,  'engine_load': 15, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 70,  'iat': 70, 'timing': 6.0, 'stft_b1': 8.0, 'stft_b2': 8.0},
+    'cruise_55':  {'rpm': 2000, 'speed': 55, 'boost': 0,  'ethanol': 0, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 18, 'engine_load': 32, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 175, 'wheel_speed_fl': 55, 'wheel_speed_fr': 55, 'wheel_speed_rl': 55, 'wheel_speed_rr': 55},
+    'highway_80': {'rpm': 2400, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9, 'throttle': 22, 'engine_load': 38, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 178, 'wheel_speed_fl': 80, 'wheel_speed_fr': 80, 'wheel_speed_rl': 80, 'wheel_speed_rr': 80},
 }
 
 @display_app.route('/dashboard')
@@ -10497,12 +10667,162 @@ def hud_page():
 
 @display_app.route('/simulator')
 def simulator_page():
+    from flask import Response as FR, redirect
+    return redirect('/modules', code=301)
+
+@display_app.route('/modules')
+def modules_page():
     from flask import Response as FR
-    if os.path.exists('archer_simulator.html'):
-        with open('archer_simulator.html', 'r', encoding='utf-8') as f:
-            html = f.read()
-        return FR(html, mimetype='text/html')
-    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">SIMULATOR — archer_simulator.html not found</body></html>', mimetype='text/html')
+    if os.path.exists('archer_modules.html'):
+        with open('archer_modules.html', 'r', encoding='utf-8') as f:
+            return FR(f.read(), mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MODULES — archer_modules.html not found</body></html>', mimetype='text/html')
+
+@display_app.route('/modules/status')
+def modules_status():
+    """Return all module states + all live truck_state values."""
+    engine_state = 'COLD START'
+    ct = truck_state.get('coolant_temp', 70)
+    if ct >= 215:
+        engine_state = 'HOT'
+    elif ct >= 165:
+        engine_state = 'NORMAL'
+    elif ct >= 120:
+        engine_state = 'WARMING'
+
+    return jsonify({
+        'modules':       module_states,
+        'truck_state':   truck_state,
+        'active_faults': active_faults,
+        'engine_state':  engine_state,
+        'obd_mode':      obd2_display.get('mode', 'default'),
+        'obd_connected': obd2_display.get('connected', False),
+        'use_emulator':  USE_EMULATOR,
+        'beamng':        beamng_state.get('connected', False),
+        'gatekeeper':    gatekeeper_state,
+    })
+
+@display_app.route('/modules/update', methods=['POST'])
+def modules_update():
+    """Update truck_state values from modules page controls."""
+    from flask import request as req
+    data = req.get_json() or {}
+    updated = {}
+    for key, val in data.items():
+        if key in truck_state:
+            try:
+                current = truck_state[key]
+                if isinstance(current, bool):
+                    truck_state[key] = bool(val)
+                elif isinstance(current, float):
+                    truck_state[key] = float(val)
+                elif isinstance(current, int):
+                    truck_state[key] = int(float(val))
+                else:
+                    truck_state[key] = val
+                updated[key] = truck_state[key]
+            except (ValueError, TypeError):
+                pass
+    return jsonify({'ok': True, 'updated': updated})
+
+@display_app.route('/modules/fault/inject', methods=['POST'])
+def modules_fault_inject():
+    """Inject a DTC into the active faults list."""
+    from flask import request as req
+    data = req.get_json() or {}
+    code     = data.get('code', '').upper().strip()
+    module   = data.get('module', 'ECU')
+    if not code:
+        return jsonify({'error': 'code required'}), 400
+
+    lookup = DTC_DATABASE.get(code)
+    desc     = data.get('desc')  or (lookup[0] if lookup else f'Unknown DTC {code}')
+    severity = data.get('severity') or (lookup[1] if lookup else 'medium')
+
+    entry = {
+        'code':         code,
+        'desc':         desc,
+        'module':       module,
+        'severity':     severity,
+        'injected_at':  datetime.now().strftime('%H:%M:%S'),
+    }
+    active_faults.append(entry)
+    # Also add to legacy fault_codes for voice/health tracking
+    add_fault(code, desc, severity)
+    return jsonify({'ok': True, 'fault': entry, 'total': len(active_faults)})
+
+@display_app.route('/modules/fault/clear', methods=['POST'])
+def modules_fault_clear():
+    """Clear active faults — all or single code."""
+    from flask import request as req
+    data = req.get_json() or {}
+    code = data.get('code')
+    if code:
+        before = len(active_faults)
+        active_faults[:] = [f for f in active_faults if f['code'] != code.upper()]
+        fault_codes[:] = [f for f in fault_codes if f['code'] != code.upper()]
+        return jsonify({'ok': True, 'removed': before - len(active_faults)})
+    active_faults.clear()
+    fault_codes.clear()
+    save_state()
+    return jsonify({'ok': True, 'cleared': 'all'})
+
+@display_app.route('/modules/drive_cycle', methods=['POST'])
+def modules_drive_cycle():
+    """Apply a named drive cycle scenario to truck_state."""
+    from flask import request as req
+    data = req.get_json() or {}
+    name = data.get('name', '').lower()
+    valid = list(SIM_SCENARIOS.keys())
+    if name not in SIM_SCENARIOS:
+        return jsonify({'error': f'Unknown scenario: {name}', 'valid': valid}), 400
+    global sim_random_enabled
+    for key, val in SIM_SCENARIOS[name].items():
+        if key in truck_state:
+            truck_state[key] = val
+    sim_random_enabled = False
+    return jsonify({'ok': True, 'scenario': name})
+
+@display_app.route('/modules/module/toggle', methods=['POST'])
+def modules_module_toggle():
+    """Toggle a module online/offline."""
+    from flask import request as req
+    data = req.get_json() or {}
+    mod = data.get('module', '').upper()
+    if mod not in module_states:
+        return jsonify({'error': f'Unknown module: {mod}'}), 400
+    module_states[mod]['online'] = not module_states[mod]['online']
+    return jsonify({'ok': True, 'module': mod, 'online': module_states[mod]['online']})
+
+@display_app.route('/emulator/status')
+def emulator_status():
+    """Return current OBD mode: EMULATED / REAL_OBD / DISCONNECTED."""
+    if obd2_display.get('connected') and obd2_display.get('mode') == 'live':
+        mode = 'REAL_OBD'
+    elif USE_EMULATOR:
+        mode = 'EMULATED'
+    else:
+        mode = 'DISCONNECTED'
+    return jsonify({
+        'mode':          mode,
+        'use_emulator':  USE_EMULATOR,
+        'obd_connected': obd2_display.get('connected', False),
+        'obd_mode':      obd2_display.get('mode', 'default'),
+        'beamng':        beamng_state.get('connected', False),
+    })
+
+@display_app.route('/gatekeeper_status')
+def gatekeeper_status_route():
+    """Return gatekeeper authentication state."""
+    import time as _t
+    state = dict(gatekeeper_state)
+    if state.get('session_start'):
+        state['session_duration_s'] = round(_t.time() - state['session_start'], 0)
+    else:
+        state['session_duration_s'] = 0
+    lockout = state.get('lockout_until')
+    state['locked_out'] = bool(lockout and _t.time() < lockout)
+    return jsonify(state)
 
 @display_app.route('/sim/set', methods=['POST'])
 def sim_set():

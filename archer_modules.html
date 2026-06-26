@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARCHER — CONTROL MODULES</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;color:#e0e0e0;font-family:'Share Tech Mono',monospace;font-size:12px;min-height:100vh;overflow-x:hidden}
+
+/* ── HEADER ── */
+#header{background:#0a0a0a;border-bottom:2px solid #cc0000;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+#header h1{color:#cc0000;font-size:16px;letter-spacing:4px}
+#header .sub{color:#666;font-size:10px;letter-spacing:2px}
+#status-bar{display:flex;gap:16px;align-items:center}
+.status-pill{padding:3px 8px;border-radius:2px;font-size:10px;letter-spacing:1px;border:1px solid}
+.pill-green{color:#00cc44;border-color:#00cc44;background:#001a00}
+.pill-red{color:#cc0000;border-color:#cc0000;background:#1a0000}
+.pill-yellow{color:#ccaa00;border-color:#ccaa00;background:#1a1400}
+.pill-gray{color:#555;border-color:#333;background:#0a0a0a}
+
+/* ── LAYOUT ── */
+#main{padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:12px}
+
+/* ── MODULE CARD ── */
+.mod-card{background:#080808;border:1px solid #222;border-radius:2px;overflow:hidden}
+.mod-card.offline{opacity:0.55;border-color:#300}
+.mod-header{background:#111;border-bottom:1px solid #222;padding:8px 12px;display:flex;align-items:center;justify-content:space-between}
+.mod-name{color:#cc0000;font-size:13px;letter-spacing:2px;font-weight:bold}
+.mod-addr{color:#555;font-size:10px;margin-left:8px}
+.mod-right{display:flex;align-items:center;gap:8px}
+.online-dot{width:8px;height:8px;border-radius:50%;background:#00cc44;box-shadow:0 0 6px #00cc44}
+.online-dot.off{background:#cc0000;box-shadow:0 0 6px #cc0000}
+.offline-badge{color:#cc0000;font-size:9px;letter-spacing:2px;border:1px solid #cc0000;padding:1px 4px}
+.toggle-btn{background:none;border:1px solid #333;color:#666;font-family:inherit;font-size:9px;cursor:pointer;padding:2px 6px;letter-spacing:1px}
+.toggle-btn:hover{border-color:#cc0000;color:#cc0000}
+
+/* ── VALUE GRID ── */
+.val-grid{padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
+.val-row{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #111;padding:2px 0}
+.val-label{color:#666;font-size:10px;letter-spacing:1px}
+.val-num{color:#e0e0e0;font-size:12px;min-width:60px;text-align:right}
+.val-num.warn{color:#ccaa00}
+.val-num.crit{color:#cc0000}
+.val-num.good{color:#00cc44}
+
+/* ── ENGINE STATE BANNER ── */
+.engine-state-bar{margin:4px 12px;padding:4px 8px;text-align:center;font-size:11px;letter-spacing:3px;border:1px solid}
+.es-cold{color:#4488ff;border-color:#4488ff;background:#000814}
+.es-warming{color:#ccaa00;border-color:#ccaa00;background:#140e00}
+.es-normal{color:#00cc44;border-color:#00cc44;background:#001a00}
+.es-hot{color:#cc0000;border-color:#cc0000;background:#1a0000}
+
+/* ── GEAR SELECTOR ── */
+.prndl{display:flex;gap:6px;padding:8px 12px;border-top:1px solid #1a1a1a}
+.prndl-btn{flex:1;padding:5px 2px;background:#0a0a0a;border:1px solid #222;color:#555;font-family:inherit;font-size:13px;cursor:pointer;text-align:center;letter-spacing:1px}
+.prndl-btn:hover{border-color:#cc0000;color:#cc0000}
+.prndl-btn.active{background:#1a0000;border-color:#cc0000;color:#cc0000;font-weight:bold}
+
+/* ── TPMS CORNERS ── */
+.tpms-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px}
+.tpms-corner{background:#0d0d0d;border:1px solid #222;padding:8px;text-align:center;cursor:pointer}
+.tpms-corner:hover{border-color:#cc0000}
+.tpms-corner.warn{border-color:#ccaa00;background:#0d0900}
+.tpms-corner.crit{border-color:#cc0000;background:#0d0000}
+.tpms-corner .corner-label{color:#555;font-size:9px;letter-spacing:2px;margin-bottom:4px}
+.tpms-corner .corner-psi{color:#e0e0e0;font-size:18px}
+.tpms-corner .corner-temp{color:#666;font-size:10px}
+.tpms-psi-modes{display:flex;gap:6px;padding:6px 12px;flex-wrap:wrap}
+.psi-mode-btn{flex:1;min-width:60px;padding:4px;background:#0a0a0a;border:1px solid #222;color:#555;font-family:inherit;font-size:9px;cursor:pointer;letter-spacing:1px;text-align:center}
+.psi-mode-btn:hover{border-color:#cc0000;color:#cc0000}
+.psi-mode-btn.active{border-color:#cc0000;color:#cc0000;background:#1a0000}
+
+/* ── TOGGLE ROW ── */
+.toggle-row{display:flex;flex-wrap:wrap;gap:6px;padding:6px 12px;border-top:1px solid #111}
+.tgl{padding:4px 8px;background:#0a0a0a;border:1px solid #222;color:#555;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:1px}
+.tgl:hover{border-color:#cc0000;color:#cc0000}
+.tgl.on{border-color:#00cc44;color:#00cc44;background:#001a00}
+
+/* ── FAULT BUTTONS ── */
+.fault-section{border-top:1px solid #1a1a1a;padding:8px 12px}
+.fault-section h4{color:#555;font-size:9px;letter-spacing:3px;margin-bottom:6px}
+.fault-btns{display:flex;flex-wrap:wrap;gap:5px}
+.fault-btn{padding:4px 7px;background:#0a0a0a;border:1px solid #330000;color:#884444;font-family:inherit;font-size:9px;cursor:pointer;letter-spacing:1px}
+.fault-btn:hover{background:#1a0000;border-color:#cc0000;color:#cc0000}
+.clear-btn{padding:4px 10px;background:#0a0a0a;border:1px solid #224422;color:#448844;font-family:inherit;font-size:9px;cursor:pointer;letter-spacing:1px;margin-left:auto}
+.clear-btn:hover{background:#001a00;border-color:#00cc44;color:#00cc44}
+
+/* ── ACTIVE FAULTS SECTION ── */
+#faults-section{padding:12px;border-top:2px solid #cc0000;margin-top:4px}
+#faults-section h2{color:#cc0000;font-size:12px;letter-spacing:4px;margin-bottom:8px}
+#fault-table{width:100%;border-collapse:collapse}
+#fault-table th{color:#555;font-size:9px;letter-spacing:2px;text-align:left;padding:4px 8px;border-bottom:1px solid #222}
+#fault-table td{padding:5px 8px;border-bottom:1px solid #111;vertical-align:middle}
+.fault-code{color:#cc0000;font-size:12px;font-weight:bold;letter-spacing:1px}
+.fault-desc{color:#aaa;font-size:11px}
+.fault-mod{color:#555;font-size:10px}
+.sev-info{color:#4488ff}
+.sev-warning{color:#ccaa00}
+.sev-critical,.sev-high{color:#cc0000}
+.sev-medium{color:#ccaa00}
+.sev-low{color:#888}
+.fault-clear-x{background:none;border:none;color:#cc0000;cursor:pointer;font-size:14px;padding:0 4px;font-family:inherit}
+#no-faults{color:#333;padding:20px;text-align:center;letter-spacing:3px;font-size:11px}
+
+/* ── DRIVE CYCLE ── */
+#drive-cycle{padding:12px;background:#080808;border-top:1px solid #222}
+#drive-cycle h2{color:#555;font-size:10px;letter-spacing:4px;margin-bottom:8px}
+.dc-btns{display:flex;flex-wrap:wrap;gap:8px}
+.dc-btn{padding:6px 14px;background:#0a0a0a;border:1px solid #333;color:#666;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:2px}
+.dc-btn:hover{border-color:#cc0000;color:#cc0000;background:#0d0000}
+.dc-active{border-color:#cc0000;color:#cc0000;background:#1a0000}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div>
+    <div id="header" style="background:none;border:none;padding:0;position:static">
+      <h1>ARCHER DIAGNOSTIC SYSTEM</h1>
+      <div class="sub">2006 GMC SIERRA 2500HD &mdash; 6.0L LQ4 V8 &mdash; 4L80E &mdash; 4x4</div>
+    </div>
+  </div>
+  <div id="status-bar">
+    <div id="obd-pill" class="status-pill pill-gray">OBD: EMULATED</div>
+    <div id="beamng-pill" class="status-pill pill-gray">BEAMNG: OFF</div>
+    <div id="gk-pill" class="status-pill pill-red">GK: LOCKED</div>
+  </div>
+</div>
+
+<div id="main">
+
+  <!-- ══ ECU ══════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-ECU">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">ECU</span>
+        <span class="mod-addr">Engine Control Unit &mdash; 0x7E0</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-ECU"></span>
+        <span class="offline-badge" id="badge-ECU" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('ECU')">PWR</button>
+      </div>
+    </div>
+    <div id="ecu-engine-state" class="engine-state-bar es-normal">NORMAL</div>
+    <div class="val-grid">
+      <div class="val-row"><span class="val-label">RPM</span><span class="val-num" id="v-rpm">—</span></div>
+      <div class="val-row"><span class="val-label">THROTTLE</span><span class="val-num" id="v-throttle">—</span></div>
+      <div class="val-row"><span class="val-label">ENGINE LOAD</span><span class="val-num" id="v-engine_load">—</span></div>
+      <div class="val-row"><span class="val-label">COOLANT</span><span class="val-num" id="v-coolant_temp">—</span></div>
+      <div class="val-row"><span class="val-label">OIL TEMP</span><span class="val-num" id="v-oil_temp">—</span></div>
+      <div class="val-row"><span class="val-label">IAT</span><span class="val-num" id="v-iat">—</span></div>
+      <div class="val-row"><span class="val-label">MAF</span><span class="val-num" id="v-maf">—</span></div>
+      <div class="val-row"><span class="val-label">FUEL PRESS</span><span class="val-num" id="v-fuel_pressure">—</span></div>
+      <div class="val-row"><span class="val-label">TIMING</span><span class="val-num" id="v-timing">—</span></div>
+      <div class="val-row"><span class="val-label">BATTERY</span><span class="val-num" id="v-battery_main">—</span></div>
+      <div class="val-row"><span class="val-label">STFT B1</span><span class="val-num" id="v-stft_b1">—</span></div>
+      <div class="val-row"><span class="val-label">STFT B2</span><span class="val-num" id="v-stft_b2">—</span></div>
+      <div class="val-row"><span class="val-label">LTFT B1</span><span class="val-num" id="v-ltft_b1">—</span></div>
+      <div class="val-row"><span class="val-label">LTFT B2</span><span class="val-num" id="v-ltft_b2">—</span></div>
+      <div class="val-row"><span class="val-label">O2 B1S1</span><span class="val-num" id="v-o2_b1s1">—</span></div>
+      <div class="val-row"><span class="val-label">O2 B2S1</span><span class="val-num" id="v-o2_b2s1">—</span></div>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('P0300','ECU')">P0300 MISFIRE</button>
+        <button class="fault-btn" onclick="injectFault('P0171','ECU')">P0171 LEAN B1</button>
+        <button class="fault-btn" onclick="injectFault('P0174','ECU')">P0174 LEAN B2</button>
+        <button class="fault-btn" onclick="injectFault('P0128','ECU')">P0128 THERM</button>
+        <button class="fault-btn" onclick="injectFault('P0507','ECU')">P0507 IDLE HIGH</button>
+        <button class="fault-btn" onclick="injectFault('P0325','ECU')">P0325 KNOCK B1</button>
+        <button class="fault-btn" onclick="injectFault('P0330','ECU')">P0330 KNOCK B2</button>
+        <button class="fault-btn" onclick="injectFault('P0335','ECU')">P0335 CKP</button>
+        <button class="fault-btn" onclick="injectFault('P0340','ECU')">P0340 CMP</button>
+        <button class="clear-btn" onclick="clearModuleFaults('ECU')">CLEAR ECU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TCU ══════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-TCU">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">TCU</span>
+        <span class="mod-addr">4L80E Transmission &mdash; Class 2</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-TCU"></span>
+        <span class="offline-badge" id="badge-TCU" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('TCU')">PWR</button>
+      </div>
+    </div>
+    <div class="val-grid">
+      <div class="val-row"><span class="val-label">GEAR</span><span class="val-num" id="v-gear">—</span></div>
+      <div class="val-row"><span class="val-label">TARGET GEAR</span><span class="val-num" id="v-target_gear">—</span></div>
+      <div class="val-row"><span class="val-label">TFT</span><span class="val-num" id="v-tft">—</span></div>
+      <div class="val-row"><span class="val-label">LINE PRESS</span><span class="val-num" id="v-line_pressure">—</span></div>
+      <div class="val-row"><span class="val-label">TCC</span><span class="val-num" id="v-tcc_state">—</span></div>
+      <div class="val-row"><span class="val-label">SOL A</span><span class="val-num" id="v-sol_a">—</span></div>
+      <div class="val-row"><span class="val-label">SOL B</span><span class="val-num" id="v-sol_b">—</span></div>
+      <div class="val-row"><span class="val-label">PRNDL</span><span class="val-num" id="v-prndl">—</span></div>
+    </div>
+    <div class="prndl">
+      <button class="prndl-btn" id="prndl-P" onclick="setGear('P')">P</button>
+      <button class="prndl-btn" id="prndl-R" onclick="setGear('R')">R</button>
+      <button class="prndl-btn" id="prndl-N" onclick="setGear('N')">N</button>
+      <button class="prndl-btn" id="prndl-D" onclick="setGear('D')">D</button>
+      <button class="prndl-btn" id="prndl-3" onclick="setGear('3')">3</button>
+      <button class="prndl-btn" id="prndl-2" onclick="setGear('2')">2</button>
+      <button class="prndl-btn" id="prndl-1" onclick="setGear('1')">1</button>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('P0700','TCU')">P0700 TRANS CTRL</button>
+        <button class="fault-btn" onclick="injectFault('P0730','TCU')">P0730 GEAR RATIO</button>
+        <button class="fault-btn" onclick="injectFault('P0741','TCU')">P0741 TCC STUCK</button>
+        <button class="fault-btn" onclick="injectFault('P0751','TCU')">P0751 SOL A</button>
+        <button class="fault-btn" onclick="injectFault('P0756','TCU')">P0756 SOL B</button>
+        <button class="clear-btn" onclick="clearModuleFaults('TCU')">CLEAR TCU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ BCM ══════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-BCM">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">BCM</span>
+        <span class="mod-addr">Body Control Module &mdash; Class2:064</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-BCM"></span>
+        <span class="offline-badge" id="badge-BCM" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('BCM')">PWR</button>
+      </div>
+    </div>
+    <div class="val-grid">
+      <div class="val-row"><span class="val-label">BATTERY</span><span class="val-num" id="bcm-batt">—</span></div>
+      <div class="val-row"><span class="val-label">ALT OUTPUT</span><span class="val-num" id="v-alt_output">—</span></div>
+      <div class="val-row"><span class="val-label">DOOR FL</span><span class="val-num" id="v-door_fl">—</span></div>
+      <div class="val-row"><span class="val-label">DOOR FR</span><span class="val-num" id="v-door_fr">—</span></div>
+      <div class="val-row"><span class="val-label">DOOR RL</span><span class="val-num" id="v-door_rl">—</span></div>
+      <div class="val-row"><span class="val-label">DOOR RR</span><span class="val-num" id="v-door_rr">—</span></div>
+      <div class="val-row"><span class="val-label">HEADLIGHTS</span><span class="val-num" id="v-headlights">—</span></div>
+      <div class="val-row"><span class="val-label">INTERIOR</span><span class="val-num" id="v-interior_lights">—</span></div>
+      <div class="val-row"><span class="val-label">HAZARDS</span><span class="val-num" id="v-hazards">—</span></div>
+      <div class="val-row"><span class="val-label">TRACTION CTRL</span><span class="val-num" id="bcm-tc">—</span></div>
+    </div>
+    <div class="toggle-row">
+      <button class="tgl" id="tgl-door_fl" onclick="toggleVal('door_fl')">DOOR FL</button>
+      <button class="tgl" id="tgl-door_fr" onclick="toggleVal('door_fr')">DOOR FR</button>
+      <button class="tgl" id="tgl-door_rl" onclick="toggleVal('door_rl')">DOOR RL</button>
+      <button class="tgl" id="tgl-door_rr" onclick="toggleVal('door_rr')">DOOR RR</button>
+      <button class="tgl" id="tgl-headlights" onclick="toggleVal('headlights')">HEADLIGHTS</button>
+      <button class="tgl" id="tgl-hazards" onclick="toggleVal('hazards')">HAZARDS</button>
+      <button class="tgl" id="tgl-interior_lights" onclick="toggleVal('interior_lights')">INTERIOR</button>
+      <button class="tgl" id="tgl-tc_on" onclick="toggleVal('tc_on')">TRACTION CTRL</button>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('B1000','BCM')">B1000 ECU MALF</button>
+        <button class="fault-btn" onclick="injectFault('B1001','BCM')">B1001 OPT CFG</button>
+        <button class="fault-btn" onclick="injectFault('U1064','BCM')">U1064 LOST COMM</button>
+        <button class="clear-btn" onclick="clearModuleFaults('BCM')">CLEAR BCM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ EBCM ═════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-EBCM">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">EBCM</span>
+        <span class="mod-addr">ABS &mdash; Class2:041</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-EBCM"></span>
+        <span class="offline-badge" id="badge-EBCM" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('EBCM')">PWR</button>
+      </div>
+    </div>
+    <div class="val-grid">
+      <div class="val-row"><span class="val-label">WHEEL FL</span><span class="val-num" id="v-wheel_speed_fl">—</span></div>
+      <div class="val-row"><span class="val-label">WHEEL FR</span><span class="val-num" id="v-wheel_speed_fr">—</span></div>
+      <div class="val-row"><span class="val-label">WHEEL RL</span><span class="val-num" id="v-wheel_speed_rl">—</span></div>
+      <div class="val-row"><span class="val-label">WHEEL RR</span><span class="val-num" id="v-wheel_speed_rr">—</span></div>
+      <div class="val-row"><span class="val-label">BRAKE PRESS</span><span class="val-num" id="v-brake_pressure">—</span></div>
+      <div class="val-row"><span class="val-label">ABS ACTIVE</span><span class="val-num" id="v-abs_active">—</span></div>
+      <div class="val-row"><span class="val-label">TCS ACTIVE</span><span class="val-num" id="v-tcs_active">—</span></div>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT &mdash; NOTE: C0265 = CRACKED SOLDER ON EBCM BOARD, NOT THE RELAY (TSB 04-05-25-002D)</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('C0035','EBCM')">C0035 LF WSS</button>
+        <button class="fault-btn" onclick="injectFault('C0040','EBCM')">C0040 RF WSS</button>
+        <button class="fault-btn" onclick="injectFault('C0045','EBCM')">C0045 LR WSS</button>
+        <button class="fault-btn" onclick="injectFault('C0050','EBCM')">C0050 RR WSS</button>
+        <button class="fault-btn" onclick="injectFault('C0265','EBCM')" style="border-color:#cc4400;color:#cc4400">C0265 EBCM RELAY</button>
+        <button class="clear-btn" onclick="clearModuleFaults('EBCM')">CLEAR EBCM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TPMS ═════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-TPMS">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">TPMS</span>
+        <span class="mod-addr">Tire Pressure Monitoring</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-TPMS"></span>
+        <span class="offline-badge" id="badge-TPMS" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('TPMS')">PWR</button>
+      </div>
+    </div>
+    <div class="tpms-grid">
+      <div class="tpms-corner" id="tpms-fl" onclick="simulateLowTire('fl')">
+        <div class="corner-label">FRONT LEFT</div>
+        <div class="corner-psi" id="tpms-fl-psi">35</div>
+        <div class="corner-temp" id="tpms-fl-temp">70°F</div>
+      </div>
+      <div class="tpms-corner" id="tpms-fr" onclick="simulateLowTire('fr')">
+        <div class="corner-label">FRONT RIGHT</div>
+        <div class="corner-psi" id="tpms-fr-psi">35</div>
+        <div class="corner-temp" id="tpms-fr-temp">70°F</div>
+      </div>
+      <div class="tpms-corner" id="tpms-rl" onclick="simulateLowTire('rl')">
+        <div class="corner-label">REAR LEFT</div>
+        <div class="corner-psi" id="tpms-rl-psi">35</div>
+        <div class="corner-temp" id="tpms-rl-temp">70°F</div>
+      </div>
+      <div class="tpms-corner" id="tpms-rr" onclick="simulateLowTire('rr')">
+        <div class="corner-label">REAR RIGHT</div>
+        <div class="corner-psi" id="tpms-rr-psi">35</div>
+        <div class="corner-temp" id="tpms-rr-temp">70°F</div>
+      </div>
+    </div>
+    <div class="tpms-psi-modes">
+      <button class="psi-mode-btn" onclick="setPsiMode(35)">STREET<br>35 PSI</button>
+      <button class="psi-mode-btn" onclick="setPsiMode(32)">TRACK<br>32 PSI</button>
+      <button class="psi-mode-btn" onclick="setPsiMode(65)">TOW<br>65 PSI</button>
+      <button class="psi-mode-btn" onclick="setPsiMode(28)">DRAG<br>28 PSI</button>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('C0750','TPMS')">C0750 FL SENSOR</button>
+        <button class="fault-btn" onclick="injectFault('C0755','TPMS')">C0755 FR SENSOR</button>
+        <button class="fault-btn" onclick="injectFault('C0760','TPMS')">C0760 RL SENSOR</button>
+        <button class="fault-btn" onclick="injectFault('C0765','TPMS')">C0765 RR SENSOR</button>
+        <button class="clear-btn" onclick="clearModuleFaults('TPMS')">CLEAR TPMS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SDM ══════════════════════════════════════════════════════ -->
+  <div class="mod-card" id="card-SDM">
+    <div class="mod-header">
+      <div style="display:flex;align-items:baseline;gap:6px">
+        <span class="mod-name">SDM</span>
+        <span class="mod-addr">Supplemental Restraint &mdash; Class2:088</span>
+      </div>
+      <div class="mod-right">
+        <span class="online-dot" id="dot-SDM"></span>
+        <span class="offline-badge" id="badge-SDM" style="display:none">OFFLINE</span>
+        <button class="toggle-btn" onclick="toggleModule('SDM')">PWR</button>
+      </div>
+    </div>
+    <div class="val-grid">
+      <div class="val-row"><span class="val-label">AIRBAG SYS</span><span class="val-num" id="v-airbag_status">—</span></div>
+      <div class="val-row"><span class="val-label">SEATBELT FL</span><span class="val-num" id="v-seatbelt_fl">—</span></div>
+      <div class="val-row"><span class="val-label">SEATBELT FR</span><span class="val-num" id="v-seatbelt_fr">—</span></div>
+    </div>
+    <div class="fault-section">
+      <h4>FAULT INJECT</h4>
+      <div class="fault-btns">
+        <button class="fault-btn" onclick="injectFault('B0001','SDM')">B0001 DRV STAGE 1</button>
+        <button class="fault-btn" onclick="injectFault('B0002','SDM')">B0002 PASS STAGE 1</button>
+        <button class="fault-btn" onclick="injectFault('B0051','SDM')">B0051 DEPLOY CMD</button>
+        <button class="fault-btn" onclick="injectFault('B1001','SDM')">B1001 OPT CFG</button>
+        <button class="clear-btn" onclick="clearModuleFaults('SDM')">CLEAR SDM</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #main -->
+
+<!-- ══ ACTIVE FAULTS ═════════════════════════════════════════════════ -->
+<div id="faults-section">
+  <h2>ACTIVE FAULT CODES</h2>
+  <table id="fault-table">
+    <thead>
+      <tr>
+        <th>CODE</th>
+        <th>DESCRIPTION</th>
+        <th>MODULE</th>
+        <th>SEVERITY</th>
+        <th>TIME</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="fault-tbody">
+    </tbody>
+  </table>
+  <div id="no-faults">NO ACTIVE FAULT CODES</div>
+  <div style="margin-top:8px">
+    <button class="clear-btn" onclick="clearAllFaults()" style="margin-left:0">CLEAR ALL CODES</button>
+  </div>
+</div>
+
+<!-- ══ DRIVE CYCLE ═══════════════════════════════════════════════════ -->
+<div id="drive-cycle">
+  <h2>DRIVE CYCLE SIMULATOR</h2>
+  <div class="dc-btns">
+    <button class="dc-btn" onclick="runDriveCycle('cold_start')">COLD START</button>
+    <button class="dc-btn" onclick="runDriveCycle('warm_idle')">WARM IDLE</button>
+    <button class="dc-btn" onclick="runDriveCycle('cruise_55')">CRUISE 55MPH</button>
+    <button class="dc-btn" onclick="runDriveCycle('hard_pull')">HARD PULL</button>
+    <button class="dc-btn" onclick="runDriveCycle('highway_80')">HIGHWAY 80MPH</button>
+    <button class="dc-btn" onclick="runDriveCycle('stop')">STOP</button>
+  </div>
+</div>
+
+<script>
+const FMT = {
+  rpm:           v => Math.round(v) + ' RPM',
+  throttle:      v => v + ' %',
+  engine_load:   v => v + ' %',
+  coolant_temp:  v => v + ' °F',
+  oil_temp:      v => v + ' °F',
+  iat:           v => v + ' °F',
+  maf:           v => (+v).toFixed(1) + ' g/s',
+  fuel_pressure: v => v + ' PSI',
+  timing:        v => (+v).toFixed(1) + '°',
+  battery_main:  v => (+v).toFixed(1) + 'V',
+  stft_b1:       v => (v >= 0 ? '+' : '') + (+v).toFixed(1) + ' %',
+  stft_b2:       v => (v >= 0 ? '+' : '') + (+v).toFixed(1) + ' %',
+  ltft_b1:       v => (v >= 0 ? '+' : '') + (+v).toFixed(1) + ' %',
+  ltft_b2:       v => (v >= 0 ? '+' : '') + (+v).toFixed(1) + ' %',
+  o2_b1s1:       v => (+v).toFixed(2) + 'V',
+  o2_b2s1:       v => (+v).toFixed(2) + 'V',
+  gear:          v => 'GEAR ' + v,
+  target_gear:   v => 'GEAR ' + v,
+  tft:           v => v + ' °F',
+  line_pressure: v => v + ' PSI',
+  tcc_state:     v => v,
+  sol_a:         v => v,
+  sol_b:         v => v,
+  prndl:         v => v,
+  alt_output:    v => (+v).toFixed(1) + 'V',
+  door_fl:       v => v ? 'OPEN' : 'CLOSED',
+  door_fr:       v => v ? 'OPEN' : 'CLOSED',
+  door_rl:       v => v ? 'OPEN' : 'CLOSED',
+  door_rr:       v => v ? 'OPEN' : 'CLOSED',
+  headlights:    v => v ? 'ON' : 'OFF',
+  interior_lights: v => v ? 'ON' : 'OFF',
+  hazards:       v => v ? 'ON' : 'OFF',
+  wheel_speed_fl: v => (+v).toFixed(1) + ' MPH',
+  wheel_speed_fr: v => (+v).toFixed(1) + ' MPH',
+  wheel_speed_rl: v => (+v).toFixed(1) + ' MPH',
+  wheel_speed_rr: v => (+v).toFixed(1) + ' MPH',
+  brake_pressure: v => v + ' %',
+  abs_active:    v => v ? 'ACTIVE' : 'OFF',
+  tcs_active:    v => v ? 'ACTIVE' : 'OFF',
+  airbag_status: v => v,
+  seatbelt_fl:   v => v ? 'LATCHED' : 'OPEN',
+  seatbelt_fr:   v => v ? 'LATCHED' : 'OPEN',
+};
+
+function colorNum(key, val, el) {
+  el.className = 'val-num';
+  if (key === 'coolant_temp' || key === 'oil_temp') {
+    if (val > 220) el.classList.add('crit');
+    else if (val > 210) el.classList.add('warn');
+    else el.classList.add('good');
+  } else if (key === 'battery_main') {
+    if (val < 12.0) el.classList.add('crit');
+    else if (val < 13.0) el.classList.add('warn');
+    else el.classList.add('good');
+  } else if (key === 'stft_b1' || key === 'stft_b2' || key === 'ltft_b1' || key === 'ltft_b2') {
+    if (Math.abs(val) > 10) el.classList.add('crit');
+    else if (Math.abs(val) > 5) el.classList.add('warn');
+  } else if (key === 'abs_active' || key === 'tcs_active') {
+    if (val) el.classList.add('warn');
+  } else if (key === 'tcc_state') {
+    if (val === 'LOCKED') el.classList.add('good');
+    else if (val === 'SLIPPING') el.classList.add('warn');
+  } else if (key.startsWith('door_') || key === 'airbag_status') {
+    if (val === 'OPEN' || val === 'FAULT') el.classList.add('crit');
+    else if (val === 'OK') el.classList.add('good');
+  }
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+let _lastState = {};
+
+function updateDisplay(data) {
+  const ts = data.truck_state || {};
+  const mods = data.modules || {};
+  const faults = data.active_faults || [];
+
+  // Engine state banner
+  const esEl = document.getElementById('ecu-engine-state');
+  if (esEl) {
+    const es = data.engine_state || 'NORMAL';
+    esEl.textContent = es;
+    esEl.className = 'engine-state-bar es-' + es.toLowerCase().replace(' ','_');
+  }
+
+  // All value fields
+  for (const [key, fmt] of Object.entries(FMT)) {
+    const el = document.getElementById('v-' + key);
+    if (el && ts[key] !== undefined) {
+      el.textContent = fmt(ts[key]);
+      colorNum(key, ts[key], el);
+    }
+  }
+
+  // BCM battery mirror
+  const bbEl = document.getElementById('bcm-batt');
+  if (bbEl && ts.battery_main !== undefined) {
+    bbEl.textContent = (+ts.battery_main).toFixed(1) + 'V';
+  }
+  const tcEl = document.getElementById('bcm-tc');
+  if (tcEl) tcEl.textContent = ts.tc_on ? 'ACTIVE' : 'OFF';
+
+  // TPMS corners
+  for (const corner of ['fl','fr','rl','rr']) {
+    const psi  = ts['tpms_'+corner+'_psi'];
+    const temp = ts['tpms_'+corner+'_temp'];
+    if (psi !== undefined) {
+      setText('tpms-'+corner+'-psi', (+psi).toFixed(1));
+      const div = document.getElementById('tpms-'+corner);
+      if (div) {
+        div.className = 'tpms-corner' + (psi < 28 ? ' crit' : psi < 32 ? ' warn' : '');
+      }
+    }
+    if (temp !== undefined) setText('tpms-'+corner+'-temp', Math.round(temp)+'°F');
+  }
+
+  // PRNDL buttons
+  const p = ts.prndl || ts.gear || 'P';
+  for (const g of ['P','R','N','D','3','2','1']) {
+    const btn = document.getElementById('prndl-'+g);
+    if (btn) btn.className = 'prndl-btn' + (String(p) === g ? ' active' : '');
+  }
+
+  // Toggle buttons
+  const toggleKeys = ['door_fl','door_fr','door_rl','door_rr','headlights','hazards','interior_lights','tc_on'];
+  for (const k of toggleKeys) {
+    const btn = document.getElementById('tgl-'+k);
+    if (btn) btn.className = 'tgl' + (ts[k] ? ' on' : '');
+  }
+
+  // Module online/offline dots
+  for (const [mod, info] of Object.entries(mods)) {
+    const dot   = document.getElementById('dot-'+mod);
+    const badge = document.getElementById('badge-'+mod);
+    const card  = document.getElementById('card-'+mod);
+    if (dot)   dot.className   = 'online-dot' + (info.online ? '' : ' off');
+    if (badge) badge.style.display = info.online ? 'none' : 'inline';
+    if (card)  card.className  = 'mod-card' + (info.online ? '' : ' offline');
+  }
+
+  // Status pills
+  const obdPill = document.getElementById('obd-pill');
+  if (obdPill) {
+    if (data.obd_connected && data.obd_mode === 'live') {
+      obdPill.textContent = 'OBD: LIVE';
+      obdPill.className = 'status-pill pill-green';
+    } else if (data.use_emulator) {
+      obdPill.textContent = 'OBD: EMULATED';
+      obdPill.className = 'status-pill pill-yellow';
+    } else {
+      obdPill.textContent = 'OBD: OFFLINE';
+      obdPill.className = 'status-pill pill-gray';
+    }
+  }
+  const bPill = document.getElementById('beamng-pill');
+  if (bPill) {
+    bPill.textContent = data.beamng ? 'BEAMNG: LIVE' : 'BEAMNG: OFF';
+    bPill.className = 'status-pill ' + (data.beamng ? 'pill-green' : 'pill-gray');
+  }
+  const gk = data.gatekeeper || {};
+  const gkPill = document.getElementById('gk-pill');
+  if (gkPill) {
+    gkPill.textContent = 'GK: ' + (gk.auth_state || 'LOCKED') + (gk.key_type ? ' ['+gk.key_type+']' : '');
+    gkPill.className = 'status-pill ' + (gk.auth_state === 'UNLOCKED' ? 'pill-green' : 'pill-red');
+  }
+
+  // Fault table
+  renderFaults(faults);
+
+  _lastState = ts;
+}
+
+function renderFaults(faults) {
+  const tbody = document.getElementById('fault-tbody');
+  const noEl  = document.getElementById('no-faults');
+  if (!faults.length) {
+    tbody.innerHTML = '';
+    noEl.style.display = 'block';
+    return;
+  }
+  noEl.style.display = 'none';
+  tbody.innerHTML = faults.map(f => {
+    const sevClass = 'sev-' + (f.severity||'medium').toLowerCase();
+    return `<tr>
+      <td><span class="fault-code">${f.code}</span></td>
+      <td><span class="fault-desc">${f.desc}</span></td>
+      <td><span class="fault-mod">${f.module||''}</span></td>
+      <td><span class="${sevClass}">${(f.severity||'').toUpperCase()}</span></td>
+      <td><span class="fault-mod">${f.injected_at||''}</span></td>
+      <td><button class="fault-clear-x" onclick="clearFaultCode('${f.code}')">&#x2715;</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── API CALLS ──────────────────────────────────────────────────────
+async function api(url, method='GET', body=null) {
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if (body) opts.body = JSON.stringify(body);
+  try { return await (await fetch(url, opts)).json(); } catch(e) { return null; }
+}
+
+async function injectFault(code, module) {
+  const res = await api('/modules/fault/inject', 'POST', {code, module});
+  if (res && res.ok) refreshNow();
+}
+
+async function clearFaultCode(code) {
+  await api('/modules/fault/clear', 'POST', {code});
+  refreshNow();
+}
+
+async function clearModuleFaults(module) {
+  const faults = (_lastFaults||[]).filter(f => f.module === module);
+  for (const f of faults) {
+    await api('/modules/fault/clear', 'POST', {code: f.code});
+  }
+  refreshNow();
+}
+
+async function clearAllFaults() {
+  await api('/modules/fault/clear', 'POST', {});
+  refreshNow();
+}
+
+async function toggleModule(mod) {
+  await api('/modules/module/toggle', 'POST', {module: mod});
+  refreshNow();
+}
+
+async function toggleVal(key) {
+  const cur = _lastState[key];
+  await api('/modules/update', 'POST', {[key]: !cur});
+  refreshNow();
+}
+
+async function setGear(gear) {
+  await api('/modules/update', 'POST', {prndl: gear, gear: gear});
+  refreshNow();
+}
+
+async function setPsiMode(target) {
+  await api('/modules/update', 'POST', {
+    tpms_fl_psi: target, tpms_fr_psi: target,
+    tpms_rl_psi: target, tpms_rr_psi: target,
+  });
+  refreshNow();
+}
+
+async function simulateLowTire(corner) {
+  await api('/modules/update', 'POST', {['tpms_'+corner+'_psi']: 20.0});
+  await injectFault('C07'+{fl:'50',fr:'55',rl:'60',rr:'65'}[corner], 'TPMS');
+}
+
+async function runDriveCycle(name) {
+  document.querySelectorAll('.dc-btn').forEach(b => b.classList.remove('dc-active'));
+  event.target.classList.add('dc-active');
+  await api('/modules/drive_cycle', 'POST', {name});
+  setTimeout(() => event.target.classList.remove('dc-active'), 3000);
+  refreshNow();
+}
+
+// ── POLL LOOP ──────────────────────────────────────────────────────
+let _lastFaults = [];
+let _pollTimer = null;
+
+async function poll() {
+  const data = await api('/modules/status');
+  if (data) {
+    _lastFaults = data.active_faults || [];
+    updateDisplay(data);
+  }
+}
+
+function refreshNow() {
+  clearTimeout(_pollTimer);
+  poll().then(() => { _pollTimer = setTimeout(pollLoop, 500); });
+}
+
+function pollLoop() {
+  poll().then(() => { _pollTimer = setTimeout(pollLoop, 500); });
+}
+
+pollLoop();
+</script>
+</body>
+</html>
