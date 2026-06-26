@@ -24,6 +24,8 @@ jobs:
           git config user.name "Archer"
 
           cp $GITHUB_WORKSPACE/archer.py .
+          cp $GITHUB_WORKSPACE/archer.py app.py
+          cp $GITHUB_WORKSPACE/Dockerfile .
           cp $GITHUB_WORKSPACE/requirements.txt .
           cp $GITHUB_WORKSPACE/archer_*.html . 2>/dev/null || true
           [ -f $GITHUB_WORKSPACE/README.md ] && cp $GITHUB_WORKSPACE/README.md .
