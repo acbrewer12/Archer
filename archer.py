@@ -14,6 +14,9 @@ import queue
 import platform as _platform
 import sys
 import collections
+import hmac
+import hashlib
+import secrets
 
 # ── LOG CAPTURE (captures all print() output into a ring buffer) ──
 _log_buffer = collections.deque(maxlen=2000)
@@ -130,26 +133,22 @@ last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
 
-# ── RATE LIMITING ─────────────────────────────────────────────────────────────
-try:
-    from flask_limiter import Limiter
-    from flask_limiter.util import get_remote_address
-    _limiter = Limiter(
-        app=display_app,
-        key_func=get_remote_address,
-        default_limits=[],          # no global limit — applied per route
-        storage_uri='memory://',
-    )
-    _LIMITER_AVAILABLE = True
-except ImportError:
-    _LIMITER_AVAILABLE = False
-    class _FakeLimiter:
-        def limit(self, *a, **kw):
-            return lambda f: f
-        def shared_limit(self, *a, **kw):
-            return lambda f: f
-    _limiter = _FakeLimiter()
+# ── RATE LIMITING + SHARED STATE ──────────────────────────────────────────────
+from archer_state import _limiter, _LIMITER_AVAILABLE, sim_flags as _sim_flags_ref
+# Attach limiter to this Flask app (init_app pattern — no circular import)
+_limiter.init_app(display_app)
+# Keep sim_flags pointing at the same dict object from archer_state
+sim_flags = _sim_flags_ref
+if not _LIMITER_AVAILABLE:
     print('[ARCHER] flask-limiter not installed — rate limiting disabled')
+
+# ── BLUEPRINT REGISTRATION ────────────────────────────────────────────────────
+from blueprints.fans import bp as _fans_bp
+from blueprints.modules import bp as _modules_bp
+from blueprints.terminal import bp as _terminal_bp
+display_app.register_blueprint(_fans_bp)
+display_app.register_blueprint(_modules_bp)
+display_app.register_blueprint(_terminal_bp)
 
 # ── CSRF TOKEN (double-submit cookie, lightweight) ───────────────────────────
 _csrf_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd').encode()
@@ -238,7 +237,7 @@ beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
 
 # True  = update_awareness injects random noise (simulation mode)
 # False = real OBD data is feeding truck_state; don't overwrite it
-sim_random_enabled = True
+sim_flags = {'random_enabled': True}   # use dict so blueprints can mutate it
 
 # ── PUBLIC URL TRACKING ──────────────────
 public_url = {'url': ''}
@@ -1431,7 +1430,7 @@ def update_awareness():
         if rpm > 5800:                           warnings.append('near_redline')
         awareness['warnings_active'] = warnings
 
-        if sim_random_enabled:
+        if sim_flags["random_enabled"]:
             truck_state['oil_temp']     = 195 + random.randint(-3, 5)
             truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
             truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
@@ -7952,407 +7951,6 @@ def require_tier1(request):
     tier = get_request_tier(request)
     return tier == 1, tier
 
-# ── REAL SHELL EXECUTION ─────────────────────────────────
-import subprocess, select, os as _os
-import platform as _plt
-if _plt.system() != 'Windows':
-    try:
-        import pty as pty
-    except ImportError:
-        pty = None
-else:
-    pty = None
-
-@display_app.route('/terminal')
-def terminal_page():
-    from flask import request as req, Response as FR
-    allowed, tier = terminal_access_check(req)
-    if not allowed:
-        return FR(f"""<!DOCTYPE html><html><body style="background:#000;color:#cc0000;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-        <div style="text-align:center"><div style="font-size:32px;margin-bottom:16px">🔒</div>
-        <div style="font-size:14px;letter-spacing:3px">ACCESS DENIED</div>
-        <div style="font-size:10px;color:#333;margin-top:8px;letter-spacing:2px">TIER {tier} — TERMINAL REQUIRES TIER 1</div></div>
-        </body></html>""", mimetype='text/html')
-
-    terminal_html = """<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Archer Terminal</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%}
-body{background:#0a0a0a;color:#ff3333;font-family:'Courier New',monospace;display:flex;flex-direction:column;overflow:hidden}
-#header{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:8px 12px;display:flex;align-items:center;gap:12px;flex-shrink:0}
-#header-title{font-size:11px;letter-spacing:3px;color:#cc0000;flex:1}
-.tab-btn{background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:10px;letter-spacing:2px;padding:4px 10px;border-radius:3px;cursor:pointer;transition:all 0.2s}
-.tab-btn.active{border-color:#cc0000;color:#cc0000;background:#1a0000}
-#pi-status{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
-.pi-online{background:#001a00;color:#00ff00;border:1px solid #00ff00}
-.pi-offline{background:#1a0000;color:#cc0000;border:1px solid #330000}
-#terminal-container{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
-#output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-#log-output{flex:1;min-height:0;padding:10px 12px 70px;overflow-y:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;display:none}
-.log-spotify{color:#1db954}.log-archer{color:#cc4444}.log-display{color:#cc8800}
-.log-auth{color:#4488ff}.log-voice{color:#44cccc}.log-arduino{color:#ff8800}
-.log-you{color:#ffffff}
-.log-err{color:#ff4444}.log-default{color:#888}
-#log-filter{background:#000;border:1px solid #222;color:#888;font-family:'Courier New',monospace;font-size:10px;padding:4px 8px;outline:none;width:160px;border-radius:3px}
-#log-filter:focus{border-color:#cc0000}
-#log-toolbar{display:none;padding:6px 8px;border-bottom:1px solid #1a1a1a;background:#050505;flex-shrink:0;gap:8px;align-items:center}
-.log-dot{width:8px;height:8px;border-radius:50%;background:#00ff00;animation:blink 1.5s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
-#input-row{position:fixed;bottom:0;left:0;right:0;display:flex;padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));border-top:2px solid #1a1a1a;background:#050505;align-items:center;z-index:100}
-.prompt-label{color:#cc0000;padding:6px 8px;font-size:13px;flex-shrink:0}
-#cmd{flex:1;background:#111;color:#ff3333;border:1px solid #333;border-radius:4px;padding:8px 10px;font-family:'Courier New',monospace;font-size:16px;outline:none;caret-color:#ff3333;-webkit-user-select:text;user-select:text;touch-action:manipulation}
-#cmd:focus{border-color:#cc0000;background:#0d0000}
-#send-btn{background:#1a0000;border:1px solid #cc0000;color:#cc0000;font-family:monospace;font-size:11px;letter-spacing:1px;padding:8px 16px;border-radius:4px;cursor:pointer;margin-left:6px;flex-shrink:0;touch-action:manipulation;min-width:52px;min-height:40px}
-#send-btn:active{background:#330000}
-.line-prompt{color:#cc0000}
-.line-out{color:#ff6666}
-.line-err{color:#ff4444}
-.line-info{color:#333}
-.line-success{color:#00ff00}
-.line-system{color:#888}
-#pi-iframe{width:100%;height:100%;border:none;display:none}
-</style>
-</head>
-<body>
-<div id="header">
-  <div id="header-title">⚡ ARCHER TERMINAL</div>
-  <button class="tab-btn active" id="tab-server" onclick="switchTab('server')">SERVER</button>
-  <button class="tab-btn" id="tab-logs" onclick="switchTab('logs')">LOGS</button>
-  <button class="tab-btn" id="tab-pi" onclick="switchTab('pi')">PI</button>
-  <span id="pi-status" class="pi-offline">PI OFFLINE</span>
-</div>
-<div id="terminal-container">
-  <div id="server-terminal" style="display:flex;flex-direction:column;flex:1;min-height:0">
-    <div id="output"></div>
-    <div id="input-row">
-      <span class="prompt-label">&#9654;</span>
-      <input id="cmd" type="text" placeholder="enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text"/>
-      <button id="send-btn" onclick="sendCmd()">RUN</button>
-    </div>
-  </div>
-  <div id="logs-panel" style="display:none;flex-direction:column;flex:1;min-height:0">
-    <div id="log-toolbar">
-      <div class="log-dot"></div>
-      <span style="font-size:9px;color:#444;letter-spacing:2px">LIVE</span>
-      <input id="log-filter" placeholder="filter..." oninput="filterLogs()">
-      <button onclick="clearLogs()" style="background:none;border:1px solid #222;color:#444;font-family:monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;letter-spacing:1px">CLEAR</button>
-    </div>
-    <div id="log-output"></div>
-  </div>
-  <iframe id="pi-iframe" src="about:blank"></iframe>
-</div>
-
-<script>
-const out = document.getElementById('output');
-const inp = document.getElementById('cmd');
-let currentTab = 'server';
-let cmdHistory = [];
-let histIdx = -1;
-
-function append(text, cls) {
-    const s = document.createElement('div');
-    s.className = 'line-' + (cls || 'out');
-    s.textContent = text;
-    out.appendChild(s);
-    out.scrollTop = out.scrollHeight;
-}
-
-function switchTab(tab) {
-    currentTab = tab;
-    ['server','logs','pi'].forEach(t => document.getElementById('tab-'+t)?.classList.toggle('active', t === tab));
-    document.getElementById('server-terminal').style.display = tab === 'server' ? 'flex' : 'none';
-    document.getElementById('logs-panel').style.display     = tab === 'logs'   ? 'flex' : 'none';
-    document.getElementById('log-toolbar').style.display    = tab === 'logs'   ? 'flex' : 'none';
-    document.getElementById('log-output').style.display     = tab === 'logs'   ? 'block' : 'none';
-    document.getElementById('pi-iframe').style.display      = tab === 'pi'     ? 'block' : 'none';
-    if (tab === 'pi')   checkPiStatus();
-    if (tab === 'logs') startLogStream();
-}
-
-// ── LOG STREAM ──────────────────────────────────
-let _logLines = [];
-let _logFilter = '';
-let _logEs = null;
-
-function logClass(line) {
-    if (line.includes('[SPOTIFY]')) return 'log-spotify';
-    if (line.includes('[ARCHER]'))  return 'log-archer';
-    if (line.includes('[DISPLAY]')) return 'log-display';
-    if (line.includes('[AUTH]'))    return 'log-auth';
-    if (line.includes('[VOICE]'))   return 'log-voice';
-    if (line.includes('[ARDUINO]')) return 'log-arduino';
-    if (line.includes('[YOU'))      return 'log-you';
-    if (line.toLowerCase().includes('error') || line.includes('Traceback')) return 'log-err';
-    return 'log-default';
-}
-
-function renderLogs() {
-    const el = document.getElementById('log-output');
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
-    const frag = document.createDocumentFragment();
-    _logLines.forEach(line => {
-        if (_logFilter && !line.toLowerCase().includes(_logFilter)) return;
-        const d = document.createElement('div');
-        d.className = logClass(line);
-        d.textContent = line;
-        frag.appendChild(d);
-    });
-    el.innerHTML = '';
-    el.appendChild(frag);
-    if (atBottom) el.scrollTop = el.scrollHeight;
-}
-
-function appendLog(line) {
-    _logLines.push(line);
-    if (_logLines.length > 2000) _logLines.shift();
-    if (_logFilter && !line.toLowerCase().includes(_logFilter)) return;
-    const el = document.getElementById('log-output');
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
-    const d = document.createElement('div');
-    d.className = logClass(line);
-    d.textContent = line;
-    el.appendChild(d);
-    if (atBottom) el.scrollTop = el.scrollHeight;
-}
-
-function filterLogs() {
-    _logFilter = document.getElementById('log-filter').value.toLowerCase();
-    renderLogs();
-}
-
-function clearLogs() { _logLines = []; document.getElementById('log-output').innerHTML = ''; }
-
-function startLogStream() {
-    if (_logEs) return;
-    _logEs = new EventSource('/terminal/log_stream');
-    _logEs.onmessage = e => {
-        const d = JSON.parse(e.data);
-        if (d.snapshot) { _logLines = d.snapshot; renderLogs(); }
-        else if (d.line) appendLog(d.line);
-    };
-    _logEs.onerror = () => { _logEs.close(); _logEs = null; setTimeout(startLogStream, 3000); };
-}
-
-function checkPiStatus() {
-    fetch('/terminal/pi_status')
-    .then(r=>r.json()).then(d=>{
-        const el = document.getElementById('pi-status');
-        if (d.online) {
-            el.className = 'pi-status pi-online';
-            el.textContent = 'PI ONLINE';
-            document.getElementById('pi-iframe').src = d.url || 'about:blank';
-        } else {
-            el.className = 'pi-status pi-offline';
-            el.textContent = 'PI OFFLINE';
-            document.getElementById('pi-iframe').src = 'about:blank';
-        }
-    }).catch(()=>{});
-}
-
-function sendCmd() {
-    const cmd = inp.value.trim();
-    if (!cmd) return;
-    cmdHistory.unshift(cmd);
-    histIdx = -1;
-    append('$ ' + cmd, 'prompt');
-    inp.value = '';
-    fetch('/terminal/exec', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cmd: cmd})
-    })
-    .then(r=>r.json())
-    .then(d=>{
-        if (d.stdout) d.stdout.split('\\n').forEach(l => { if(l) append(l, 'out'); });
-        if (d.stderr) d.stderr.split('\\n').forEach(l => { if(l) append(l, 'err'); });
-        if (d.error)  append(d.error, 'err');
-        append('', 'info');
-    })
-    .catch(e => append('Connection error', 'err'));
-}
-
-inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { sendCmd(); return; }
-    if (e.key === 'ArrowUp') {
-        histIdx = Math.min(histIdx + 1, cmdHistory.length - 1);
-        inp.value = cmdHistory[histIdx] || '';
-        e.preventDefault();
-    }
-    if (e.key === 'ArrowDown') {
-        histIdx = Math.max(histIdx - 1, -1);
-        inp.value = histIdx >= 0 ? cmdHistory[histIdx] : '';
-        e.preventDefault();
-    }
-});
-
-// startup
-append('ARCHER SERVER TERMINAL', 'system');
-append('Connected to: ' + location.host, 'info');
-append('Tier 1 access granted.', 'success');
-append('─────────────────────────────────', 'info');
-append('', 'info');
-
-// poll Pi status every 15s
-checkPiStatus();
-setInterval(checkPiStatus, 15000);
-
-// Keep body height = visual viewport so input stays above keyboard on mobile
-function syncViewport() {
-  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-  document.body.style.height = h + 'px';
-}
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncViewport);
-  window.visualViewport.addEventListener('scroll', syncViewport);
-}
-window.addEventListener('resize', syncViewport);
-syncViewport();
-</script>
-</body>
-</html>"""
-    from flask import Response as FR
-    return FR(terminal_html, mimetype='text/html')
-
-# ── TERMINAL EXEC ENDPOINT ───────────────────────────────
-import re as _re
-_DANGEROUS = _re.compile(
-    r'\brm\s+(-[a-z]*f[a-z]*\s+)?/'      # rm -rf / or rm /
-    r'|\bmkfs\b'
-    r'|\bdd\s+if=/dev/zero\b'
-    r'|\b(shutdown|reboot|poweroff|halt)\b'
-    r'|:\(\)\s*\{.*\|.*&'                 # fork bomb
-    r'|\bpasswd\b|\buseradd\b|\buserdel\b'
-    r'|\|\s*(sh|bash|zsh|dash)\b'         # pipe to shell
-    r'|>\s*/dev/sd'                        # overwrite disk
-    r'|\bchmod\s+[0-7]*7\s+/'             # chmod on root
-    r'|\bcrontab\s+-r\b'
-)
-
-@display_app.route('/terminal/exec', methods=['POST'])
-@_limiter.limit('15 per minute; 60 per hour')
-def terminal_exec():
-    from flask import request as req
-    allowed, tier = terminal_access_check(req)
-    if not allowed:
-        log_security('TERMINAL_ACCESS_DENIED', ip=req.remote_addr, tier=tier)
-        return jsonify({'error': 'Access denied — Tier 1 only'})
-    data = req.get_json() or {}
-    cmd  = data.get('cmd', '').strip()
-    if not cmd:
-        return jsonify({'stdout': '', 'stderr': ''})
-    log_info('TERMINAL_CMD', cmd=cmd[:200], ip=req.remote_addr)
-    if cmd.strip() in ('/help', 'help'):
-        maint_state = 'ON' if system_health['maintenance'] else 'OFF'
-        help_text = (
-            "ARCHER SERVER COMMANDS\n"
-            "──────────────────────────────────────────\n"
-            "Maintenance\n"
-            f"  maintenance on           — redirect all visitors to maintenance page (currently {maint_state})\n"
-            "  maintenance off          — restore normal access\n"
-            "  maintenance status       — show current state\n"
-            "\nSystem\n"
-            "  ps aux | grep archer     — check if archer.py is running\n"
-            "  cat /tmp/ollama.log      — view Ollama logs\n"
-            "  free -h                  — memory usage\n"
-            "  df -h                    — disk usage\n"
-            "  uptime                   — system load\n"
-            "\nArcher State\n"
-            "  curl -s http://localhost:7860/system_health | python3 -m json.tool\n"
-            "  curl -s http://localhost:7860/display_data  | python3 -m json.tool\n"
-            "  curl -s http://localhost:7860/build/part/search?q=engine | python3 -m json.tool\n"
-            "\nLogs\n"
-            "  (Logs tab above streams live server output)\n"
-            "\nGPS / Location  (single-line, paste as-is)\n"
-            "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
-            "\nType any shell command to run it on the server.\n"
-        )
-        return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
-
-    # Built-in: maintenance mode toggle
-    cmd_lower = cmd.strip().lower()
-    if cmd_lower in ('maintenance on', 'maintenance mode on', 'maint on'):
-        system_health['maintenance'] = True
-        return jsonify({'stdout': 'MAINTENANCE MODE ON — all visitors redirected to maintenance page.', 'stderr': '', 'returncode': 0})
-    if cmd_lower in ('maintenance off', 'maintenance mode off', 'maint off'):
-        system_health['maintenance'] = False
-        return jsonify({'stdout': 'MAINTENANCE MODE OFF — normal access restored.', 'stderr': '', 'returncode': 0})
-    if cmd_lower in ('maintenance status', 'maint status', 'maintenance'):
-        state = 'ON' if system_health['maintenance'] else 'OFF'
-        return jsonify({'stdout': f'Maintenance mode: {state}', 'stderr': '', 'returncode': 0})
-    if _DANGEROUS.search(cmd):
-        return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
-    try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=15,
-            cwd='/app'
-        )
-        return jsonify({'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode})
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Command timed out (15s limit)'})
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
-# ── LOG STREAM (SSE) ─────────────────────────────────────
-@display_app.route('/terminal/log_stream')
-def terminal_log_stream():
-    from flask import request as req, Response as FR
-    allowed, _ = terminal_access_check(req)
-    if not allowed:
-        return FR('', status=403)
-    def generate():
-        # Send current buffer as snapshot
-        with _log_lock:
-            snapshot = list(_log_buffer)
-        yield f"data: {json.dumps({'snapshot': snapshot})}\n\n"
-        last_len = len(snapshot)
-        while True:
-            time.sleep(0.4)
-            with _log_lock:
-                current = list(_log_buffer)
-            cur_len = len(current)
-            if cur_len > last_len:
-                for line in current[last_len:]:
-                    yield f"data: {json.dumps({'line': line})}\n\n"
-            elif cur_len < last_len:
-                # Buffer was trimmed (maxlen eviction) — re-snapshot
-                yield f"data: {json.dumps({'snapshot': current})}\n\n"
-            last_len = cur_len
-    return FR(generate(), mimetype='text/event-stream',
-              headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
-# ── PI TERMINAL STATUS ───────────────────────────────────
-pi_tunnel_url = {'url': None, 'online': False, 'last_seen': None}
-
-@display_app.route('/terminal/pi_status')
-def pi_status():
-    return jsonify(pi_tunnel_url)
-
-@display_app.route('/terminal/pi_register', methods=['POST'])
-def pi_register():
-    """Pi calls this when it connects to register its tunnel URL"""
-    from flask import request as req
-    data = req.get_json() or {}
-    token = data.get('token', '')
-    pi_token = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
-    if token != pi_token:
-        return jsonify({'error': 'Invalid token'}), 403
-    pi_tunnel_url['url']       = data.get('url')
-    pi_tunnel_url['online']    = True
-    pi_tunnel_url['last_seen'] = datetime.now().strftime('%I:%M %p')
-    print(f"[PI] Connected — tunnel: {pi_tunnel_url['url']}")
-    return jsonify({'status': 'registered'})
-
-@display_app.route('/terminal/pi_disconnect', methods=['POST'])
-def pi_disconnect():
-    pi_tunnel_url['online'] = False
-    pi_tunnel_url['url']    = None
-    print('[PI] Disconnected')
-    return jsonify({'status': 'ok'})
-
 
 # ── SYSTEM HEALTH TRACKING ──────────────────────────────
 system_health = {
@@ -8500,7 +8098,7 @@ def health_endpoint():
         obd_status = 'live'
     elif beamng_state.get('connected'):
         obd_status = 'beamng'
-    elif sim_random_enabled:
+    elif sim_flags["random_enabled"]:
         obd_status = 'sim'
     else:
         obd_status = 'offline'
@@ -10015,7 +9613,7 @@ def boot_status():
         sensor_status, sensor_detail = 'ok', 'OBD live'
     elif beamng_state.get('connected'):
         sensor_status, sensor_detail = 'ok', 'BeamNG bridge'
-    elif sim_random_enabled:
+    elif sim_flags["random_enabled"]:
         sensor_status, sensor_detail = 'warn', 'simulator mode'
     else:
         sensor_status, sensor_detail = 'warn', 'no sensor data'
@@ -10658,327 +10256,9 @@ load();
     return FR(html, mimetype='text/html')
 
 
-@display_app.route('/fans')
-@display_app.route('/fan')
-def fan_page():
-    """Public fan page — injects auth context so JS knows if user is signed in."""
-    import os, hashlib as _hl
-    from flask import request as flask_request, Response as FR
-    # Resolve auth from cookie
-    user_info = None
-    cookie_val = flask_request.cookies.get('archer_auth', '')
-    if cookie_val:
-        try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
-                if c_token == expected:
-                    user_info = {'tier': int(c_tier), 'name': c_name}
-        except Exception:
-            pass
-    user_json = json.dumps(user_info) if user_info else 'null'
-    if os.path.exists('archer_fan.html'):
-        with open('archer_fan.html', 'r', encoding='utf-8') as f:
-            html = f.read()
-        html = html.replace('</head>', f'<script>window.ARCHER_USER={user_json};</script></head>', 1)
-        return FR(html, mimetype='text/html')
-    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER FAN PAGE</body></html>', mimetype='text/html')
-
-
-@display_app.route('/register')
-def register_page():
-    """Registration / sign-in page — linked from fan page."""
-    from flask import request as flask_request
-    mac = get_client_mac(flask_request)
-    return registration_page(mac)
-
-
-@display_app.route('/fans/ask', methods=['POST'])
-@_limiter.limit('10 per minute; 60 per hour')
-def fans_ask():
-    """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
-    from flask import request as flask_request
-    try:
-        data = flask_request.get_json() or {}
-        question = (data.get('question') or data.get('command') or '').strip()
-        if not question:
-            return jsonify({'response': 'Ask me something about Archer!'})
-        response = ask_archer(question)
-        return jsonify({'response': response or "I'm not sure about that one."})
-    except Exception:
-        return jsonify({'response': 'Give me a second.'})
-
-
-
 # ══════════════════════════════════════════
-# SIMULATOR CONTROL PANEL
+# SIMULATOR CONTROL PANEL (moved to blueprints/modules.py)
 # ══════════════════════════════════════════
-
-SIM_SCENARIOS = {
-    'idle':       {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 195, 'coolant_temp': 190, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 165},
-    'warmup':     {'rpm': 850,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 100, 'coolant_temp': 70,  'battery_main': 14.2, 'throttle': 5,  'engine_load': 15, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 80,  'iat': 70, 'timing': 6.0, 'stft_b1': 6.0, 'stft_b2': 6.0},
-    'warm_idle':  {'rpm': 650,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 195, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 170},
-    'cruise':     {'rpm': 2000, 'speed': 55, 'boost': 0,  'ethanol': 0, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 18, 'engine_load': 32, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 175, 'timing': 18.0, 'wheel_speed_fl': 55, 'wheel_speed_fr': 55, 'wheel_speed_rl': 55, 'wheel_speed_rr': 55},
-    'highway':    {'rpm': 2400, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9, 'throttle': 22, 'engine_load': 38, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 178, 'timing': 20.0, 'wheel_speed_fl': 80, 'wheel_speed_fr': 80, 'wheel_speed_rl': 80, 'wheel_speed_rr': 80},
-    'hard_pull':  {'rpm': 5500, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 215, 'coolant_temp': 208, 'battery_main': 13.5, 'throttle': 100,'engine_load': 95, 'gear': 3,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 190, 'timing': 28.0, 'stft_b1': -2.0, 'stft_b2': -2.0},
-    'wot':        {'rpm': 4500, 'speed': 90, 'boost': 0,  'ethanol': 0, 'oil_temp': 215, 'coolant_temp': 210, 'battery_main': 13.5, 'throttle': 100,'engine_load': 92, 'gear': 3,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 188},
-    'launch':     {'rpm': 5200, 'speed': 15, 'boost': 0,  'ethanol': 0, 'oil_temp': 220, 'coolant_temp': 215, 'battery_main': 13.2, 'throttle': 100,'engine_load': 98, 'gear': 1,   'prndl': 'D', 'tcc_state': 'UNLOCKED', 'tft': 195},
-    'stop':       {'rpm': 0,   'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 210, 'coolant_temp': 205, 'battery_main': 12.6, 'throttle': 0,  'engine_load': 0,  'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 185},
-    'cooldown':   {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 230, 'coolant_temp': 220, 'battery_main': 13.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 198},
-    'warning':    {'rpm': 750,  'speed': 0,  'boost': 0,  'ethanol': 20, 'oil_temp': 235,'coolant_temp': 225, 'battery_main': 11.8, 'throttle': 5,  'engine_load': 12, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 200},
-    # Drive cycle scenarios for modules page
-    'cold_start': {'rpm': 850,  'speed': 0,  'boost': 0,  'ethanol': 0, 'oil_temp': 70,  'coolant_temp': 70,  'battery_main': 14.2, 'throttle': 5,  'engine_load': 15, 'gear': 'P', 'prndl': 'P', 'tcc_state': 'UNLOCKED', 'tft': 70,  'iat': 70, 'timing': 6.0, 'stft_b1': 8.0, 'stft_b2': 8.0},
-    'cruise_55':  {'rpm': 2000, 'speed': 55, 'boost': 0,  'ethanol': 0, 'oil_temp': 200, 'coolant_temp': 195, 'battery_main': 13.8, 'throttle': 18, 'engine_load': 32, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 175, 'wheel_speed_fl': 55, 'wheel_speed_fr': 55, 'wheel_speed_rl': 55, 'wheel_speed_rr': 55},
-    'highway_80': {'rpm': 2400, 'speed': 80, 'boost': 0,  'ethanol': 0, 'oil_temp': 205, 'coolant_temp': 200, 'battery_main': 13.9, 'throttle': 22, 'engine_load': 38, 'gear': 4,   'prndl': 'D', 'tcc_state': 'LOCKED',   'tft': 178, 'wheel_speed_fl': 80, 'wheel_speed_fr': 80, 'wheel_speed_rl': 80, 'wheel_speed_rr': 80},
-}
-
-@display_app.route('/dashboard')
-def dashboard_page():
-    from flask import Response as FR
-    if os.path.exists('archer_dashboard.html'):
-        with open('archer_dashboard.html', 'r', encoding='utf-8') as f:
-            return FR(f.read(), mimetype='text/html')
-    return FR('<html><body style="background:#050508;color:#00e5ff;font-family:monospace;text-align:center;padding:40px">ARCHER DASHBOARD — archer_dashboard.html not found</body></html>', mimetype='text/html')
-
-@display_app.route('/mirror')
-def mirror_page():
-    from flask import Response as FR
-    if os.path.exists('archer_mirror.html'):
-        with open('archer_mirror.html', 'r', encoding='utf-8') as f:
-            return FR(f.read(), mimetype='text/html')
-    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MIRROR — archer_mirror.html not found</body></html>', mimetype='text/html')
-
-@display_app.route('/hud')
-def hud_page():
-    from flask import Response as FR
-    if os.path.exists('archer_hud.html'):
-        with open('archer_hud.html', 'r', encoding='utf-8') as f:
-            return FR(f.read(), mimetype='text/html')
-    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">HUD — archer_hud.html not found</body></html>', mimetype='text/html')
-
-@display_app.route('/simulator')
-def simulator_page():
-    from flask import Response as FR, redirect
-    return redirect('/modules', code=301)
-
-@display_app.route('/modules')
-def modules_page():
-    from flask import Response as FR
-    if os.path.exists('archer_modules.html'):
-        with open('archer_modules.html', 'r', encoding='utf-8') as f:
-            return FR(f.read(), mimetype='text/html')
-    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">MODULES — archer_modules.html not found</body></html>', mimetype='text/html')
-
-@display_app.route('/modules/status')
-def modules_status():
-    """Return all module states + all live truck_state values."""
-    engine_state = 'COLD START'
-    ct = truck_state.get('coolant_temp', 70)
-    if ct >= 215:
-        engine_state = 'HOT'
-    elif ct >= 165:
-        engine_state = 'NORMAL'
-    elif ct >= 120:
-        engine_state = 'WARMING'
-
-    return jsonify({
-        'modules':       module_states,
-        'truck_state':   truck_state,
-        'active_faults': active_faults,
-        'engine_state':  engine_state,
-        'obd_mode':      obd2_display.get('mode', 'default'),
-        'obd_connected': obd2_display.get('connected', False),
-        'use_emulator':  USE_EMULATOR,
-        'beamng':        beamng_state.get('connected', False),
-        'gatekeeper':    gatekeeper_state,
-    })
-
-@display_app.route('/modules/update', methods=['POST'])
-def modules_update():
-    """Update truck_state values from modules page controls."""
-    from flask import request as req
-    data = req.get_json() or {}
-    updated = {}
-    for key, val in data.items():
-        if key in truck_state:
-            try:
-                current = truck_state[key]
-                if isinstance(current, bool):
-                    truck_state[key] = bool(val)
-                elif isinstance(current, float):
-                    truck_state[key] = float(val)
-                elif isinstance(current, int):
-                    truck_state[key] = int(float(val))
-                else:
-                    truck_state[key] = val
-                updated[key] = truck_state[key]
-            except (ValueError, TypeError):
-                pass
-    return jsonify({'ok': True, 'updated': updated})
-
-@display_app.route('/modules/fault/inject', methods=['POST'])
-def modules_fault_inject():
-    """Inject a DTC into the active faults list."""
-    from flask import request as req
-    data = req.get_json() or {}
-    code     = data.get('code', '').upper().strip()
-    module   = data.get('module', 'ECU')
-    if not code:
-        return jsonify({'error': 'code required'}), 400
-
-    lookup = DTC_DATABASE.get(code)
-    desc     = data.get('desc')  or (lookup[0] if lookup else f'Unknown DTC {code}')
-    severity = data.get('severity') or (lookup[1] if lookup else 'medium')
-
-    entry = {
-        'code':         code,
-        'desc':         desc,
-        'module':       module,
-        'severity':     severity,
-        'injected_at':  datetime.now().strftime('%H:%M:%S'),
-    }
-    active_faults.append(entry)
-    # Also add to legacy fault_codes for voice/health tracking
-    add_fault(code, desc, severity)
-    return jsonify({'ok': True, 'fault': entry, 'total': len(active_faults)})
-
-@display_app.route('/modules/fault/clear', methods=['POST'])
-def modules_fault_clear():
-    """Clear active faults — all or single code."""
-    from flask import request as req
-    data = req.get_json() or {}
-    code = data.get('code')
-    if code:
-        before = len(active_faults)
-        active_faults[:] = [f for f in active_faults if f['code'] != code.upper()]
-        fault_codes[:] = [f for f in fault_codes if f['code'] != code.upper()]
-        return jsonify({'ok': True, 'removed': before - len(active_faults)})
-    active_faults.clear()
-    fault_codes.clear()
-    save_state()
-    return jsonify({'ok': True, 'cleared': 'all'})
-
-@display_app.route('/modules/drive_cycle', methods=['POST'])
-def modules_drive_cycle():
-    """Apply a named drive cycle scenario to truck_state."""
-    from flask import request as req
-    data = req.get_json() or {}
-    name = data.get('name', '').lower()
-    valid = list(SIM_SCENARIOS.keys())
-    if name not in SIM_SCENARIOS:
-        return jsonify({'error': f'Unknown scenario: {name}', 'valid': valid}), 400
-    global sim_random_enabled
-    for key, val in SIM_SCENARIOS[name].items():
-        if key in truck_state:
-            truck_state[key] = val
-    sim_random_enabled = False
-    return jsonify({'ok': True, 'scenario': name})
-
-@display_app.route('/modules/module/toggle', methods=['POST'])
-def modules_module_toggle():
-    """Toggle a module online/offline."""
-    from flask import request as req
-    data = req.get_json() or {}
-    mod = data.get('module', '').upper()
-    if mod not in module_states:
-        return jsonify({'error': f'Unknown module: {mod}'}), 400
-    module_states[mod]['online'] = not module_states[mod]['online']
-    return jsonify({'ok': True, 'module': mod, 'online': module_states[mod]['online']})
-
-@display_app.route('/emulator/status')
-def emulator_status():
-    """Return current OBD mode: EMULATED / REAL_OBD / DISCONNECTED."""
-    if obd2_display.get('connected') and obd2_display.get('mode') == 'live':
-        mode = 'REAL_OBD'
-    elif USE_EMULATOR:
-        mode = 'EMULATED'
-    else:
-        mode = 'DISCONNECTED'
-    return jsonify({
-        'mode':          mode,
-        'use_emulator':  USE_EMULATOR,
-        'obd_connected': obd2_display.get('connected', False),
-        'obd_mode':      obd2_display.get('mode', 'default'),
-        'beamng':        beamng_state.get('connected', False),
-    })
-
-@display_app.route('/gatekeeper_status')
-def gatekeeper_status_route():
-    """Return gatekeeper authentication state."""
-    import time as _t
-    state = dict(gatekeeper_state)
-    if state.get('session_start'):
-        state['session_duration_s'] = round(_t.time() - state['session_start'], 0)
-    else:
-        state['session_duration_s'] = 0
-    lockout = state.get('lockout_until')
-    state['locked_out'] = bool(lockout and _t.time() < lockout)
-    return jsonify(state)
-
-@display_app.route('/sim/set', methods=['POST'])
-def sim_set():
-    """Set individual truck_state values from simulator sliders.
-    If oil_temp, coolant_temp, or battery_main are explicitly set, auto-disable
-    sim random noise so update_awareness doesn't overwrite them every 2 s."""
-    global sim_random_enabled
-    from flask import request as req
-    data = req.get_json() or {}
-    allowed = {'rpm', 'speed', 'boost', 'ethanol', 'oil_temp', 'coolant_temp', 'battery_main', 'battery_aux', 'exhaust'}
-    noise_keys = {'oil_temp', 'coolant_temp', 'battery_main'}
-    updated = {}
-    for key, val in data.items():
-        if key in allowed and key in truck_state:
-            try:
-                truck_state[key] = float(val) if '.' in str(val) else int(val)
-                updated[key] = truck_state[key]
-            except (ValueError, TypeError):
-                pass
-    # If the user is manually controlling any key that random noise would overwrite,
-    # turn off noise automatically so slider values stick.
-    if updated.keys() & noise_keys:
-        sim_random_enabled = False
-    return jsonify({'ok': True, 'updated': updated, 'sim_random': sim_random_enabled})
-
-@display_app.route('/sim/random', methods=['POST'])
-def sim_random_toggle():
-    """Explicitly enable or disable simulated random noise.
-    Body: {"enabled": true} or {"enabled": false}"""
-    global sim_random_enabled
-    from flask import request as req
-    data = req.get_json() or {}
-    sim_random_enabled = bool(data.get('enabled', True))
-    return jsonify({'ok': True, 'sim_random_enabled': sim_random_enabled})
-
-@display_app.route('/sim/scenario', methods=['POST'])
-def sim_scenario():
-    """Apply a preset driving scenario to truck_state."""
-    from flask import request as req
-    data = req.get_json() or {}
-    name = data.get('name', '').lower()
-    if name not in SIM_SCENARIOS:
-        return jsonify({'error': f'Unknown scenario: {name}', 'valid': list(SIM_SCENARIOS.keys())}), 400
-    for key, val in SIM_SCENARIOS[name].items():
-        if key in truck_state:
-            truck_state[key] = val
-    return jsonify({'ok': True, 'scenario': name, 'state': {k: truck_state[k] for k in SIM_SCENARIOS[name]}})
-
-@display_app.route('/sim/status')
-def sim_status():
-    """Return simulator / OBD status."""
-    return jsonify({
-        'sim_random_enabled': sim_random_enabled,
-        'obd_connected':      obd2_display['connected'],
-        'obd_mode':           obd2_display['mode'],
-        'rpm':          truck_state['rpm'],
-        'speed':        truck_state['speed'],
-        'boost':        truck_state['boost'],
-        'ethanol':      truck_state['ethanol'],
-        'oil_temp':     truck_state['oil_temp'],
-        'coolant_temp': truck_state['coolant_temp'],
-        'battery_main': truck_state['battery_main'],
-    })
 
 # ── ARDUINO SERIAL ───────────────────────────────────────
 _ARDUINO_KEYWORDS = ('arduino', 'ch340', 'cp210', 'cp2102', 'ftdi', 'uno', 'mega', 'nano')
@@ -11043,7 +10323,6 @@ def arduino_status():
 # ── BEAMNG TELEMETRY ─────────────────────────────────────
 @display_app.route('/beamng_data', methods=['POST'])
 def beamng_data():
-    global sim_random_enabled
     import time as _time
     from flask import request as req
     data = req.get_json(silent=True) or {}
@@ -11068,7 +10347,7 @@ def beamng_data():
     beamng_state['last_rx']   = _time.time()
     beamng_state['car']       = data.get('car', '')
     beamng_state['packets']   = beamng_state.get('packets', 0) + 1
-    sim_random_enabled        = False  # freeze sim noise while BeamNG feeds data
+    sim_flags["random_enabled"] = False  # freeze sim noise while BeamNG feeds data
     return jsonify({'ok': True})
 
 @display_app.route('/beamng/status')
@@ -11114,7 +10393,6 @@ def _obd_bytes(raw):
 def obd_autodetect():
     """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
     Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
-    global sim_random_enabled
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
 
     while True:
@@ -11154,7 +10432,7 @@ def obd_autodetect():
 
             obd2_display['connected'] = True
             obd2_display['mode']      = 'live'
-            sim_random_enabled        = False
+            sim_flags["random_enabled"] = False
             print(f'[OBD] Connected on {port_device} — live data active')
 
             # ── OBD sensor bounds validation ───────────────────
@@ -11282,7 +10560,7 @@ def obd_autodetect():
                 pass
             obd2_display['connected'] = False
             obd2_display['mode']      = 'default'
-            sim_random_enabled        = True
+            sim_flags["random_enabled"] = True
             print('[OBD] Disconnected — simulation resumed')
 
         time.sleep(5)
