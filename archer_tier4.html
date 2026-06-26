@@ -245,6 +245,7 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
 </div>
 
 <script>
+function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 const startTime   = Date.now();
 const eventLog    = [];
 let lastSpeed     = 0;
@@ -361,8 +362,8 @@ function renderLog() {
   const levelColor = {normal:'#888', warn:'#ffaa00', alert:'#cc0000'};
   list.innerHTML = filtered.slice(0, 50).map(e => `
     <div class="log-item" style="border-left:2px solid ${levelColor[e.level] || '#333'};padding-left:6px">
-      <div class="log-event ${e.level}">${e.text}</div>
-      <div class="log-time" style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#555;flex-shrink:0;margin-left:6px">${e.time}</div>
+      <div class="log-event ${e.level}">${_esc(e.text)}</div>
+      <div class="log-time" style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#555;flex-shrink:0;margin-left:6px">${_esc(e.time)}</div>
     </div>`).join('');
 
   count.textContent  = eventLog.length + ' EVENT' + (eventLog.length !== 1 ? 'S' : '');

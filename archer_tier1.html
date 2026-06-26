@@ -1023,6 +1023,39 @@ body.day{background:#0d0d0d}
       <div class="health-item"><span class="health-name">KNOCK</span><span class="health-val hok" id="hl-knock-val">NONE ✓</span><span class="hdot dok" id="hl-knock-dot"></span></div>
       <div class="health-item"><span class="health-name">AFR</span><span class="health-val hok" id="hl-afr-val">14.7 ✓</span><span class="hdot dok" id="hl-afr-dot"></span></div>
       <div class="health-item" id="hl-intercooler-row" style="display:none"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hok" id="hl-intercooler-val">OK ✓</span><span class="hdot dok" id="hl-intercooler-dot"></span></div>
+
+      <!-- OBD / Gatekeeper section -->
+      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">OBD2 SYSTEM</div>
+      <div class="health-item">
+        <span class="health-name">OBD MODE</span>
+        <span class="health-val" id="hl-obd-mode" style="color:var(--green)">EMULATED</span>
+        <span class="hdot dok" id="hl-obd-dot"></span>
+      </div>
+      <div class="health-item">
+        <span class="health-name">GATEKEEPER</span>
+        <span class="health-val hok" id="hl-gk-state">LOCKED</span>
+        <span class="hdot dok" id="hl-gk-dot"></span>
+      </div>
+      <div class="health-item" id="hl-gk-key-row" style="display:none">
+        <span class="health-name">KEY TYPE</span>
+        <span class="health-val" id="hl-gk-key" style="color:var(--yellow)">--</span>
+      </div>
+      <div class="health-item" id="hl-gk-fail-row" style="display:none">
+        <span class="health-name">FAILED AUTH</span>
+        <span class="health-val hbad" id="hl-gk-fails">0</span>
+      </div>
+
+      <!-- Module grid -->
+      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">MODULE STATUS</div>
+      <div id="hl-module-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px"></div>
+
+      <!-- BeamNG indicator -->
+      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">SIMULATION</div>
+      <div class="health-item">
+        <span class="health-name">BEAMNG</span>
+        <span class="health-val" id="hl-beamng-state" style="color:#555">OFFLINE</span>
+        <span class="hdot" id="hl-beamng-dot" style="background:#1a1a1a;border:1px solid #333"></span>
+      </div>
     </div>
 
     <!-- ══════════ LAUNCH ══════════ -->
@@ -2337,7 +2370,14 @@ async function pollLive() {
     if (d.build_specs) updateBuildUI(d.build_specs, d.build_power);
     if (d.build_power) bldUpdatePower(d.build_power);
     if (d.build_parts) bldRenderParts(d.build_parts);
-    if (d.build_phase != null) set('bld-phase-num', 'P' + d.build_phase);
+    if (d.build_phase != null) {
+      const phEl = document.getElementById('bld-phase-num');
+      if (phEl) {
+        phEl.textContent = 'P' + d.build_phase;
+        phEl.style.color = d.build_phase === 3 ? 'var(--green)' : d.build_phase === 2 ? 'var(--yellow)' : 'var(--red)';
+        phEl.title = d.build_phase === 3 ? 'BUILT MOTOR — Forged internals + forced induction' : d.build_phase === 2 ? 'LSA Supercharged' : 'Stock LQ4 6.0L';
+      }
+    }
     if (d.drag_best_et  != null) set('bld-best-et',   d.drag_best_et.toFixed(3));
     if (d.drag_best_mph != null) set('bld-trap-mph',  d.drag_best_mph);
     const faultEl = document.getElementById('bld-fault-text');
@@ -2413,6 +2453,71 @@ async function pollLive() {
     // ── HEALTH tab — INTERCOOLER (Phase 2+ only) ─────────────
     const icRow = document.getElementById('hl-intercooler-row');
     if (icRow) icRow.style.display = (d.build_caps && d.build_caps.supercharged) ? 'flex' : 'none';
+
+    // ── HEALTH tab — OBD MODE ────────────────────────────────
+    if (d.obd_mode != null) {
+      const obdEl = document.getElementById('hl-obd-mode');
+      const obdDot = document.getElementById('hl-obd-dot');
+      if (obdEl) {
+        const colors = { EMULATED: 'var(--yellow)', REAL_OBD: 'var(--green)', DISCONNECTED: '#555' };
+        obdEl.textContent = d.obd_mode;
+        obdEl.style.color = colors[d.obd_mode] || '#555';
+      }
+      if (obdDot) obdDot.className = 'hdot ' + (d.obd_mode === 'REAL_OBD' ? 'dok' : d.obd_mode === 'EMULATED' ? 'dwarn' : 'dbad');
+    }
+
+    // ── HEALTH tab — GATEKEEPER ──────────────────────────────
+    if (d.gatekeeper) {
+      const gk = d.gatekeeper;
+      const gkEl  = document.getElementById('hl-gk-state');
+      const gkDot = document.getElementById('hl-gk-dot');
+      const gkKey = document.getElementById('hl-gk-key');
+      const gkKeyRow = document.getElementById('hl-gk-key-row');
+      const gkFails = document.getElementById('hl-gk-fails');
+      const gkFailRow = document.getElementById('hl-gk-fail-row');
+      if (gkEl) {
+        const unlocked = gk.auth_state === 'UNLOCKED';
+        gkEl.textContent = gk.auth_state + (unlocked ? ' ✓' : '');
+        gkEl.className = 'health-val ' + (unlocked ? 'hok' : 'hwarn');
+        if (gkDot) gkDot.className = 'hdot ' + (unlocked ? 'dok' : 'dwarn');
+      }
+      if (gkKey && gk.key_type) {
+        gkKey.textContent = gk.key_type.toUpperCase();
+        if (gkKeyRow) gkKeyRow.style.display = 'flex';
+      } else if (gkKeyRow) gkKeyRow.style.display = 'none';
+      if (gkFails != null) {
+        const fails = gk.failed_attempts || 0;
+        if (gkFails) gkFails.textContent = fails;
+        if (gkFailRow) gkFailRow.style.display = fails > 0 ? 'flex' : 'none';
+      }
+    }
+
+    // ── HEALTH tab — MODULE GRID ─────────────────────────────
+    if (d.module_states) {
+      const mgEl = document.getElementById('hl-module-grid');
+      if (mgEl) {
+        const mods = d.module_states;
+        mgEl.innerHTML = Object.entries(mods).map(([key, mod]) => {
+          const online = mod.online;
+          const dot = online ? '#00cc44' : '#cc0000';
+          return `<div style="display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 6px">
+            <div style="width:6px;height:6px;border-radius:50%;background:${dot};flex-shrink:0"></div>
+            <span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:${online ? 'var(--text)' : '#555'};letter-spacing:1px">${key}</span>
+            <span style="font-size:8px;color:${online ? 'var(--green)' : '#cc0000'};margin-left:auto">${online ? 'ON' : 'OFF'}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // ── HEALTH tab — BEAMNG INDICATOR ───────────────────────
+    const hlBng = document.getElementById('hl-beamng-state');
+    const hlBngDot = document.getElementById('hl-beamng-dot');
+    if (hlBng) {
+      const bActive = !!d.beamng_active;
+      hlBng.textContent = bActive ? ('LIVE — ' + (d.beamng_car || 'CONNECTED')) : 'OFFLINE';
+      hlBng.style.color = bActive ? '#00e5ff' : '#555';
+      if (hlBngDot) { hlBngDot.style.background = bActive ? '#00e5ff' : '#1a1a1a'; hlBngDot.style.border = bActive ? '1px solid #00e5ff' : '1px solid #333'; }
+    }
 
     // ── Phase toggle: boost vs coolant rows ───────────────────
     const sc = d.build_caps && d.build_caps.supercharged;
@@ -3185,7 +3290,7 @@ async function clearAllAndDismiss() {
     addToT1Log(item.from, item.message, 'ignored');
     await fetch(window.location.origin + '/tier_respond', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: _csrfHeaders(),
       body: JSON.stringify({id: item.id, response: 'denied', action: ''})
     }).catch(() => {});
   }
@@ -3220,7 +3325,7 @@ async function ignoreAllQueue() {
     addToT1Log(item.from, item.message, 'ignored');
     await fetch(window.location.origin + '/tier_respond', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: _csrfHeaders(),
       body: JSON.stringify({id: item.id, response: 'denied', action: ''})
     }).catch(() => {});
   }
@@ -3237,7 +3342,7 @@ async function respondT2(response) {
   document.getElementById('t2-notify').classList.remove('on');
   await fetch(window.location.origin + '/tier_respond', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: _csrfHeaders(),
     body: JSON.stringify({id: n.id, response, action: n.message})
   });
   const msg = response === 'approved' ? 'Done — request approved.' : 'Request denied.';
@@ -3447,7 +3552,7 @@ async function t1LoadPlaylists() {
     if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
     const d = await r.json();
     if (!d.playlists?.length) { el.textContent = 'No playlists found'; return; }
-    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks != null ? p.tracks + ' songs' : '?'} ▶</span></div>`).join('');
+    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${_escHtml(p.id)}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${_escHtml(p.name)}</span><span style="color:var(--label)">${p.tracks != null ? _escHtml(p.tracks) + ' songs' : '?'} ▶</span></div>`).join('');
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1LoadQueue() {
@@ -3457,7 +3562,7 @@ async function t1LoadQueue() {
     if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
     const d = await r.json();
     if (!d.queue?.length) { el.textContent = 'Queue empty'; return; }
-    el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${t.name} <span style="color:var(--label)">— ${t.artist}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
+    el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${_escHtml(t.name)} <span style="color:var(--label)">— ${_escHtml(t.artist)}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1PlayPlaylist(id) {
@@ -4114,8 +4219,11 @@ function logApplyFilter() {
 }
 
 function _escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+let _csrfToken = '';
+(async () => { try { const r = await fetch('/csrf_token'); const d = await r.json(); _csrfToken = d.token || ''; } catch(e){} })();
+function _csrfHeaders() { return {'Content-Type':'application/json','X-CSRF-Token':_csrfToken}; }
 
 async function sysLoadLog() {
   try {
