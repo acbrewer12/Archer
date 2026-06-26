@@ -454,6 +454,11 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
 </div>
 
 <script>
+function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// ─── CSRF TOKEN ─────────────────────────────────────────────────
+let _csrfToken = '';
+(async () => { try { const r = await fetch('/csrf_token'); const d = await r.json(); _csrfToken = d.token || ''; } catch(e){} })();
+function _csrfHeaders() { return {'Content-Type':'application/json','X-CSRF-Token':_csrfToken}; }
 // ─── PASSENGER NAME + SAVED PREFS (MAC-based in production) ───
 const passengerName = 'Khloe';
 const passengerPrefs = { temp: 68, seatHeat: 2 };
@@ -562,7 +567,7 @@ async function cancelRequest() {
   renderHistory();
   await fetch(window.location.origin + '/tier_cancel', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: _csrfHeaders(),
     body: JSON.stringify({id: nid})
   }).catch(() => {});
 }
@@ -606,7 +611,7 @@ async function needAyden() {
 function sendTier1Notification(msg) {
   return fetch(window.location.origin + '/notify_tier1', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: _csrfHeaders(),
     body: JSON.stringify({from: passengerName, message: msg, speed: Math.round(currentSpeed)})
   }).then(r => r.json()).catch(() => null);
 }
@@ -874,7 +879,7 @@ async function loadQueue() {
     if (!d.queue || d.queue.length === 0) { el.innerHTML = '<div style="font-size:11px;color:var(--label);text-align:center;padding:8px">Queue empty</div>'; return; }
     el.innerHTML = d.queue.map(t => `
       <div class="queue-item">
-        <div><div class="queue-title">${t.name}</div><div class="queue-artist">${t.artist}</div></div>
+        <div><div class="queue-title">${_esc(t.name)}</div><div class="queue-artist">${_esc(t.artist)}</div></div>
         <div class="queue-dur">${fmtTime(Math.floor(t.duration/1000))}</div>
       </div>`).join('');
   } catch(e) {}
@@ -887,8 +892,8 @@ async function loadPlaylists() {
     const el = document.getElementById('playlist-list');
     if (!d.playlists || d.playlists.length === 0) { el.innerHTML = '<div style="font-size:11px;color:var(--label);text-align:center;padding:8px">No playlists found</div>'; return; }
     el.innerHTML = d.playlists.map(p => `
-      <div class="queue-item" style="cursor:pointer" onclick="playPlaylist('${p.id}','${p.name.replace(/'/g,"\\'")}')">
-        <div><div class="queue-title">${p.name}</div><div class="queue-artist">${p.tracks} tracks</div></div>
+      <div class="queue-item" style="cursor:pointer" onclick="playPlaylist('${_esc(p.id)}','${_esc(p.name)}')">
+        <div><div class="queue-title">${_esc(p.name)}</div><div class="queue-artist">${_esc(String(p.tracks))} tracks</div></div>
         <div style="font-size:16px">▶</div>
       </div>`).join('');
   } catch(e) {}

@@ -130,6 +130,62 @@ last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
 
+# ── RATE LIMITING ─────────────────────────────────────────────────────────────
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _limiter = Limiter(
+        app=display_app,
+        key_func=get_remote_address,
+        default_limits=[],          # no global limit — applied per route
+        storage_uri='memory://',
+    )
+    _LIMITER_AVAILABLE = True
+except ImportError:
+    _LIMITER_AVAILABLE = False
+    class _FakeLimiter:
+        def limit(self, *a, **kw):
+            return lambda f: f
+        def shared_limit(self, *a, **kw):
+            return lambda f: f
+    _limiter = _FakeLimiter()
+    print('[ARCHER] flask-limiter not installed — rate limiting disabled')
+
+# ── CSRF TOKEN (double-submit cookie, lightweight) ───────────────────────────
+_csrf_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd').encode()
+
+def _csrf_token_for(session_id: str) -> str:
+    return hmac.new(_csrf_secret, session_id.encode(), hashlib.sha256).hexdigest()[:32]
+
+def _validate_csrf(req) -> bool:
+    """Return True if request carries a valid CSRF token or is localhost-only."""
+    remote = req.remote_addr or ''
+    if remote in ('127.0.0.1', '::1'):
+        return True
+    sid = req.cookies.get('archer_sid', '')
+    if not sid:
+        log_security('CSRF_NO_SESSION', path=req.path, ip=remote)
+        return False
+    expected = _csrf_token_for(sid)
+    token    = req.headers.get('X-CSRF-Token', '')
+    if not hmac.compare_digest(token, expected):
+        log_security('CSRF_TOKEN_MISMATCH', path=req.path, ip=remote)
+        return False
+    return True
+
+@display_app.route('/csrf_token')
+def csrf_token_endpoint():
+    """Returns a CSRF token for the current session. JS fetches this on load."""
+    from flask import request as _r, make_response
+    sid = _r.cookies.get('archer_sid', '')
+    if not sid:
+        sid = secrets.token_hex(16)
+    token = _csrf_token_for(sid)
+    resp = make_response(jsonify({'token': token}))
+    resp.set_cookie('archer_sid', sid, httponly=False, samesite='Lax',
+                    secure=False, max_age=86400 * 30)
+    return resp
+
 # ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
 _archer_log_buffer = collections.deque(maxlen=500)
 _archer_log_lock   = threading.Lock()
@@ -159,6 +215,17 @@ _logging.basicConfig(
     datefmt='%H:%M:%S',
 )
 _logging.getLogger('archer').setLevel(_logging.DEBUG)
+
+def log_security(event: str, **ctx):
+    """Log a security event (rate limit, CSRF, auth failure) to both the buffer and stdout."""
+    _archer_log('SECURITY', event, ctx)
+    print(f'[SECURITY] {event}  {ctx}')
+
+@display_app.errorhandler(429)
+def rate_limit_handler(e):
+    from flask import request as _r
+    log_security('RATE_LIMIT_EXCEEDED', path=_r.path, ip=_r.remote_addr)
+    return jsonify({'error': 'Too many requests — slow down.'}), 429
 
 obd2_display = {
     'connected': False,
@@ -7443,7 +7510,11 @@ function clawAppend(msg, who) {
     const div = document.createElement('div');
     div.style.cssText = 'margin-bottom:5px;padding:4px 0;border-bottom:1px solid #0d0d0d';
     const label = who === 'you' ? '<span style="color:#cc0000;font-size:8px">YOU</span>' : '<span style="color:#00cc44;font-size:8px">CLAW</span>';
-    div.innerHTML = label + '<br><span style="color:#aaa">' + msg + '</span>';
+    const textNode = document.createElement('span');
+    textNode.style.color = '#aaa';
+    textNode.textContent = msg;
+    div.innerHTML = label + '<br>';
+    div.appendChild(textNode);
     hist.appendChild(div);
     hist.scrollTop = hist.scrollHeight;
 }
@@ -7628,6 +7699,7 @@ DANGEROUS_COMMANDS = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit'
                       'shutdown', 'kill engine', 'reboot', 'delete profile']
 
 @display_app.route('/voice_command', methods=['POST'])
+@_limiter.limit('40 per minute; 200 per hour')
 def voice_command_endpoint():
     from flask import request as flask_request
     try:
@@ -8161,15 +8233,18 @@ _DANGEROUS = _re.compile(
 )
 
 @display_app.route('/terminal/exec', methods=['POST'])
+@_limiter.limit('15 per minute; 60 per hour')
 def terminal_exec():
     from flask import request as req
     allowed, tier = terminal_access_check(req)
     if not allowed:
+        log_security('TERMINAL_ACCESS_DENIED', ip=req.remote_addr, tier=tier)
         return jsonify({'error': 'Access denied — Tier 1 only'})
     data = req.get_json() or {}
     cmd  = data.get('cmd', '').strip()
     if not cmd:
         return jsonify({'stdout': '', 'stderr': ''})
+    log_info('TERMINAL_CMD', cmd=cmd[:200], ip=req.remote_addr)
     if cmd.strip() in ('/help', 'help'):
         maint_state = 'ON' if system_health['maintenance'] else 'OFF'
         help_text = (
@@ -9256,8 +9331,15 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
     return nid
 
 @display_app.route('/notify_tier1', methods=['POST'])
+@_limiter.limit('20 per minute')
 def notify_tier1():
     from flask import request as freq
+    # Require at least tier 2 (passenger) — reject unauthenticated senders
+    ok, tier = require_tier1(freq)
+    if not ok and tier > 2:
+        return jsonify({'error': 'Not authorized'}), 403
+    if not _validate_csrf(freq):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     data     = freq.json or {}
     from_name = data.get('from', 'Passenger')
     message  = data.get('message', '')
@@ -9273,6 +9355,8 @@ def get_tier_notifications():
 def tier_cancel():
     """Tier 2 cancels a pending request — removes it from queue."""
     from flask import request as freq
+    if not _validate_csrf(freq):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     data = freq.json or {}
     nid  = data.get('id')
     if nid:
@@ -9287,6 +9371,11 @@ def tier_cancel():
 @display_app.route('/tier_respond', methods=['POST'])
 def tier_respond():
     from flask import request as freq
+    ok, tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    if not _validate_csrf(freq):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     data     = freq.json or {}
     nid      = data.get('id')
     response = data.get('response')  # 'approved' or 'denied'
@@ -10500,6 +10589,9 @@ select{background:#0d0d0d;border:1px solid #222;color:#ff3333;font-family:'Share
 <div class="winner-banner" id="winner"></div>
 
 <script>
+function _esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 async function load() {
   const grid = document.getElementById('grid');
   grid.innerHTML = '<div class="loading">FETCHING ALL SOURCES...</div>';
@@ -10520,7 +10612,7 @@ async function load() {
     card.className = 'card';
 
     if (r.error) {
-      card.innerHTML = `<div class="name">${r.name}</div><div class="err">${r.error}</div><div></div>`;
+      card.innerHTML = `<div class="name">${_esc(r.name)}</div><div class="err">${_esc(r.error)}</div><div></div>`;
     } else {
       const diff = (!isNaN(refTemp) && r.temp !== null) ? Math.abs(r.temp - refTemp) : null;
       const condMatch = refCond && r.condition ? r.condition.toLowerCase() === refCond : null;
@@ -10536,10 +10628,10 @@ async function load() {
       const condColor = condMatch === true ? '#00cc44' : condMatch === false ? '#cc4444' : '#444';
 
       card.innerHTML = `
-        <div class="name">${r.name}</div>
+        <div class="name">${_esc(r.name)}</div>
         <div class="vals">
-          <div class="temp">${r.temp !== null ? r.temp + '°F' : '—'}</div>
-          <div class="cond" style="color:${condColor}">${r.condition || '—'}</div>
+          <div class="temp">${r.temp !== null ? _esc(r.temp) + '°F' : '—'}</div>
+          <div class="cond" style="color:${condColor}">${_esc(r.condition || '—')}</div>
         </div>
         <div class="diff">
           ${diff !== null ? `<div class="diff-val ${diffClass}">${diff === 0 ? '✓' : (diff > 0 ? '+' : '') + (r.temp - refTemp) + '°'}</div>` : '<div class="diff-val" style="color:#222">—</div>'}
@@ -10604,6 +10696,7 @@ def register_page():
 
 
 @display_app.route('/fans/ask', methods=['POST'])
+@_limiter.limit('10 per minute; 60 per hour')
 def fans_ask():
     """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
     from flask import request as flask_request

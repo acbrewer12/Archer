@@ -3290,7 +3290,7 @@ async function clearAllAndDismiss() {
     addToT1Log(item.from, item.message, 'ignored');
     await fetch(window.location.origin + '/tier_respond', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: _csrfHeaders(),
       body: JSON.stringify({id: item.id, response: 'denied', action: ''})
     }).catch(() => {});
   }
@@ -3325,7 +3325,7 @@ async function ignoreAllQueue() {
     addToT1Log(item.from, item.message, 'ignored');
     await fetch(window.location.origin + '/tier_respond', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: _csrfHeaders(),
       body: JSON.stringify({id: item.id, response: 'denied', action: ''})
     }).catch(() => {});
   }
@@ -3342,7 +3342,7 @@ async function respondT2(response) {
   document.getElementById('t2-notify').classList.remove('on');
   await fetch(window.location.origin + '/tier_respond', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: _csrfHeaders(),
     body: JSON.stringify({id: n.id, response, action: n.message})
   });
   const msg = response === 'approved' ? 'Done — request approved.' : 'Request denied.';
@@ -3552,7 +3552,7 @@ async function t1LoadPlaylists() {
     if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
     const d = await r.json();
     if (!d.playlists?.length) { el.textContent = 'No playlists found'; return; }
-    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${p.id}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${p.name}</span><span style="color:var(--label)">${p.tracks != null ? p.tracks + ' songs' : '?'} ▶</span></div>`).join('');
+    el.innerHTML = d.playlists.map(p=>`<div onclick="t1PlayPlaylist('${_escHtml(p.id)}')" style="padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between"><span style="color:var(--text2)">${_escHtml(p.name)}</span><span style="color:var(--label)">${p.tracks != null ? _escHtml(p.tracks) + ' songs' : '?'} ▶</span></div>`).join('');
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1LoadQueue() {
@@ -3562,7 +3562,7 @@ async function t1LoadQueue() {
     if (!r.ok) { el.textContent = 'ERR ' + r.status; return; }
     const d = await r.json();
     if (!d.queue?.length) { el.textContent = 'Queue empty'; return; }
-    el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${t.name} <span style="color:var(--label)">— ${t.artist}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
+    el.innerHTML = d.queue.map(t=>`<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><span style="color:var(--text2)">${_escHtml(t.name)} <span style="color:var(--label)">— ${_escHtml(t.artist)}</span></span><span style="color:var(--label)">${t1Fmt(Math.floor(t.duration/1000))}</span></div>`).join('');
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1PlayPlaylist(id) {
@@ -4219,8 +4219,11 @@ function logApplyFilter() {
 }
 
 function _escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+let _csrfToken = '';
+(async () => { try { const r = await fetch('/csrf_token'); const d = await r.json(); _csrfToken = d.token || ''; } catch(e){} })();
+function _csrfHeaders() { return {'Content-Type':'application/json','X-CSRF-Token':_csrfToken}; }
 
 async function sysLoadLog() {
   try {
