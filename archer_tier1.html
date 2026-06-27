@@ -2417,8 +2417,8 @@ async function pollLive() {
             const color = sev === 'high' || sev === 'active' ? '#cc0000' : sev === 'medium' ? '#ffaa00' : '#ffcc00';
             const badge = sev === 'high' ? 'ACTIVE' : sev === 'medium' ? 'PENDING' : 'STORED';
             return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #1a0000">
-              <span style="font-family:'Share Tech Mono',monospace;font-size:11px;color:${color};min-width:52px">${f.code || '??'}</span>
-              <span style="font-size:10px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.desc || 'Unknown fault'}</span>
+              <span style="font-family:'Share Tech Mono',monospace;font-size:11px;color:${color};min-width:52px">${_escHtml(f.code || '??')}</span>
+              <span style="font-size:10px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escHtml(f.desc || 'Unknown fault')}</span>
               <span style="font-size:9px;color:${color};letter-spacing:1px;border:1px solid ${color};padding:1px 3px;border-radius:2px;flex-shrink:0">${badge}</span>
             </div>`;
           }).join('') + (codes.length > 8 ? `<div style="font-size:9px;color:#555;margin-top:3px">+${codes.length - 8} more codes</div>` : '');
@@ -2502,7 +2502,7 @@ async function pollLive() {
           const dot = online ? '#00cc44' : '#cc0000';
           return `<div style="display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 6px">
             <div style="width:6px;height:6px;border-radius:50%;background:${dot};flex-shrink:0"></div>
-            <span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:${online ? 'var(--text)' : '#555'};letter-spacing:1px">${key}</span>
+            <span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:${online ? 'var(--text)' : '#555'};letter-spacing:1px">${_escHtml(key)}</span>
             <span style="font-size:8px;color:${online ? 'var(--green)' : '#cc0000'};margin-left:auto">${online ? 'ON' : 'OFF'}</span>
           </div>`;
         }).join('');
@@ -3193,10 +3193,10 @@ function renderT1Log() {
   el.innerHTML = t1RequestLog.map(r => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:10px">
       <div>
-        <div style="color:var(--text2);font-size:11px">${r.msg}</div>
-        <div style="color:var(--label);font-size:9px;letter-spacing:1px">${r.from} — ${r.time}</div>
+        <div style="color:var(--text2);font-size:11px">${_escHtml(r.msg)}</div>
+        <div style="color:var(--label);font-size:9px;letter-spacing:1px">${_escHtml(r.from)} — ${r.time}</div>
       </div>
-      <div style="color:${r.status==='approved'?'var(--green)':r.status==='denied'?'var(--red)':r.status==='ignored'?'#333':'var(--label)'};font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;flex-shrink:0;margin-left:8px">${r.status.toUpperCase()}</div>
+      <div style="color:${r.status==='approved'?'var(--green)':r.status==='denied'?'var(--red)':r.status==='ignored'?'#333':'var(--label)'};font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;flex-shrink:0;margin-left:8px">${_escHtml(r.status).toUpperCase()}</div>
     </div>`).join('');
 }
 
@@ -3658,7 +3658,7 @@ function bldRenderChecklist() {
     <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
       <input type="checkbox" ${item.done ? 'checked' : ''} onchange="bldCheckItem(${i}, this.checked)"
         style="accent-color:#cc0000;cursor:pointer;flex-shrink:0">
-      <span style="font-size:10px;color:${item.done ? '#444' : '#ccc'};font-family:'Share Tech Mono',monospace;flex:1;${item.done ? 'text-decoration:line-through' : ''}">${item.text}</span>
+      <span style="font-size:10px;color:${item.done ? '#444' : '#ccc'};font-family:'Share Tech Mono',monospace;flex:1;${item.done ? 'text-decoration:line-through' : ''}">${_escHtml(item.text)}</span>
       <span onclick="bldRemoveCheckItem(${i})" style="cursor:pointer;color:#440000;font-size:11px;padding:0 4px">✕</span>
     </div>`).join('');
 }
@@ -3699,9 +3699,9 @@ function bldRenderParts(parts) {
       const gainTxt = (p.hp_gain || 0) > 0 ? `+${p.hp_gain} HP / +${p.tq_gain} TQ` : 'NO POWER GAIN';
       const gainCls = (p.hp_gain || 0) > 0 ? '' : ' zero';
       html += `<div class="bld-part-card">
-        <div class="bld-part-name">${p.name}</div>
-        ${p.part_number ? `<div class="bld-part-pn">${p.part_number}</div>` : ''}
-        ${p.description ? `<div class="bld-part-desc">${p.description}</div>` : ''}
+        <div class="bld-part-name">${_escHtml(p.name)}</div>
+        ${p.part_number ? `<div class="bld-part-pn">${_escHtml(p.part_number)}</div>` : ''}
+        ${p.description ? `<div class="bld-part-desc">${_escHtml(p.description)}</div>` : ''}
         <div class="bld-part-row">
           <span class="bld-part-gain${gainCls}">${gainTxt}</span>
           <span class="bld-status-chip ${status}" onclick="bldCycleStatus('${p.id}','${status}')">${STATUS_LABELS[status]}</span>
