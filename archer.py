@@ -1519,6 +1519,8 @@ spike_history = {
 }
 MAX_SPIKE = 60
 
+_OLED_STATE_FILE = '/tmp/archer_oled.json'
+
 def record_spikes():
     while True:
         spike_history['rpm'].append(truck_state['rpm'])
@@ -1528,6 +1530,19 @@ def record_spikes():
         for key in spike_history:
             if len(spike_history[key]) > MAX_SPIKE:
                 spike_history[key] = spike_history[key][-MAX_SPIKE:]
+        # Write compact snapshot for the OLED fallback display
+        try:
+            with open(_OLED_STATE_FILE, 'w') as _f:
+                json.dump({
+                    'ts':           time.time(),
+                    'speed':        truck_state['speed'],
+                    'rpm':          truck_state['rpm'],
+                    'coolant_temp': truck_state['coolant_temp'],
+                    'warning':      len(awareness['warnings_active']) > 0,
+                    'obd_mode':     'EMULATED' if USE_EMULATOR else 'LIVE',
+                }, _f)
+        except OSError:
+            pass
         time.sleep(2)
 
 def get_display_data():

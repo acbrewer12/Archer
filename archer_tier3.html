@@ -8,7 +8,7 @@
 
 *{margin:0;padding:0;box-sizing:border-box}
 html{height:100%}
-body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column}
+body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column;transition:background 0.3s}
 
 /* THEME */
 :root{
@@ -24,6 +24,10 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100
   --text2:#aab;
   --text3:#778;
 }
+/* ── DAY MODE — lighter for sunlight readability ── */
+body.day{background:#14142a;--bg2:#1e1e38;--bg3:#26264a;--border:#383860;--label:#6688bb;--text2:#ccd;--text3:#99b}
+/* ── RED SHIFT — night cockpit mode ── */
+body.red{background:#090000;--bg2:#110000;--bg3:#1a0000;--border:#2a0000;--label:#552200;--text2:#dd9988;--text3:#663322;--blue:#dd4422;--blue-dim:#220000;--green:#cc5533}
 
 /* HEADER */
 .header{background:var(--bg2);border-bottom:2px solid var(--blue);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
@@ -140,6 +144,8 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100
     <div class="header-sub">2006 GMC SIERRA 2500HD</div>
   </div>
   <div class="header-right" style="display:flex;align-items:center;gap:8px">
+    <button id="t3-mode-btn" onclick="t3ToggleMode()" title="Day/Night mode"
+      style="background:none;border:1px solid #1e1e2e;border-radius:8px;padding:2px 8px;color:#4488ff;font-size:11px;cursor:pointer;font-family:'Share Tech Mono',monospace">🌙</button>
     <button onclick="t3ShowHelp()" title="Help"
       style="background:none;border:1px solid #1e1e2e;border-radius:8px;padding:2px 8px;color:#4488ff;font-size:11px;cursor:pointer;font-family:'Share Tech Mono',monospace">?</button>
     <div>
@@ -552,5 +558,28 @@ function tts3(text) {
 
 function t3ShowHelp() { document.getElementById('t3-help-overlay').style.display = 'block'; }
 function t3HideHelp() { document.getElementById('t3-help-overlay').style.display = 'none'; }
+
+// ── Day / Night / Red-shift mode ─────────────────────────────────────
+(function(){
+  const ICONS = {day:'🌙', night:'🔴', red:'☀️'};
+  const CYCLE = {day:'night', night:'red', red:'day'};
+  function _auto(){const h=new Date().getHours();return h>=7&&h<17?'day':h>=17&&h<21?'night':'red';}
+  function _apply(m){
+    document.body.classList.remove('day','red');
+    if(m==='day')document.body.classList.add('day');
+    else if(m==='red')document.body.classList.add('red');
+    const btn=document.getElementById('t3-mode-btn');
+    if(btn)btn.textContent=ICONS[m]||'🌙';
+  }
+  let _stored=localStorage.getItem('t3_mode')||'auto';
+  _apply(_stored==='auto'?_auto():_stored);
+  setInterval(()=>{if(localStorage.getItem('t3_mode')==='auto')_apply(_auto());},60000);
+  window.t3ToggleMode=function(){
+    const cur=document.body.classList.contains('day')?'day':document.body.classList.contains('red')?'red':'night';
+    const next=CYCLE[cur];
+    localStorage.setItem('t3_mode',next);
+    _apply(next);
+  };
+})();
 </script>
 </body></html>

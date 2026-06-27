@@ -1,0 +1,17 @@
+[Unit]
+Description=Archer OLED Fallback Display
+After=network.target archer.service
+Wants=archer.service
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/python3 /opt/archer/oled_display.py
+Restart=on-failure
+RestartSec=5
+Environment=OLED_DRIVER=ssd1306
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

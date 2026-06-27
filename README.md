@@ -13,6 +13,8 @@ pinned: false
 
 Archer is a custom truck AI and dashboard system. It runs on a Raspberry Pi in the cab, syncs to a HuggingFace Space for remote access, and pairs with an Android app for voice commands and push notifications.
 
+> ⚠️ **Before driving:** Read the [Hardware & Safety Checklist](docs/SAFETY.md)
+
 ---
 
 ## Features
@@ -201,9 +203,13 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 
 ---
 
-## Safety Checklist
+## Safety
 
-Before driving with Archer active:
+> **Full safety checklist → [docs/SAFETY.md](docs/SAFETY.md)**
+>
+> Covers pre-drive checklist, OBD gatekeeper checks, emergency override switch, Pi hardware checklist, and emergency procedures.
+
+Quick pre-drive check before every drive:
 
 - [ ] OBD adapter secured (not dangling from the port)
 - [ ] Phone mounted on dash — not held

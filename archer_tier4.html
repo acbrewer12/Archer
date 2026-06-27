@@ -8,7 +8,7 @@
 
 *{margin:0;padding:0;box-sizing:border-box}
 html{overflow-x:hidden}
-body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;width:100vw;max-width:100vw}
+body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;width:100vw;max-width:100vw;transition:background 0.3s}
 
 :root{
   --amber:#ffaa00;
@@ -20,6 +20,10 @@ body{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;min-heig
   --label:#444;
   --text2:#888;
 }
+/* ── DAY MODE (auto) — slightly warmer/lighter for sunlight ── */
+body.day{background:#0a0800;--bg2:#121000;--bg3:#181500;--border:#252200;--label:#554400;--text2:#aa9955;--amber:#ffcc44}
+/* ── RED SHIFT (auto) ── */
+body.red{background:#060000;--bg2:#0a0000;--bg3:#0f0000;--border:#1a0000;--label:#440000;--text2:#773333;--amber:#cc3300}
 
 /* HEADER */
 .header{background:#000;border-bottom:2px solid var(--amber);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
@@ -617,5 +621,13 @@ poll();
 
 function t4ShowHelp() { document.getElementById('t4-help-overlay').style.display = 'block'; }
 function t4HideHelp() { document.getElementById('t4-help-overlay').style.display = 'none'; }
+
+// ── Auto day/night/red — valet view only, no manual toggle ───────────
+(function(){
+  function _auto(){const h=new Date().getHours();return h>=7&&h<17?'day':h>=17&&h<21?'night':'red';}
+  function _apply(m){document.body.classList.remove('day','red');if(m==='day')document.body.classList.add('day');else if(m==='red')document.body.classList.add('red');}
+  _apply(_auto());
+  setInterval(()=>_apply(_auto()),60000);
+})();
 </script>
 </body></html>

@@ -61,6 +61,8 @@ AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
 ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")
 BAUD          = 115200
 RELAY_PIN     = 17     # BCM — HIGH = OBD2 unlocked, LOW = locked
+OVERRIDE_PIN  = 27     # BCM — physical emergency override switch (pull-up, active-low)
+OVERRIDE_HOLD = 3.0    # seconds switch must be held to trigger (prevents accidental trips)
 AUTH_TIMEOUT  = 10.0   # seconds to complete the full handshake
 TIMESTAMP_WINDOW = 30  # seconds — reject challenges older than this
 MAX_SESSION_SECS = 4 * 3600  # force re-auth after 4 hours
@@ -122,8 +124,48 @@ def setup_relay():
         log.info("RPi.GPIO not available — relay in stub mode")
         return
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(RELAY_PIN, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(RELAY_PIN,    GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(OVERRIDE_PIN, GPIO.IN,  pull_up_down=GPIO.PUD_UP)  # active-low
     log.info(f"Relay on GPIO {RELAY_PIN}: OBD2 port LOCKED")
+    log.info(f"Emergency override on GPIO {OVERRIDE_PIN} (hold {OVERRIDE_HOLD}s)")
+
+
+# ── emergency override switch ─────────────────────────────────────────
+
+_override_active = threading.Event()
+
+
+def _watch_override():
+    """Monitor the physical override switch in a background thread.
+
+    The switch must be held for OVERRIDE_HOLD seconds (prevents accidental
+    activation by vibration or a momentary short). When triggered it unlocks
+    the OBD2 relay and sets _override_active so the main loop skips auth.
+    The override is cleared when the switch is released.
+    """
+    if not GPIO_AVAILABLE:
+        return
+    log.info("Override switch monitor thread running")
+    hold_start = None
+    while True:
+        pressed = (GPIO.input(OVERRIDE_PIN) == GPIO.LOW)
+        if pressed:
+            if hold_start is None:
+                hold_start = time.time()
+            elif time.time() - hold_start >= OVERRIDE_HOLD and not _override_active.is_set():
+                log.warning(
+                    f"EMERGENCY OVERRIDE activated (GPIO {OVERRIDE_PIN} held "
+                    f"{OVERRIDE_HOLD}s) — OBD2 unlocked without auth"
+                )
+                _override_active.set()
+                set_relay(True)
+        else:
+            if _override_active.is_set():
+                log.info("Emergency override released — re-locking OBD2 port")
+                _override_active.clear()
+                set_relay(False)
+            hold_start = None
+        time.sleep(0.1)
 
 
 def set_relay(unlocked: bool):
@@ -308,6 +350,9 @@ def main():
     log.info(f"OBD2 Gatekeeper running on {AUTH_PORT} — {len(keys)} key(s) loaded")
     log.info(f"Port is LOCKED — timestamp window: ±{TIMESTAMP_WINDOW}s, max session: {MAX_SESSION_SECS//3600}h")
 
+    t_override = threading.Thread(target=_watch_override, daemon=True, name="override-switch")
+    t_override.start()
+
     def _shutdown(sig, _frame):
         log.info("Shutdown signal — locking OBD2 port")
         set_relay(False)
@@ -319,6 +364,11 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
 
     while True:
+        # Physical override switch bypasses the auth/lockout flow entirely
+        if _override_active.is_set():
+            time.sleep(1)
+            continue
+
         if _check_lockout():
             time.sleep(5)
             continue
