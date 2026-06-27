@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-sierra_ecu_config.py — Software ECU emulator for the 2006 GMC Sierra 2500HD
+sierra_ecu_config.py — Software ECU emulator for the 2006 Sierra/Silverado 2500HD
 LQ4 6.0L V8 with 4L80E transmission.
+
+Covers both the GMC Sierra 2500HD SLT and the Chevrolet Silverado 2500HD LT3 —
+both share the same GMT800 platform, engine, transmission, and DTC database.
 
 No external dependencies beyond stdlib.
 """
@@ -24,7 +27,7 @@ def _exp_approach(current: float, target: float, tau: float, dt: float) -> float
 
 class SierraECU:
     """
-    Simulates ECU sensor readings for the 2006 GMC Sierra 2500HD (LQ4 / 4L80E).
+    Simulates ECU sensor readings for the 2006 Sierra/Silverado 2500HD (LQ4 / 4L80E).
 
     Call step(dt) repeatedly to advance time, then get_state() to read values.
     Use set_mode() to jump to a named operating scenario.

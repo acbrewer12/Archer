@@ -1,6 +1,7 @@
 # Archer — Hardware Safety Checklist
 
-Pre-drive checklist for Archer AI installation on the 2006 GMC Sierra 2500HD.
+Pre-drive checklist for Archer AI installation on the 2006 Sierra/Silverado 2500HD
+(GMC Sierra 2500HD SLT or Chevrolet Silverado 2500HD LT3 — same procedure for both).
 Run this before the first drive after any hardware change or Archer update.
 
 ---

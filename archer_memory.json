@@ -92,7 +92,7 @@
   "trip_log": [
     {
       "date": "June 27 2026",
-      "time": "07:51 AM",
+      "time": "07:56 AM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -105,7 +105,7 @@
     },
     {
       "date": "June 27 2026",
-      "time": "07:51 AM",
+      "time": "07:56 AM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,38 +121,38 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     },
     "test-fp-pass": {
       "name": "Passenger",
       "tier": 2,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     },
     "test-fp-name": {
       "name": "Alice",
       "tier": 3,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     },
     "known-fp-99": {
       "name": "Me",
       "tier": 2,
-      "registered_at": "June 27 2026 07:51 AM"
+      "registered_at": "June 27 2026 07:56 AM"
     }
   },
   "build_tracker": {
     "parts": [
       {
-        "id": "924940ff",
+        "id": "7f2961a0",
         "name": "Cold Air Intake",
         "part_number": "",
         "category": "intake",
@@ -165,7 +165,7 @@
         "notes": ""
       },
       {
-        "id": "350ffcf8",
+        "id": "279eefee",
         "name": "Test Part",
         "part_number": "",
         "category": "other",
@@ -178,7 +178,7 @@
         "notes": ""
       },
       {
-        "id": "efe05b8d",
+        "id": "ebbfc7b3",
         "name": "Headers",
         "part_number": "",
         "category": "other",
@@ -191,7 +191,7 @@
         "notes": ""
       },
       {
-        "id": "a5c09df7",
+        "id": "c4b2534f",
         "name": "UpdateMe",
         "part_number": "",
         "category": "other",
@@ -204,7 +204,7 @@
         "notes": ""
       },
       {
-        "id": "0a675bb3",
+        "id": "b1591b63",
         "name": "Dummy",
         "part_number": "",
         "category": "other",
@@ -217,7 +217,7 @@
         "notes": ""
       },
       {
-        "id": "a31dea31",
+        "id": "3adba367",
         "name": "Tune",
         "part_number": "",
         "category": "other",
@@ -592,5 +592,9 @@
       "lon": 2.0,
       "address": "B"
     }
+  },
+  "vehicle_config": {
+    "make": null,
+    "model": null
   }
 }

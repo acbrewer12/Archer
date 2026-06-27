@@ -9,7 +9,8 @@ pinned: false
 ---
 
 # Archer AI
-**2006 GMC Sierra 2500HD — 6.0L LQ4 / 4L80E / 4x4 — Built by Ayden — Salem, Missouri**
+**2006 Sierra/Silverado 2500HD — 6.0L LQ4 / 4L80E / 4x4 — Built by Ayden — Salem, Missouri**
+*(GMC Sierra 2500HD SLT or Chevrolet Silverado 2500HD LT3 — same GMT800 platform, identical DTC database)*
 
 Archer is a custom truck AI and dashboard system. It runs on a Raspberry Pi in the cab, syncs to a HuggingFace Space for remote access, and pairs with an Android app for voice commands and push notifications.
 

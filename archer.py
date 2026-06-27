@@ -532,6 +532,26 @@ def voice_monitor():
 # ── SAVE FILE ────────────────────────────
 SAVE_FILE = 'archer_memory.json'
 
+# Which truck was actually purchased — null until known.
+# 'make' is 'GMC' or 'Chevrolet'; 'model' is 'Sierra 2500HD' or 'Silverado 2500HD'.
+# DTC codes and ECU config are identical between both trucks (same GMT800 platform).
+vehicle_config = {
+    'make':  None,
+    'model': None,
+}
+
+def get_vehicle_name(style='full'):
+    """Return the vehicle name, or a generic Sierra/Silverado placeholder if not yet set.
+
+    style='full'   → '2006 GMC Sierra 2500HD'  or 'Sierra/Silverado 2500HD'
+    style='header' → 'GMC SIERRA 2500HD'        or 'SIERRA/SILVERADO 2500HD'
+    """
+    make  = vehicle_config.get('make')
+    model = vehicle_config.get('model')
+    if make and model:
+        return f'{make.upper()} {model.upper()}' if style == 'header' else f'2006 {make} {model}'
+    return 'SIERRA/SILVERADO 2500HD' if style == 'header' else 'Sierra/Silverado 2500HD'
+
 def save_state():
     data = {
         'personal_bests':    personal_bests,
@@ -599,6 +619,7 @@ def save_state():
         'gps_name':          location_data.get('location_name',''),
         'weather_alerts':    [a['event'] for a in (_active_alert_ids and []) or []],
         'nav_places':        nav_places,
+        'vehicle_config':    vehicle_config,
     }
     try:
         tmp = SAVE_FILE + '.tmp'
@@ -647,6 +668,9 @@ def load_state():
         parking_mode.update(data.get('parking_mode', {}))
         audio_system.update(data.get('audio_system', {}))
         location_data.update(data.get('location_data', {}))
+        vc = data.get('vehicle_config', {})
+        vehicle_config['make']  = vc.get('make')
+        vehicle_config['model'] = vc.get('model')
         _recalc_build_spent()
         print("[ARCHER] Memory loaded.")
     except Exception:
@@ -1293,7 +1317,7 @@ last_casual     = 0
 casual_interval = 480
 
 # ── PERSONALITY ──────────────────────────
-SYSTEM_PROMPT = """You are Archer — the AI voice system of a 2006 GMC Sierra 2500HD
+SYSTEM_PROMPT = """You are Archer — the AI voice system of a 2006 Sierra/Silverado 2500HD
 built by Ayden in Salem Missouri. You are not separate from the truck. You ARE the truck.
 
 When someone asks how you are — you answer as the truck.
@@ -1693,6 +1717,11 @@ def get_display_data():
         'active_faults': list(active_faults),
         # OBD mode: EMULATED / REAL_OBD / DISCONNECTED
         'obd_mode': ('EMULATED' if USE_EMULATOR else 'REAL_OBD') if truck_state['rpm'] > 0 else 'DISCONNECTED',
+        # Vehicle identity — null until truck is purchased
+        'vehicle_make':  vehicle_config.get('make'),
+        'vehicle_model': vehicle_config.get('model'),
+        'vehicle_name':  get_vehicle_name(),
+        'vehicle_name_header': get_vehicle_name('header'),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -1762,7 +1791,8 @@ Truck data right now:
 """
     caps = get_build_caps()
     phase = get_build_phase()
-    build_ctx = f"\nCurrent build — Phase {phase}:"
+    build_ctx = f"\nVehicle: {get_vehicle_name()}"
+    build_ctx += f"\nCurrent build — Phase {phase}:"
     build_ctx += f"\n- Engine: {'LSA 6.2L Supercharged V8' if caps['supercharged'] else '6.0L LQ4 V8 (stock, naturally aspirated)'}"
     build_ctx += f"\n- Forced induction: {'Yes — Eaton TVS2300 supercharger, up to 14-15 PSI on E85' if caps['supercharged'] else 'None — do not mention boost or PSI'}"
     build_ctx += f"\n- Ethanol sensor: {'Installed — tracking live' if caps['ethanol_sensor'] else 'Not installed — running pump gas, ethanol% is 0'}"
@@ -4275,8 +4305,8 @@ vehicle_info = {
     'vin':            '1GTHK23U06F000000',  # placeholder
     'plate':          '',
     'year':           2006,
-    'make':           'GMC',
-    'model':          'Sierra 2500HD',
+    'make':           vehicle_config.get('make')  or 'GMC/Chevrolet',
+    'model':          vehicle_config.get('model') or 'Sierra/Silverado 2500HD',
     'color':          'Matte Black',
     'insurance_co':   '',
     'policy_num':     '',
@@ -5025,7 +5055,7 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
                 'title':       title or 'ARCHER',
                 'description': message,
                 'color':       color,
-                'footer':      {'text': f'2006 GMC Sierra 2500HD — {datetime.now().strftime("%I:%M %p")}'},
+                'footer':      {'text': f'{get_vehicle_name()} — {datetime.now().strftime("%I:%M %p")}'},
             }]
         }
         data = _json.dumps(payload).encode()
@@ -8153,6 +8183,31 @@ def logout():
     resp.delete_cookie('archer_auth')
     return resp
 
+@display_app.route('/set_vehicle', methods=['POST'])
+def set_vehicle():
+    """Record which truck was purchased (tier 1 only).
+
+    Body: {"make": "GMC"|"Chevrolet", "model": "Sierra 2500HD"|"Silverado 2500HD"}
+    Both trucks share the same GMT800 platform, LQ4 engine, 4L80E, and DTC database,
+    so this is purely for display and voice personality — no functional change.
+    """
+    from flask import request as _svr
+    if get_request_tier(_svr) != 1:
+        return jsonify({'error': 'Owner only'}), 403
+    body = _svr.get_json(silent=True) or {}
+    make  = body.get('make',  '').strip()
+    model = body.get('model', '').strip()
+    valid_makes  = {'GMC', 'Chevrolet'}
+    valid_models = {'Sierra 2500HD', 'Silverado 2500HD'}
+    if make not in valid_makes or model not in valid_models:
+        return jsonify({'error': f'make must be one of {valid_makes}; model one of {valid_models}'}), 400
+    vehicle_config['make']  = make
+    vehicle_config['model'] = model
+    save_state()
+    log_security('VEHICLE_SET', name=f'{make} {model}')
+    return jsonify({'ok': True, 'vehicle': get_vehicle_name()})
+
+
 def terminal_access_check(request):
     tier = get_request_tier(request)
     return tier in TERMINAL_ALLOWED_TIERS, tier
@@ -8704,7 +8759,7 @@ body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;display
 <div class="bg-glow"></div>
 <div class="wrap">
   <div class="logo">ARCHER</div>
-  <div class="sub">2006 GMC SIERRA 2500HD</div>
+  <div class="sub">''' + get_vehicle_name('header') + '''</div>
 
   <div class="card">
     <div class="card-title">ENTER ACCESS CODE</div>
@@ -9339,7 +9394,7 @@ DJ_PLAYLIST_KEYWORDS = {
 def _dj_comment(song, artist):
     def _bg():
         try:
-            prompt = (f'You are Archer, the AI inside a 2006 GMC Sierra 2500HD. '
+            prompt = (f'You are Archer, the AI inside a {get_vehicle_name()}. '
                       f'A new song just came on: "{song}" by {artist}. '
                       f'Say something short and natural like a radio DJ introducing it — '
                       f'max 2 sentences, 20 words max. Be direct and confident, '
@@ -9800,6 +9855,10 @@ def get_tier_html(tier, name=None):
             html = f.read()
         if name and tier == 2:
             html = html.replace("const passengerName = 'Khloe'", f"const passengerName = '{name}'")
+        # Inject resolved vehicle name (falls back to generic until purchase)
+        html = html.replace('2006 GMC SIERRA 2500HD', get_vehicle_name('header'))
+        html = html.replace('ARCHER AI — 2006 GMC SIERRA 2500HD',
+                            f'ARCHER AI — {get_vehicle_name("header")}')
         return html
     
     # Fallback
