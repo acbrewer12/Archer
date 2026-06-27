@@ -8308,6 +8308,36 @@ def trip_stats_endpoint():
         'drive_grade':          grade,
     })
 
+@display_app.route('/export/trip')
+def export_trip():
+    """Export the trip log as JSON or CSV.
+
+    Query params:
+      fmt=json  (default) — returns a JSON array of trip objects
+      fmt=csv             — returns a CSV file download
+
+    Requires Tier 1 or Tier 2 auth. Each trip row includes date, time,
+    duration, peak RPM, peak boost, best 0-60, hard events, drive quality,
+    road name, ethanol %, and weather snapshot.
+    """
+    tier = get_request_tier(flask_request)
+    if tier > 2:
+        return jsonify({'error': 'Not authorized'}), 403
+
+    fmt = flask_request.args.get('fmt', 'json').lower()
+    if fmt == 'csv':
+        import io, csv as _csv
+        buf = io.StringIO()
+        fields = ['date', 'time', 'duration', 'peak_rpm', 'peak_boost',
+                  'best_060', 'hard_events', 'quality', 'road', 'ethanol', 'weather']
+        writer = _csv.DictWriter(buf, fieldnames=fields, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(trip_log)
+        from flask import Response as _FR
+        return _FR(buf.getvalue(), mimetype='text/csv',
+                   headers={'Content-Disposition': 'attachment; filename="archer_trip_log.csv"'})
+    return jsonify({'trips': trip_log, 'count': len(trip_log)})
+
 # ── MAC ADDRESS AUTH SYSTEM ─────────────────────────────
 import json as _json_mac
 

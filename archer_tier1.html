@@ -755,6 +755,9 @@ body.day{background:#0d0d0d}
     <div class="tab" onclick="setTab('sys')">SYS</div>
   </div>
 
+  <!-- Degraded / offline mode banner — hidden when all systems nominal -->
+  <div id="degraded-banner" style="display:none;background:#1a0500;border:1px solid #cc3300;border-radius:4px;padding:5px 10px;margin:4px 6px;font-family:'Share Tech Mono',monospace;font-size:10px;color:#ff6600;letter-spacing:1px;text-align:center"></div>
+
   <div class="screens">
 
     <!-- ══════════ DRIVE (safety) ══════════ -->
@@ -2749,6 +2752,9 @@ function update() {
     if (m) tempEl.textContent = m[1] + '°F';
   }
 
+  // Degraded / offline mode banner
+  _updateDegradedBanner(targetData);
+
   // Warnings
   checkWarnings(liveData);
 
@@ -2756,6 +2762,22 @@ function update() {
   updateParkedContent();
   // Health tab live updates
   updateHealth();
+}
+
+function _updateDegradedBanner(d) {
+  const el = document.getElementById('degraded-banner');
+  if (!el) return;
+  const msgs = [];
+  if (d.obd_connected === false) msgs.push('OBD DISCONNECTED — EMULATED DATA');
+  if (d.obd_mode === 'EMULATED') msgs.push('EMULATOR ACTIVE');
+  if (!window._voiceOnline && typeof window._voiceOnline !== 'undefined') msgs.push('VOICE OFFLINE');
+  if (d.maintenance_mode) msgs.push('MAINTENANCE MODE ON');
+  if (msgs.length) {
+    el.textContent = '⚠ ' + msgs.join('  ·  ');
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 function updateHealth() {
