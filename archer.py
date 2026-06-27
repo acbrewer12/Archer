@@ -5565,6 +5565,14 @@ def knob_select():
 
 # ── DIRECT COMMANDS ──────────────────────
 def handle_command(text):
+    """Parse a voice command string and return a canned response string, or None
+    if the command should fall through to the LLM (ask_archer).
+
+    Pattern matching is intentionally broad (substring search, lower-cased) so
+    natural phrasing like "what's my speed doing" still hits the speed handler.
+    Return None to escalate to Groq/Gemini for free-form questions. Return '' to
+    silently ack a command that already had side effects (e.g., mode switch with TTS).
+    """
     t = text.lower().strip()
 
     if any(x in t for x in ['engine off', 'shut down', 'shutting down', 'kill engine']):
@@ -7765,6 +7773,15 @@ def _check_driving_rate(ip: str) -> bool:
 @display_app.route('/voice_command', methods=['POST'])
 @_limiter.limit('40 per minute; 200 per hour')
 def voice_command_endpoint():
+    """POST /voice_command — process a voice command from any UI tier.
+
+    JSON body: {command: str, log_only?: bool}
+    - log_only=true: echo to console only, no AI response (used by nav error forwarding)
+    - command is capped at 500 chars and stripped before parsing
+    - Tier 4 (valet) and unauthenticated callers are blocked from dangerous commands
+    - Speed-based rate limit applies when truck speed > 10 mph (3 cmd/min per IP)
+    - handle_command() is tried first; falls back to ask_archer() (LLM) if None
+    """
     from flask import request as flask_request
     try:
         tier = get_request_tier(flask_request)
@@ -8054,6 +8071,15 @@ def log_system_failure(component, reason):
         system_health['failures'] = system_health['failures'][-50:]
 
 def get_system_status():
+    """Return a list of active system issue codes (empty = all nominal).
+
+    OBD_TIMEOUT: no OBD frame received in last 10 seconds (cable pulled or Pi crashed)
+    OBD_DISCONNECTED: OBD adapter not present / failed to init
+    VOICE_OFFLINE: STT/TTS thread is not running
+
+    Used by /system_health, /limited, and the tier1 degraded mode banner to decide
+    whether to serve the full dashboard or the minimal limited-mode fallback page.
+    """
     issues = []
     now = time.time()
     if now - system_health['last_obd_update'] > 10:

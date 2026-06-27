@@ -25,8 +25,20 @@
   --dim:     #331122;
 }
 
+/* ── DAY MODE — lighter backgrounds for daylight readability ── */
+body.day {
+  --bg:      #1e1828;
+  --bg2:     #2a2040;
+  --bg3:     #342a4e;
+  --border:  #4a3860;
+  --border2: #5a4878;
+  --label:   #9977aa;
+  --text3:   #bbaacc;
+  --dim:     #3a2a50;
+}
+
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:12px}
+body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:12px;transition:background 0.3s}
 
 .phone{width:360px;max-width:100%;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 0 40px rgba(255,61,166,0.15);display:flex;flex-direction:column;min-height:calc(100vh - 24px)}
 
@@ -195,6 +207,8 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
     </div>
     <div class="hdr-right">
       <div class="hdr-badge" id="trip-badge">ON A TRIP</div>
+      <button id="t2-mode-btn" onclick="t2ToggleMode()" title="Day/Night mode"
+        style="background:none;border:1px solid var(--border2);border-radius:12px;padding:3px 8px;color:var(--pink2);font-size:12px;cursor:pointer;font-family:'Share Tech Mono',monospace">🌙</button>
     </div>
   </div>
 
@@ -1043,6 +1057,27 @@ function tts2(text) {
   u.rate = 1.0; u.pitch = 1.1;
   speechSynthesis.speak(u);
 }
+
+// ── DAY/NIGHT MODE ───────────────────────────────────────────
+(function() {
+  function _autoMode() {
+    const h = new Date().getHours();
+    return (h >= 7 && h < 19) ? 'day' : 'night';
+  }
+  function _applyMode(mode) {
+    document.body.classList.toggle('day', mode === 'day');
+    const btn = document.getElementById('t2-mode-btn');
+    if (btn) btn.textContent = mode === 'day' ? '🌙' : '☀️';
+  }
+  let _t2Mode = localStorage.getItem('t2_mode') || 'auto';
+  _applyMode(_t2Mode === 'auto' ? _autoMode() : _t2Mode);
+  setInterval(() => { if (_t2Mode === 'auto') _applyMode(_autoMode()); }, 60000);
+  window.t2ToggleMode = function() {
+    _t2Mode = (document.body.classList.contains('day')) ? 'night' : 'day';
+    localStorage.setItem('t2_mode', _t2Mode);
+    _applyMode(_t2Mode);
+  };
+})();
 </script>
 </body>
 </html>
