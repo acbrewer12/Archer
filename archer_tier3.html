@@ -139,9 +139,42 @@ body{background:#0a0a12;color:#fff;font-family:'Quicksand',sans-serif;height:100
     <div class="header-title">ARCHER</div>
     <div class="header-sub">2006 GMC SIERRA 2500HD</div>
   </div>
-  <div class="header-right">
-    <div class="header-time" id="h-time">--:--</div>
-    <div class="header-date" id="h-date">--</div>
+  <div class="header-right" style="display:flex;align-items:center;gap:8px">
+    <button onclick="t3ShowHelp()" title="Help"
+      style="background:none;border:1px solid #1e1e2e;border-radius:8px;padding:2px 8px;color:#4488ff;font-size:11px;cursor:pointer;font-family:'Share Tech Mono',monospace">?</button>
+    <div>
+      <div class="header-time" id="h-time">--:--</div>
+      <div class="header-date" id="h-date">--</div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 3 HELP OVERLAY -->
+<div id="t3-help-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(10,10,18,0.97);overflow-y:auto;padding:16px;font-family:'Quicksand',sans-serif">
+  <div style="max-width:420px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700;color:#4488ff;font-family:'Share Tech Mono',monospace;letter-spacing:2px">FAMILY GUIDE</div>
+      <button onclick="t3HideHelp()" style="background:none;border:1px solid #1e1e2e;border-radius:8px;padding:4px 12px;color:#aab;font-size:13px;cursor:pointer">✕ CLOSE</button>
+    </div>
+    <div style="font-size:10px;color:#446;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:12px">TIER 3 — FAMILY ACCESS</div>
+    <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:11px;color:#4488ff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">WHAT YOU CAN SEE</div>
+      <div style="font-size:12px;color:#aab;line-height:1.8">
+        Live speed, RPM, temperature, and battery<br>
+        Trip distance and current road conditions<br>
+        Engine health indicators (green = good)<br>
+        Archer's current status message<br>
+        Weather at the truck's location
+      </div>
+    </div>
+    <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:11px;color:#4488ff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">ALERTS</div>
+      <div style="font-size:12px;color:#aab;line-height:1.8">
+        A red/yellow banner appears for engine warnings.<br>
+        These are read-only — Ayden handles them from Tier 1.
+      </div>
+    </div>
+    <div style="text-align:center;font-size:9px;color:#446;font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-top:16px">ARCHER AI — 2006 GMC SIERRA 2500HD</div>
   </div>
 </div>
 
@@ -516,5 +549,8 @@ function tts3(text) {
   u.rate = 1.0; u.pitch = 1;
   speechSynthesis.speak(u);
 }
+
+function t3ShowHelp() { document.getElementById('t3-help-overlay').style.display = 'block'; }
+function t3HideHelp() { document.getElementById('t3-help-overlay').style.display = 'none'; }
 </script>
 </body></html>
