@@ -196,6 +196,17 @@ def csrf_token_endpoint():
                     secure=False, max_age=86400 * 30)
     return resp
 
+@display_app.after_request
+def _refresh_auth_cookie(response):
+    """Rolling session: re-stamp archer_auth cookie on every authenticated
+    request so active users never get logged out while idle users do (30 days)."""
+    from flask import request as _r
+    cookie = _r.cookies.get('archer_auth', '')
+    if cookie and response.status_code < 400:
+        response.set_cookie('archer_auth', cookie, max_age=86400 * 30,
+                            httponly=True, samesite='Lax', secure=False)
+    return response
+
 # ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
 _archer_log_buffer = collections.deque(maxlen=500)
 _archer_log_lock   = threading.Lock()
@@ -2853,6 +2864,7 @@ drag_timer = {
 }
 
 def start_drag_run():
+    """Arm the drag timer: reset splits, set stage='staged', wait for launch."""
     drag_timer['active']     = True
     drag_timer['stage']      = 'staged'
     drag_timer['start_time'] = None
@@ -2861,6 +2873,8 @@ def start_drag_run():
     return None
 
 def launch_drag():
+    """Start the drag clock. Must call start_drag_run() first.
+    Spawns _run_drag_sim() in a daemon thread to announce split times."""
     if not drag_timer['active']:
         return 'Stage the run first. Say start drag run.'
     drag_timer['stage']      = 'running'
@@ -2871,6 +2885,11 @@ def launch_drag():
     return None
 
 def _run_drag_sim():
+    """Simulate quarter-mile splits using elapsed time + linear speed model.
+    Announces 60ft, 330ft, 660ft (half-mile), 1000ft, and 1320ft (quarter-mile)
+    via TTS. Updates drag_timer['splits'] with actual elapsed seconds at each mark.
+    Speed model: v = min(120, elapsed * 22) mph — rough but realistic for a stock
+    6.0L truck. Replace with real wheel-speed sensor data when OBD is live."""
     start = drag_timer['start_time']
     announced = set()
     while drag_timer['active']:
@@ -7723,6 +7742,26 @@ def navigate_endpoint():
 DANGEROUS_COMMANDS = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
                       'shutdown', 'kill engine', 'reboot', 'delete profile']
 
+# Per-IP voice command history for speed-based rate limiting (3/min while moving).
+_voice_speed_history: dict = {}
+
+def _check_driving_rate(ip: str) -> bool:
+    """Return False if the truck is moving (>10 mph) and this IP has sent
+    more than 3 voice commands in the last 60 seconds.
+    Prevents distracted-driving command floods while maintaining
+    normal throughput when stationary."""
+    if truck_state.get('speed', 0) < 10:
+        return True
+    now = time.time()
+    history = _voice_speed_history.get(ip, [])
+    history = [t for t in history if now - t < 60]
+    if len(history) >= 3:
+        log_security('VOICE_SPEED_RATE_LIMIT', ip=ip, speed=truck_state.get('speed'))
+        return False
+    history.append(now)
+    _voice_speed_history[ip] = history
+    return True
+
 @display_app.route('/voice_command', methods=['POST'])
 @_limiter.limit('40 per minute; 200 per hour')
 def voice_command_endpoint():
@@ -7740,6 +7779,9 @@ def voice_command_endpoint():
             else:
                 print(command)
             return jsonify({'response': ''})
+        # Speed-based rate limit: max 3 commands/min while driving
+        if not _check_driving_rate(flask_request.remote_addr or ''):
+            return jsonify({'response': "Eyes on the road. Try again in a moment."}), 429
         # Block dangerous commands from unauthenticated / low-tier callers
         if tier > 1 and any(d in command.lower() for d in DANGEROUS_COMMANDS):
             return jsonify({'response': 'Not authorized.'}), 403
@@ -8384,11 +8426,11 @@ def index():
         import hashlib as _hl2
         token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:16]
         resp = make_response()
-        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=True, samesite='Lax')
+        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
         r2.headers['Cache-Control'] = 'no-store'
-        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=60*60*24*365, httponly=True, samesite='Lax')
+        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
         return r2
 
     # 1. Try MAC detection
@@ -8693,7 +8735,7 @@ def register_mac():
 
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
     resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', cookie_val, max_age=60*60*24*365, httponly=True, samesite='Lax')
+    resp.set_cookie('archer_auth', cookie_val, max_age=86400*30, httponly=True, samesite='Lax')
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
