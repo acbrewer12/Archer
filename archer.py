@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 import urllib.request
+import functools
 from datetime import datetime
 import asyncio
 import edge_tts
@@ -171,6 +172,16 @@ def _validate_csrf(req) -> bool:
         log_security('CSRF_TOKEN_MISMATCH', path=req.path, ip=remote)
         return False
     return True
+
+def csrf_required(f):
+    """Decorator: reject requests missing a valid CSRF token (except localhost)."""
+    @functools.wraps(f)
+    def _wrapped(*args, **kwargs):
+        from flask import request as _r
+        if not _validate_csrf(_r):
+            return jsonify({'error': 'CSRF validation failed'}), 403
+        return f(*args, **kwargs)
+    return _wrapped
 
 @display_app.route('/csrf_token')
 def csrf_token_endpoint():
@@ -5542,6 +5553,19 @@ def handle_command(text):
         save_trip()
         print("[ARCHER] See you tomorrow."); speak("See you tomorrow."); save_state(); sys.exit(0)
 
+    # ── HELP ─────────────────────────────
+    if t in ('help', '?', 'what can you do', 'commands', 'list commands', 'what commands'):
+        return (
+            "Here's what I can do: "
+            "Check engine health, RPM, speed, temperature, battery. "
+            "Control Spotify — play, pause, next, skip, volume up, volume down. "
+            "Drag race — stage it, launch. "
+            "Weather — what's the weather, weather compare. "
+            "Navigation — go home, go to a saved place. "
+            "System — maintenance on, maintenance off, tire pressure. "
+            "You can also just ask me anything about the truck."
+        )
+
     # ── TIER SWITCHING ───────────────────
     if 'profile' not in t:
         if any(x in t for x in ['tier 1','tier1','switch to ayden','owner mode']):
@@ -7558,6 +7582,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 # ── FLASK ROUTES ─────────────────────────
 
 @display_app.route('/nav/save_place', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def nav_save_place():
     from flask import request as _req
     data    = _req.get_json()
@@ -7703,8 +7729,8 @@ def voice_command_endpoint():
     from flask import request as flask_request
     try:
         tier = get_request_tier(flask_request)
-        data     = flask_request.get_json()
-        command  = data.get('command', '').strip()
+        data     = flask_request.get_json() or {}
+        command  = data.get('command', '').strip()[:500]  # max 500 chars
         log_only = data.get('log_only', False)
         if not command:
             return jsonify({'response': ''})
@@ -7733,17 +7759,23 @@ def voice_command_endpoint():
 
 
 @display_app.route('/drag/stage', methods=['POST'])
+@_limiter.limit('30 per minute')
+@csrf_required
 def drag_stage_route():
     start_drag_run()
     return jsonify({'ok': True, 'stage': drag_timer['stage']})
 
 @display_app.route('/drag/launch', methods=['POST'])
+@_limiter.limit('30 per minute')
+@csrf_required
 def drag_launch_route():
     msg = launch_drag()
     return jsonify({'ok': msg is None, 'stage': drag_timer['stage'], 'msg': msg or 'Launched.'})
 
 
 @display_app.route('/build/update', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def build_update_route():
     data = request.get_json() or {}
     bool_keys = {'cold_air_intake','long_tube_headers','full_exhaust','intake_manifold',
@@ -7821,6 +7853,8 @@ def build_part_search():
     return jsonify({'results': results, 'query_name': name, 'query_pn': pn})
 
 @display_app.route('/build/part/add', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
 def build_part_add():
     data = request.get_json() or {}
     part = {
@@ -7843,6 +7877,8 @@ def build_part_add():
                     'parts': list(build_tracker['parts'])})
 
 @display_app.route('/build/part/update', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def build_part_update():
     data   = request.get_json() or {}
     pid    = data.get('id')
@@ -7858,6 +7894,8 @@ def build_part_update():
                     'parts': list(build_tracker['parts'])})
 
 @display_app.route('/build/part/remove', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
 def build_part_remove():
     pid = (request.get_json() or {}).get('id')
     build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
@@ -8609,6 +8647,8 @@ async function submitCode() {{
 </body></html>"""
 
 @display_app.route('/register_mac', methods=['POST'])
+@_limiter.limit('5 per minute; 20 per hour')
+@csrf_required
 def register_mac():
     """Register a new device using a one-time code."""
     from flask import request as freq, make_response
@@ -8657,6 +8697,8 @@ def register_mac():
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
+@_limiter.limit('5 per minute; 20 per hour')
+@csrf_required
 def deregister_mac():
     """Remove a MAC from the whitelist (Tier 1 only)."""
     from flask import request as freq
@@ -8808,6 +8850,8 @@ async function revokeCode(code) {{
 </body></html>"""
 
 @display_app.route('/generate_code', methods=['POST'])
+@_limiter.limit('5 per minute; 20 per hour')
+@csrf_required
 def generate_code_route():
     """Generate a one-time invite code (Tier 1 only)."""
     from flask import request as freq
@@ -8823,6 +8867,8 @@ def generate_code_route():
     return jsonify({'success': True, 'code': code, 'name': name, 'tier': inv_tier})
 
 @display_app.route('/revoke_code', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
 def revoke_code():
     """Revoke an unused invite code."""
     from flask import request as freq
@@ -8884,6 +8930,8 @@ def sign_in_code_status():
     })
 
 @display_app.route('/sign_in_code/toggle', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
 def sign_in_code_toggle():
     """Toggle master sign-in code on or off — Tier 1 only."""
     global _master_code_enabled
@@ -8895,6 +8943,8 @@ def sign_in_code_toggle():
     return jsonify({'success': True, 'enabled': _master_code_enabled})
 
 @display_app.route('/sign_in_code/refresh', methods=['POST'])
+@_limiter.limit('5 per minute')
+@csrf_required
 def sign_in_code_refresh():
     """Generate a new master sign-in code — Tier 1 only."""
     global _master_code
@@ -9284,37 +9334,44 @@ def spotify_status():
     })
 
 @display_app.route('/spotify/play', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_play():
     spotify_api('PUT', 'me/player/play')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/pause', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_pause():
     spotify_api('PUT', 'me/player/pause')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/next', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_next():
     spotify_api('POST', 'me/player/next')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/prev', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_prev():
     spotify_api('POST', 'me/player/previous')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/volume', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_volume():
     from flask import request as freq
-    vol = freq.json.get('volume', 50)
+    vol = int((freq.json or {}).get('volume', 50))
+    vol = max(0, min(100, vol))
     spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/seek', methods=['POST'])
+@_limiter.limit('60 per minute')
 def spotify_seek():
     """Seek to a position in the current track."""
     from flask import request as freq
-    pos_ms = int((freq.json or {}).get('position_ms', 0))
+    pos_ms = max(0, int((freq.json or {}).get('position_ms', 0)))
     spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
     return jsonify({'ok': True})
 
@@ -9374,6 +9431,7 @@ def spotify_playlists():
 
 
 @display_app.route('/spotify/dj/intensity', methods=['POST'])
+@_limiter.limit('20 per minute')
 def spotify_dj_intensity():
     """Override DJ intensity mode: auto | calm | moderate | aggressive."""
     from flask import request as freq
@@ -9384,10 +9442,11 @@ def spotify_dj_intensity():
     return jsonify({'intensity_mode': mode, 'current': _dj_intensity_level()})
 
 @display_app.route('/spotify/play_playlist', methods=['POST'])
+@_limiter.limit('20 per minute')
 def spotify_play_playlist():
     from flask import request as freq
-    playlist_id = freq.json.get('playlist_id')
-    if playlist_id:
+    playlist_id = (freq.json or {}).get('playlist_id', '')
+    if playlist_id and isinstance(playlist_id, str) and len(playlist_id) < 64:
         spotify_api('PUT', 'me/player/play', {'context_uri': f'spotify:playlist:{playlist_id}'})
     return jsonify({'ok': True})
 

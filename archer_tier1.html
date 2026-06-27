@@ -2183,7 +2183,7 @@ async function processVoiceCmd(cmd) {
     const name = saveMatch[1].trim();
     try {
       const pos = await new Promise((res,rej) => navigator.geolocation.getCurrentPosition(res,rej,{timeout:6000,enableHighAccuracy:true}));
-      const r = await fetch(T1BASE+'/nav/save_place', {method:'POST', headers:{'Content-Type':'application/json'},
+      const r = await fetch(T1BASE+'/nav/save_place', {method:'POST', headers: _csrfHeaders(),
         body: JSON.stringify({name, lat: pos.coords.latitude, lon: pos.coords.longitude, address: name})});
       const d = await r.json();
       const msg = d.ok ? `Saved. Say "navigate to ${name}" to come back here.` : 'Could not save.';
@@ -3497,18 +3497,18 @@ async function t1SeekSpotify(event, barEl) {
 }
 async function t1SpotifyToggle() {
   const p = document.getElementById('t1-play-btn').textContent==='⏸';
-  await fetch(T1BASE+'/spotify/'+(p?'pause':'play'),{method:'POST'});
+  await fetch(T1BASE+'/spotify/'+(p?'pause':'play'),{method:'POST', headers: _csrfHeaders()});
   document.getElementById('t1-play-btn').textContent = p?'▶':'⏸';
 }
 async function t1SpotifyDisconnect() {
-  await fetch(T1BASE+'/spotify/disconnect', {method:'POST'});
+  await fetch(T1BASE+'/spotify/disconnect', {method:'POST', headers: _csrfHeaders()});
   document.getElementById('t1-spotify-disconnected').style.display = 'flex';
   document.getElementById('t1-spotify-connected').style.display = 'none';
 }
 
 async function t1ToggleDJ() {
   try {
-    const r = await fetch(T1BASE + '/spotify/dj', {method: 'POST'});
+    const r = await fetch(T1BASE + '/spotify/dj', {method: 'POST', headers: _csrfHeaders()});
     const d = await r.json();
     const btn = document.getElementById('t1-dj-btn');
     if (btn) {
@@ -3542,9 +3542,9 @@ function t1UpdateDJBtn(enabled) {
     btn.style.background = '#0d0000';
   }
 }
-async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POST'}); setTimeout(t1PollSpotify,600); setTimeout(t1LoadQueue,1200); }
-async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST'}); setTimeout(t1PollSpotify,600); }
-async function t1SpotifyVolume(v) { await fetch(T1BASE+'/spotify/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:parseInt(v)})}); }
+async function t1SpotifyNext() { await fetch(T1BASE+'/spotify/next',{method:'POST', headers: _csrfHeaders()}); setTimeout(t1PollSpotify,600); setTimeout(t1LoadQueue,1200); }
+async function t1SpotifyPrev() { await fetch(T1BASE+'/spotify/prev',{method:'POST', headers: _csrfHeaders()}); setTimeout(t1PollSpotify,600); }
+async function t1SpotifyVolume(v) { await fetch(T1BASE+'/spotify/volume',{method:'POST', headers: _csrfHeaders(), body:JSON.stringify({volume:parseInt(v)})}); }
 async function t1LoadPlaylists() {
   const el = document.getElementById('t1-playlist-list');
   try {
@@ -3566,7 +3566,7 @@ async function t1LoadQueue() {
   } catch(e) { el.textContent = 'ERR: ' + e.message; }
 }
 async function t1PlayPlaylist(id) {
-  await fetch(T1BASE+'/spotify/play_playlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_id:id})});
+  await fetch(T1BASE+'/spotify/play_playlist',{method:'POST', headers: _csrfHeaders(), body:JSON.stringify({playlist_id:id})});
   setTimeout(t1PollSpotify,800); setTimeout(t1LoadQueue,1500);
 }
 setTimeout(t1CheckSpotify, 1000);
@@ -3800,9 +3800,9 @@ async function bldSavePart() {
   try {
     let r;
     if (editId) {
-      r = await fetch('/build/part/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({...payload, id: editId})});
+      r = await fetch('/build/part/update', {method:'POST', headers: _csrfHeaders(), body: JSON.stringify({...payload, id: editId})});
     } else {
-      r = await fetch('/build/part/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      r = await fetch('/build/part/add', {method:'POST', headers: _csrfHeaders(), body: JSON.stringify(payload)});
     }
     const d = await r.json();
     if (d.parts) bldRenderParts(d.parts);
@@ -3816,7 +3816,7 @@ async function bldCycleStatus(id, current) {
   const order = ['installed_engine','installed_truck','on_hand','ordered'];
   const next  = order[(order.indexOf(current) + 1) % order.length];
   try {
-    const r = await fetch('/build/part/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, status: next})});
+    const r = await fetch('/build/part/update', {method:'POST', headers: _csrfHeaders(), body: JSON.stringify({id, status: next})});
     const d = await r.json();
     if (d.parts) bldRenderParts(d.parts);
     if (d.power) bldUpdatePower(d.power);
@@ -3825,7 +3825,7 @@ async function bldCycleStatus(id, current) {
 
 async function bldRemovePart(id) {
   try {
-    const r = await fetch('/build/part/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    const r = await fetch('/build/part/remove', {method:'POST', headers: _csrfHeaders(), body: JSON.stringify({id})});
     const d = await r.json();
     if (d.parts) bldRenderParts(d.parts);
     if (d.power) bldUpdatePower(d.power);
@@ -3868,12 +3868,12 @@ async function launchControl() {
   if (!dragStaged) {
     dragStaged = true;
     if (btn) { btn.textContent = '⚡ STAGED — TAP TO LAUNCH'; btn.style.color = 'var(--yellow)'; btn.style.borderColor = 'var(--yellow)'; }
-    try { await fetch(T1BASE + '/drag/stage', {method: 'POST'}); } catch(e) {}
+    try { await fetch(T1BASE + '/drag/stage', {method: 'POST', headers: _csrfHeaders()}); } catch(e) {}
     setArcherMsg('Staged. Launch when ready.');
   } else {
     dragStaged = false;
     if (btn) { btn.textContent = '🟢 TIMING — FLOOR IT'; btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)'; }
-    try { await fetch(T1BASE + '/drag/launch', {method: 'POST'}); } catch(e) {}
+    try { await fetch(T1BASE + '/drag/launch', {method: 'POST', headers: _csrfHeaders()}); } catch(e) {}
     setArcherMsg('Launch.');
     setTimeout(() => setTab('track'), 600);
     setTimeout(() => {
@@ -4071,14 +4071,14 @@ async function sysLoadCode() {
 
 async function sysToggleCode() {
   try {
-    await fetch(T1BASE + '/sign_in_code/toggle', {method:'POST'});
+    await fetch(T1BASE + '/sign_in_code/toggle', {method:'POST', headers: _csrfHeaders()});
     await sysLoadCode();
   } catch(e) {}
 }
 
 async function sysRefreshCode() {
   try {
-    const r = await fetch(T1BASE + '/sign_in_code/refresh', {method:'POST'});
+    const r = await fetch(T1BASE + '/sign_in_code/refresh', {method:'POST', headers: _csrfHeaders()});
     const d = await r.json();
     if (d.success) {
       const disp = document.getElementById('sys-code-display');
@@ -4097,7 +4097,7 @@ async function sysGenInvite() {
   try {
     const r = await fetch(T1BASE + '/generate_code', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: _csrfHeaders(),
       body: JSON.stringify({name:'Guest', tier: parseInt(tierEl.value)})
     });
     const d = await r.json();

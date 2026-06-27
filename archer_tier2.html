@@ -518,11 +518,14 @@ function renderHistory() {
   const el = document.getElementById('request-history');
   if (!el) return;
   if (!requestHistory.length) { el.innerHTML = '<div style="font-size:10px;color:var(--label)">No requests yet</div>'; return; }
-  el.innerHTML = requestHistory.map(r => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px">
-      <span style="color:var(--text3)">${r.msg.replace(passengerName + ' ','').replace('wants you to ','').replace('is requesting ','')}</span>
-      <span style="color:${r.status==='approved'?'var(--green)':r.status==='denied'?'var(--pink)':'var(--label)'};font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px">${r.status.toUpperCase()}</span>
-    </div>`).join('');
+  el.innerHTML = requestHistory.map(r => {
+    const safeMsg = _esc(r.msg.replace(passengerName + ' ','').replace('wants you to ','').replace('is requesting ',''));
+    const statusColor = r.status==='approved'?'var(--green)':r.status==='denied'?'var(--pink)':'var(--label)';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px">
+      <span style="color:var(--text3)">${safeMsg}</span>
+      <span style="color:${statusColor};font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px">${_esc(r.status).toUpperCase()}</span>
+    </div>`;
+  }).join('');
 }
 
 // ─── REQUEST BUTTON STATE ───
@@ -855,20 +858,20 @@ function fmtTime(secs) {
 async function spotifyToggle() {
   const btn = document.getElementById('play-btn');
   const playing = btn.textContent === '⏸';
-  await fetch(`${BASE}/spotify/${playing ? 'pause' : 'play'}`, {method:'POST'});
+  await fetch(`${BASE}/spotify/${playing ? 'pause' : 'play'}`, {method:'POST', headers: _csrfHeaders()});
   btn.textContent = playing ? '▶' : '⏸';
 }
 async function spotifyNext() {
-  await fetch(`${BASE}/spotify/next`, {method:'POST'});
+  await fetch(`${BASE}/spotify/next`, {method:'POST', headers: _csrfHeaders()});
   setTimeout(pollSpotify, 500);
   setTimeout(loadQueue, 1000);
 }
 async function spotifyPrev() {
-  await fetch(`${BASE}/spotify/prev`, {method:'POST'});
+  await fetch(`${BASE}/spotify/prev`, {method:'POST', headers: _csrfHeaders()});
   setTimeout(pollSpotify, 500);
 }
 async function spotifyVolume(val) {
-  await fetch(`${BASE}/spotify/volume`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({volume: parseInt(val)})});
+  await fetch(`${BASE}/spotify/volume`, {method:'POST', headers: _csrfHeaders(), body: JSON.stringify({volume: parseInt(val)})});
 }
 
 async function loadQueue() {
@@ -900,7 +903,7 @@ async function loadPlaylists() {
 }
 
 async function playPlaylist(id, name) {
-  await fetch(`${BASE}/spotify/play_playlist`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({playlist_id: id})});
+  await fetch(`${BASE}/spotify/play_playlist`, {method:'POST', headers: _csrfHeaders(), body: JSON.stringify({playlist_id: id})});
   updateArcherMsg(`Playing ${name}.`);
   setTimeout(pollSpotify, 800);
   setTimeout(loadQueue, 1500);
