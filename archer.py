@@ -19,6 +19,14 @@ import hmac
 import hashlib
 import secrets
 
+try:
+    from sierra_ecu_config import SierraECU as _SierraECU
+    _ecu = _SierraECU()
+    _ECU_AVAILABLE = True
+except ImportError:
+    _ECU_AVAILABLE = False
+    _ecu = None
+
 # ── LOG CAPTURE (captures all print() output into a ring buffer) ──
 _log_buffer = collections.deque(maxlen=2000)
 _log_lock   = threading.Lock()
@@ -1453,10 +1461,56 @@ def update_awareness():
         awareness['warnings_active'] = warnings
 
         if sim_flags["random_enabled"]:
-            truck_state['oil_temp']     = 195 + random.randint(-3, 5)
-            truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
-            truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
-            truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
+            if _ECU_AVAILABLE and _ecu is not None:
+                # Sync external state so ECU physics use the correct RPM/speed
+                _ecu.rpm   = float(truck_state['rpm'])
+                _ecu.speed = float(truck_state['speed'])
+                _ecu.throttle = {
+                    'idle': 5.0, 'cruise': 18.0, 'moderate': 45.0, 'aggressive': 85.0
+                }.get(awareness['throttle_state'], 5.0)
+                # Graduate out of cold_start once engine is warm
+                if _ecu._mode == 'cold_start' and _ecu.coolant_temp >= 160.0:
+                    _ecu.set_mode('warm_idle')
+                # Step physics (temperatures, MAF, timing, STFT, battery …)
+                _ecu.step(2.0)
+                # Restore external RPM/speed — don't let ECU mode override them
+                _ecu.rpm   = float(truck_state['rpm'])
+                _ecu.speed = float(truck_state['speed'])
+                st = _ecu.get_state()
+                truck_state['coolant_temp']   = st['coolant_temp']
+                truck_state['oil_temp']       = st['oil_temp']
+                truck_state['tft']            = st['tft']
+                truck_state['iat']            = st['iat']
+                truck_state['maf']            = st['maf']
+                truck_state['timing']         = st['timing']
+                truck_state['stft_b1']        = st['stft_b1']
+                truck_state['stft_b2']        = st['stft_b2']
+                truck_state['ltft_b1']        = st['ltft_b1']
+                truck_state['ltft_b2']        = st['ltft_b2']
+                truck_state['o2_b1s1']        = st['o2_b1s1']
+                truck_state['o2_b2s1']        = st['o2_b2s1']
+                truck_state['battery_main']   = st['battery_main']
+                truck_state['battery_aux']    = st['battery_aux']
+                truck_state['alt_output']     = st['alt_output']
+                truck_state['engine_load']    = st['engine_load']
+                truck_state['gear']           = st['gear']
+                truck_state['target_gear']    = st['target_gear']
+                truck_state['tcc_state']      = st['tcc_state']
+                truck_state['line_pressure']  = st['line_pressure']
+                truck_state['sol_a']          = st['sol_a']
+                truck_state['sol_b']          = st['sol_b']
+                truck_state['prndl']          = st['prndl']
+                truck_state['wheel_speed_fl'] = st['wheel_speed_fl']
+                truck_state['wheel_speed_fr'] = st['wheel_speed_fr']
+                truck_state['wheel_speed_rl'] = st['wheel_speed_rl']
+                truck_state['wheel_speed_rr'] = st['wheel_speed_rr']
+                truck_state['boost'] = max(0, (truck_state['rpm'] - 2000) // 250) if truck_state['rpm'] > 2000 else 0
+            else:
+                # Fallback when sierra_ecu_config is unavailable
+                truck_state['oil_temp']     = 195 + random.randint(-3, 5)
+                truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
+                truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
+                truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
 
         time.sleep(2)
 
