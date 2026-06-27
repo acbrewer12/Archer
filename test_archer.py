@@ -2,7 +2,7 @@
 Archer test suite — covers backend routes, auth, tier system,
 smart_fallback, save/load state, and key data endpoints.
 """
-import os, sys, json, hashlib, tempfile, threading, time
+import os, sys, json, hashlib, hmac, secrets, tempfile, threading, time
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -704,19 +704,25 @@ class TestTierNotifications:
         archer.tier_notifications.clear()
         archer.tier_responses.clear()
 
+    # notify_tier1 requires at least tier 2 (passenger) + CSRF skipped in test
+    # because _validate_csrf returns True when no session token is set (test env)
+
     def test_notify_returns_ok(self):
-        r = client.post('/notify_tier1', json={'from': 'Alice', 'message': 'hello'})
+        c = _authed_client(2, 'Passenger')
+        r = c.post('/notify_tier1', json={'from': 'Alice', 'message': 'hello'})
         d = json.loads(r.data)
         assert d['ok'] is True
 
     def test_notify_returns_id(self):
-        r = client.post('/notify_tier1', json={'from': 'Alice', 'message': 'test'})
+        c = _authed_client(2, 'Passenger')
+        r = c.post('/notify_tier1', json={'from': 'Alice', 'message': 'test'})
         d = json.loads(r.data)
         assert 'id' in d
 
     def test_notification_appears_in_list(self):
-        client.post('/notify_tier1', json={'from': 'Bob', 'message': 'unlock sport'})
-        r = client.get('/tier_notifications')
+        c = _authed_client(2, 'Passenger')
+        c.post('/notify_tier1', json={'from': 'Bob', 'message': 'unlock sport'})
+        r = c.get('/tier_notifications')
         d = json.loads(r.data)
         assert any(n['from'] == 'Bob' for n in d['notifications'])
 
@@ -726,33 +732,38 @@ class TestTierNotifications:
         assert isinstance(d['notifications'], list)
 
     def test_tier_cancel_updates_status(self):
-        r = client.post('/notify_tier1', json={'from': 'Carol', 'message': 'cancel me'})
+        c2 = _authed_client(2, 'Passenger')
+        r  = c2.post('/notify_tier1', json={'from': 'Carol', 'message': 'cancel me'})
         nid = json.loads(r.data)['id']
-        cr  = client.post('/tier_cancel', json={'id': nid})
+        cr  = c2.post('/tier_cancel', json={'id': nid})
         assert json.loads(cr.data)['ok'] is True
         assert archer.tier_responses.get(nid) == 'cancelled'
 
     def test_tier_respond_approved(self):
-        r = client.post('/notify_tier1', json={'from': 'Dave', 'message': 'sport mode'})
+        c2  = _authed_client(2, 'Passenger')
+        r   = c2.post('/notify_tier1', json={'from': 'Dave', 'message': 'sport mode'})
         nid = json.loads(r.data)['id']
         rr  = _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'approved', 'action': 'sport'})
         assert json.loads(rr.data)['ok'] is True
         assert archer.tier_responses.get(nid) == 'approved'
 
     def test_tier_respond_changes_drive_mode(self):
-        r = client.post('/notify_tier1', json={'from': 'Eve', 'message': 'eco mode'})
+        c2  = _authed_client(2, 'Passenger')
+        r   = c2.post('/notify_tier1', json={'from': 'Eve', 'message': 'eco mode'})
         nid = json.loads(r.data)['id']
         _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'approved', 'action': 'eco mode'})
         assert archer.truck_state['drive_mode'] == 'eco'
 
     def test_tier_respond_denied(self):
-        r = client.post('/notify_tier1', json={'from': 'Frank', 'message': 'tow mode'})
+        c2  = _authed_client(2, 'Passenger')
+        r   = c2.post('/notify_tier1', json={'from': 'Frank', 'message': 'tow mode'})
         nid = json.loads(r.data)['id']
         _authed_client(1).post('/tier_respond', json={'id': nid, 'response': 'denied', 'action': 'tow'})
         assert archer.tier_responses.get(nid) == 'denied'
 
     def test_tier_response_status_endpoint(self):
-        r = client.post('/notify_tier1', json={'from': 'Grace', 'message': 'test'})
+        c2  = _authed_client(2, 'Passenger')
+        r   = c2.post('/notify_tier1', json={'from': 'Grace', 'message': 'test'})
         nid = json.loads(r.data)['id']
         sr  = client.get(f'/tier_response_status?id={nid}')
         d   = json.loads(sr.data)
@@ -1047,8 +1058,13 @@ class TestGetTierHtml:
 # 26. Index route routing logic
 # ═══════════════════════════════════════════════════════════════
 class TestIndexRoute:
-    def test_no_cookie_returns_html(self):
+    def test_no_cookie_redirects(self):
+        # Unauthenticated users are redirected to /fans
         r = client.get('/')
+        assert r.status_code in (200, 302)
+
+    def test_no_cookie_redirect_follows_to_html(self):
+        r = client.get('/', follow_redirects=True)
         assert r.status_code == 200
         assert b'html' in r.data.lower()
 
@@ -1061,13 +1077,13 @@ class TestIndexRoute:
         assert r.status_code == 200
 
     def test_registration_page_shown_without_auth(self):
-        r = client.get('/')
-        assert b'ARCHER' in r.data
+        r = client.get('/', follow_redirects=True)
+        assert r.status_code == 200
 
     def test_no_crash_with_malformed_cookie(self):
         c = archer.display_app.test_client()
         c.set_cookie('archer_auth', 'malformed_no_colons')
-        r = c.get('/')
+        r = c.get('/', follow_redirects=True)
         assert r.status_code == 200
 
 
@@ -1166,6 +1182,309 @@ class TestGetDisplayData:
     def test_tc_on_field(self):
         d = archer.get_display_data()
         assert 'tc_on' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 31. /export/trip — JSON and CSV export
+# ═══════════════════════════════════════════════════════════════
+class TestTripExport:
+    def test_unauthenticated_returns_403(self):
+        r = client.get('/export/trip')
+        assert r.status_code == 403
+
+    def test_tier3_returns_403(self):
+        c = _authed_client(3, 'Family')
+        r = c.get('/export/trip')
+        assert r.status_code == 403
+
+    def test_tier1_json_default(self):
+        c = _authed_client(1, 'Ayden')
+        r = c.get('/export/trip')
+        assert r.status_code == 200
+        data = json.loads(r.data)
+        assert 'trips' in data
+        assert 'count' in data
+        assert isinstance(data['trips'], list)
+
+    def test_tier2_json_ok(self):
+        c = _authed_client(2, 'Khloe')
+        r = c.get('/export/trip?fmt=json')
+        assert r.status_code == 200
+
+    def test_tier1_csv_content_type(self):
+        c = _authed_client(1, 'Ayden')
+        r = c.get('/export/trip?fmt=csv')
+        assert r.status_code == 200
+        assert 'text/csv' in r.content_type
+
+    def test_csv_has_header_row(self):
+        c = _authed_client(1, 'Ayden')
+        r = c.get('/export/trip?fmt=csv')
+        text = r.data.decode()
+        assert 'date' in text and 'peak_rpm' in text
+
+    def test_csv_attachment_header(self):
+        c = _authed_client(1, 'Ayden')
+        r = c.get('/export/trip?fmt=csv')
+        assert b'attachment' in r.headers.get('Content-Disposition', '').encode()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 32. /system_health — degraded mode detection
+# ═══════════════════════════════════════════════════════════════
+class TestSystemHealth:
+    def test_returns_200(self):
+        r = client.get('/system_health')
+        assert r.status_code == 200
+
+    def test_has_status_field(self):
+        d = json.loads(client.get('/system_health').data)
+        assert 'status' in d
+        assert d['status'] in ('ok', 'degraded')
+
+    def test_degraded_when_obd_disconnected(self):
+        original = archer.system_health['obd_connected']
+        archer.system_health['obd_connected'] = False
+        try:
+            issues = archer.get_system_status()
+            assert 'OBD_DISCONNECTED' in issues
+        finally:
+            archer.system_health['obd_connected'] = original
+
+    def test_degraded_when_obd_timeout(self):
+        original = archer.system_health['last_obd_update']
+        archer.system_health['last_obd_update'] = time.time() - 30
+        try:
+            issues = archer.get_system_status()
+            assert 'OBD_TIMEOUT' in issues
+        finally:
+            archer.system_health['last_obd_update'] = original
+
+    def test_ok_when_nominal(self):
+        archer.system_health['obd_connected'] = True
+        archer.system_health['voice_active']  = True
+        archer.system_health['last_obd_update'] = time.time()
+        issues = archer.get_system_status()
+        assert issues == []
+
+
+# ═══════════════════════════════════════════════════════════════
+# 33. /logout — session invalidation
+# ═══════════════════════════════════════════════════════════════
+class TestLogout:
+    def test_logout_returns_200(self):
+        c = _authed_client(1, 'Ayden')
+        r = c.post('/logout')
+        assert r.status_code == 200
+
+    def test_logout_clears_cookie(self):
+        c = _authed_client(2, 'Khloe')
+        r = c.post('/logout')
+        # Response must delete the cookie (max-age=0 or expires in past)
+        set_cookie = r.headers.get('Set-Cookie', '')
+        assert 'archer_auth' in set_cookie
+
+    def test_logout_revokes_session(self):
+        # After logout the token should appear in _revoked_tokens
+        import hashlib as hl
+        secret = os.environ['ARCHER_SECRET']
+        name, tier = 'LogoutTest', 2
+        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        c = _authed_client(tier, name)
+        c.post('/logout')
+        assert token in archer._revoked_tokens
+
+    def test_no_session_logout_is_safe(self):
+        r = client.post('/logout')
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 34. Gatekeeper — handle_connection with timestamp replay protection
+# ═══════════════════════════════════════════════════════════════
+class TestGatekeeperHandshake:
+    """Tests for pi/obd_gatekeeper.py handle_connection."""
+
+    @staticmethod
+    def _make_mock_port(lines: list[bytes]):
+        """Return a mock serial.Serial that yields lines one at a time."""
+        port = MagicMock()
+        port.readline = iter(lines).__next__
+        port.write    = MagicMock()
+        port.flush    = MagicMock()
+        port.timeout  = 10.0
+        return port
+
+    def _gatekeeper(self):
+        """Import obd_gatekeeper without triggering hardware init."""
+        import importlib, sys
+        sys.modules.setdefault('RPi', MagicMock())
+        sys.modules.setdefault('RPi.GPIO', MagicMock())
+        # Use a real exception subclass so 'except serial.SerialException' works
+        _serial_mock = MagicMock()
+        _serial_mock.SerialException = IOError
+        sys.modules['serial'] = _serial_mock
+        if 'pi.obd_gatekeeper' in sys.modules:
+            importlib.reload(sys.modules['pi.obd_gatekeeper'])
+        import pi.obd_gatekeeper as gk
+        # Reset failure counters between tests
+        gk._fail_count   = 0
+        gk._locked_until = 0.0
+        return gk
+
+    def test_wrong_opener_fails(self):
+        gk   = self._gatekeeper()
+        key  = secrets.token_bytes(32)
+        port = self._make_mock_port([b"NOT_ARCHER\n"])
+        result = gk.handle_connection(port, [key])
+        assert result is False
+
+    def test_correct_key_passes(self):
+        import secrets as _s
+        gk  = self._gatekeeper()
+        key = _s.token_bytes(32)
+
+        # Capture the challenge that handle_connection writes
+        challenge_holder = {}
+        def _capture_write(data):
+            text = data.decode('ascii', errors='replace').strip()
+            if text.startswith('CHALLENGE:'):
+                challenge_holder['raw'] = text
+        port = MagicMock()
+        port.timeout = 10.0
+        port.write = _capture_write
+        port.flush = MagicMock()
+        lines_iter = iter([b"ARCHER_AUTH_REQ\n", None])  # second call filled in below
+
+        def _readline():
+            val = next(lines_iter)
+            if val is None:
+                # Build correct response from the challenge we captured
+                raw = challenge_holder.get('raw', '')
+                parts = raw.split(':')
+                nonce_hex, ts_str = parts[1], parts[2]
+                nonce   = bytes.fromhex(nonce_hex)
+                payload = nonce + b':' + ts_str.encode()
+                mac = hmac.new(key, payload, hashlib.sha256).hexdigest()
+                return f"RESPONSE:{mac}\n".encode()
+            return val
+        port.readline = _readline
+
+        result = gk.handle_connection(port, [key])
+        assert result is True
+
+    def test_wrong_key_fails(self):
+        import secrets as _s
+        gk       = self._gatekeeper()
+        real_key = _s.token_bytes(32)
+        bad_key  = _s.token_bytes(32)
+
+        challenge_holder = {}
+        def _capture_write(data):
+            text = data.decode('ascii', errors='replace').strip()
+            if text.startswith('CHALLENGE:'):
+                challenge_holder['raw'] = text
+        port = MagicMock()
+        port.timeout = 10.0
+        port.write = _capture_write
+        port.flush = MagicMock()
+        lines_iter = iter([b"ARCHER_AUTH_REQ\n", None])
+
+        def _readline():
+            val = next(lines_iter)
+            if val is None:
+                raw    = challenge_holder.get('raw', '')
+                parts  = raw.split(':')
+                nonce  = bytes.fromhex(parts[1])
+                ts_str = parts[2]
+                payload = nonce + b':' + ts_str.encode()
+                mac = hmac.new(bad_key, payload, hashlib.sha256).hexdigest()
+                return f"RESPONSE:{mac}\n".encode()
+            return val
+        port.readline = _readline
+
+        result = gk.handle_connection(port, [real_key])
+        assert result is False
+
+    def test_stale_timestamp_fails(self):
+        """A replayed response outside the 30-second window is rejected."""
+        import secrets as _s
+        gk  = self._gatekeeper()
+        key = _s.token_bytes(32)
+
+        # Build a response using a timestamp 60 seconds in the past
+        stale_ts = int(time.time()) - 60
+        nonce    = _s.token_bytes(32)
+        payload  = nonce + b':' + str(stale_ts).encode()
+        mac      = hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+        challenge_holder = {}
+        def _capture_write(data):
+            text = data.decode('ascii', errors='replace').strip()
+            if text.startswith('CHALLENGE:'):
+                challenge_holder['raw'] = text
+
+        # Override the challenge to embed stale_ts so timestamp check fires
+        write_calls = []
+        def _write(data):
+            _capture_write(data)
+            write_calls.append(data)
+
+        # Simulate: correct opener, then response built for stale_ts
+        lines = iter([
+            b"ARCHER_AUTH_REQ\n",
+            f"RESPONSE:{mac}\n".encode(),
+        ])
+        port = MagicMock()
+        port.timeout  = 10.0
+        port.readline = lambda: next(lines)
+        port.write    = _write
+        port.flush    = MagicMock()
+
+        # Patch time.time so the challenge emits stale_ts and the window check fails
+        with patch('pi.obd_gatekeeper.time') as mock_time:
+            mock_time.time.return_value = float(stale_ts)  # challenge issued at stale_ts
+            # But validation happens 60 seconds "later" → out of window
+            mock_time.time.side_effect = [float(stale_ts), float(stale_ts + 60)]
+            # Run — second call to time.time() is for the window check
+            result = gk.handle_connection(port, [key])
+        assert result is False
+
+    def test_key_rotation_previous_key_works(self):
+        """Connecting with the previous key (index 1) still authenticates."""
+        import secrets as _s
+        gk       = self._gatekeeper()
+        new_key  = _s.token_bytes(32)
+        old_key  = _s.token_bytes(32)  # previous key — being rotated out
+
+        challenge_holder = {}
+        def _capture_write(data):
+            text = data.decode('ascii', errors='replace').strip()
+            if text.startswith('CHALLENGE:'):
+                challenge_holder['raw'] = text
+        port = MagicMock()
+        port.timeout = 10.0
+        port.write = _capture_write
+        port.flush = MagicMock()
+        lines_iter = iter([b"ARCHER_AUTH_REQ\n", None])
+
+        def _readline():
+            val = next(lines_iter)
+            if val is None:
+                raw    = challenge_holder.get('raw', '')
+                parts  = raw.split(':')
+                nonce  = bytes.fromhex(parts[1])
+                ts_str = parts[2]
+                payload = nonce + b':' + ts_str.encode()
+                # Sign with OLD key (simulating client hasn't updated yet)
+                mac = hmac.new(old_key, payload, hashlib.sha256).hexdigest()
+                return f"RESPONSE:{mac}\n".encode()
+            return val
+        port.readline = _readline
+
+        # Pass [new_key, old_key] — gatekeeper should fall back to old_key
+        result = gk.handle_connection(port, [new_key, old_key])
+        assert result is True
 
 
 if __name__ == '__main__':

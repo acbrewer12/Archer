@@ -37,6 +37,24 @@ body.day {
   --dim:     #3a2a50;
 }
 
+/* ── RED SHIFT — deep red cockpit mode for night driving ── */
+body.red {
+  --bg:      #0a0000;
+  --bg2:     #110000;
+  --bg3:     #1a0000;
+  --border:  #2a0000;
+  --border2: #3a0000;
+  --pink:    #ff4422;
+  --pink2:   #cc3311;
+  --pink3:   #ff7755;
+  --purple:  #cc2200;
+  --text:    #ffccbb;
+  --text2:   #dd9988;
+  --text3:   #884433;
+  --label:   #552211;
+  --dim:     #1a0000;
+}
+
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:12px;transition:background 0.3s}
 
@@ -495,6 +513,12 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
           <div class="section-hdr" style="margin-bottom:6px">REQUEST HISTORY</div>
           <div id="request-history"><div style="font-size:10px;color:var(--label)">No requests yet</div></div>
         </div>
+      </div>
+
+      <!-- SESSION -->
+      <div class="card" style="background:var(--bg2)">
+        <div class="section-hdr">SESSION</div>
+        <button onclick="t2Logout()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px;color:var(--text3);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;cursor:pointer;margin-top:4px">SIGN OUT / LOCK SESSION</button>
       </div>
     </div>
 
@@ -1110,22 +1134,37 @@ function tts2(text) {
 function t2ShowHelp() { document.getElementById('t2-help-overlay').style.display = 'block'; }
 function t2HideHelp() { document.getElementById('t2-help-overlay').style.display = 'none'; }
 
-// ── DAY/NIGHT MODE ───────────────────────────────────────────
+// ── LOGOUT ───────────────────────────────────────────────────
+async function t2Logout() {
+  try { await fetch('/logout', {method:'POST', headers: _csrfHeaders()}); } catch(e){}
+  window.location.href = '/passenger';
+}
+
+// ── DAY/NIGHT/RED MODE ───────────────────────────────────────
 (function() {
+  const ICONS = {day: '🌙', night: '🔴', red: '☀️'};  // icon = what pressing will go to next
+  const CYCLE = {day: 'night', night: 'red', red: 'day'};
   function _autoMode() {
     const h = new Date().getHours();
-    return (h >= 7 && h < 19) ? 'day' : 'night';
+    if (h >= 7 && h < 17) return 'day';
+    if (h >= 17 && h < 21) return 'night';
+    return 'red';  // late night = red cockpit shift
   }
   function _applyMode(mode) {
-    document.body.classList.toggle('day', mode === 'day');
+    document.body.classList.remove('day', 'red');
+    if (mode === 'day') document.body.classList.add('day');
+    else if (mode === 'red') document.body.classList.add('red');
     const btn = document.getElementById('t2-mode-btn');
-    if (btn) btn.textContent = mode === 'day' ? '🌙' : '☀️';
+    if (btn) btn.textContent = ICONS[mode] || '🌙';
   }
   let _t2Mode = localStorage.getItem('t2_mode') || 'auto';
-  _applyMode(_t2Mode === 'auto' ? _autoMode() : _t2Mode);
+  let _effective = _t2Mode === 'auto' ? _autoMode() : _t2Mode;
+  _applyMode(_effective);
   setInterval(() => { if (_t2Mode === 'auto') _applyMode(_autoMode()); }, 60000);
   window.t2ToggleMode = function() {
-    _t2Mode = (document.body.classList.contains('day')) ? 'night' : 'day';
+    const cur = document.body.classList.contains('day') ? 'day'
+              : document.body.classList.contains('red') ? 'red' : 'night';
+    _t2Mode = CYCLE[cur];
     localStorage.setItem('t2_mode', _t2Mode);
     _applyMode(_t2Mode);
   };

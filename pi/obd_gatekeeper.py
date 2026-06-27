@@ -8,11 +8,24 @@ laptops, and unauthorised dongles.
 
 When Archer OS boots and connects via USB serial:
   1. Pi receives ARCHER_AUTH_REQ
-  2. Pi sends a 32-byte random challenge nonce
-  3. Client responds with HMAC-SHA256(shared_key, nonce)
-  4. Pi verifies with constant-time compare (prevents timing attacks)
+  2. Pi sends a 32-byte random challenge nonce + UTC timestamp
+  3. Client responds with HMAC-SHA256(shared_key, nonce + ':' + timestamp)
+  4. Pi verifies:
+       a. Timestamp is within ±30 seconds (replay protection)
+       b. HMAC matches (key proof)
+       c. Using constant-time compare (prevents timing attacks)
   5. Correct key → "AUTH_OK" + switch to transparent ELM327 proxy mode
      Wrong key   → silence, port stays locked
+
+Replay protection: The timestamp-in-MAC means a captured challenge+response
+pair cannot be reused once the 30-second window closes, even if the nonce
+is somehow intercepted.
+
+Key rotation: KEY_FILE may contain two newline-separated hex keys:
+  Line 1 — current key (always tried first)
+  Line 2 — previous key (optional; tried as fallback during rotation window)
+To rotate: prepend new key to file as line 1, keep old as line 2 for one
+session, then remove line 2.
 
 Install as a systemd service on the Pi:
   sudo cp obd_gatekeeper.py /opt/archer/obd_gatekeeper.py
@@ -44,11 +57,18 @@ except ImportError:
     GPIO_AVAILABLE = False
 
 KEY_FILE      = "/etc/archer/obd_auth.key"
-AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")   # Pi UART ↔ OBD2 connector
-ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")   # Pi UART ↔ ELM327/CAN
+AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
+ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")
 BAUD          = 115200
 RELAY_PIN     = 17     # BCM — HIGH = OBD2 unlocked, LOW = locked
-AUTH_TIMEOUT  = 10.0   # seconds to receive full handshake
+AUTH_TIMEOUT  = 10.0   # seconds to complete the full handshake
+TIMESTAMP_WINDOW = 30  # seconds — reject challenges older than this
+MAX_SESSION_SECS = 4 * 3600  # force re-auth after 4 hours
+
+# Rate limiting — protects against brute-force / fuzzing attacks
+MAX_FAILURES_SOFT  = 3   # → 30s lockout
+MAX_FAILURES_HARD  = 6   # → 300s lockout
+MAX_FAILURES_PERM  = 10  # → indefinite lockout (manual reset required)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +77,43 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 log = logging.getLogger(__name__)
+
+# ── failure tracking ─────────────────────────────────────────────────
+
+_fail_count   = 0
+_locked_until = 0.0
+
+
+def _record_failure():
+    global _fail_count, _locked_until
+    _fail_count += 1
+    if _fail_count >= MAX_FAILURES_PERM:
+        _locked_until = float('inf')
+        log.critical(f"PERMANENT LOCKOUT after {_fail_count} failures — manual reset required")
+    elif _fail_count >= MAX_FAILURES_HARD:
+        _locked_until = time.time() + 300
+        log.warning(f"HARD LOCKOUT 300s after {_fail_count} failures")
+    elif _fail_count >= MAX_FAILURES_SOFT:
+        _locked_until = time.time() + 30
+        log.warning(f"SOFT LOCKOUT 30s after {_fail_count} failures")
+
+
+def _check_lockout() -> bool:
+    """Return True if currently locked out."""
+    if _locked_until == float('inf'):
+        return True
+    if time.time() < _locked_until:
+        remaining = int(_locked_until - time.time())
+        log.warning(f"Locked out — {remaining}s remaining")
+        return True
+    return False
+
+
+def _reset_failures():
+    global _fail_count, _locked_until
+    _fail_count   = 0
+    _locked_until = 0.0
+
 
 # ── relay control ────────────────────────────────────────────────────
 
@@ -78,12 +135,23 @@ def set_relay(unlocked: bool):
 
 # ── key loading ──────────────────────────────────────────────────────
 
-def load_key() -> bytes:
+def load_keys() -> list[bytes]:
+    """Load one or two keys from KEY_FILE.
+
+    File format:
+      <current_key_hex>
+      <previous_key_hex>   (optional — used during rotation)
+
+    Returns a list with 1-2 key byte strings. Current key is always first.
+    """
     with open(KEY_FILE, "r") as f:
-        return bytes.fromhex(f.read().strip())
+        lines = [l.strip() for l in f.readlines() if l.strip()]
+    if not lines:
+        raise ValueError("Key file is empty")
+    return [bytes.fromhex(line) for line in lines[:2]]
 
 
-# ── proxy thread: forwards bytes between auth_port and elm_port ──────
+# ── proxy thread ─────────────────────────────────────────────────────
 
 def _proxy(src: serial.Serial, dst: serial.Serial, label: str):
     """Copy bytes from src → dst until either port closes."""
@@ -100,10 +168,10 @@ def _proxy(src: serial.Serial, dst: serial.Serial, label: str):
 
 
 def run_proxy_session(auth_port: serial.Serial):
-    """
-    After authentication, bridge auth_port ↔ ELM327 port transparently.
-    Archer's existing pyserial/ELM327 code sees a normal ELM327 device.
-    Returns when either side disconnects.
+    """Bridge auth_port ↔ ELM327 port transparently after auth.
+
+    Enforces MAX_SESSION_SECS: closes the session and re-locks the port
+    after 4 hours regardless of activity, forcing periodic re-auth.
     """
     try:
         elm = serial.Serial(ELM_PORT, BAUD, timeout=1)
@@ -111,23 +179,55 @@ def run_proxy_session(auth_port: serial.Serial):
         log.error(f"Cannot open ELM port {ELM_PORT}: {e}")
         return
 
-    log.info("Proxy mode active — forwarding ELM327 data")
+    log.info(f"Proxy mode active — session expires in {MAX_SESSION_SECS//3600}h")
+    session_start = time.time()
+    stop_event    = threading.Event()
+
+    def _expire_session():
+        time.sleep(MAX_SESSION_SECS)
+        if not stop_event.is_set():
+            log.info("Session expired — forcing re-auth")
+            try:
+                auth_port.write(b"REAUTH_REQUIRED\n")
+                auth_port.flush()
+            except serial.SerialException:
+                pass
+            elm.close()
+
+    t_expire = threading.Thread(target=_expire_session, daemon=True)
+    t_expire.start()
+
     t1 = threading.Thread(target=_proxy, args=(auth_port, elm, "archer→elm"),  daemon=True)
     t2 = threading.Thread(target=_proxy, args=(elm, auth_port, "elm→archer"),  daemon=True)
     t1.start()
     t2.start()
     t1.join()
     t2.join()
-    elm.close()
-    log.info("Proxy session ended — re-locking OBD2 port")
+
+    stop_event.set()
+    elapsed = int(time.time() - session_start)
+    log.info(f"Proxy session ended after {elapsed}s — re-locking OBD2 port")
 
 
 # ── authentication handshake ─────────────────────────────────────────
 
-def handle_connection(port: serial.Serial, key: bytes) -> bool:
-    """
-    Run one challenge-response cycle.
-    Returns True if the client proved they hold the correct key.
+def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
+    """Run one challenge-response cycle with timestamp-based replay protection.
+
+    Protocol:
+      Client → "ARCHER_AUTH_REQ\\n"
+      Pi     → "CHALLENGE:{nonce_hex}:{unix_ts}\\n"
+      Client → "RESPONSE:{hmac_hex}\\n"
+         where hmac = HMAC-SHA256(key, nonce_bytes + b':' + str(ts).encode())
+      Pi     → "AUTH_OK\\n"  (or silence on failure)
+
+    Timestamp binding prevents replay: a captured challenge+response is only
+    valid within the TIMESTAMP_WINDOW seconds it was issued.
+
+    Key rotation: tries each key in `keys` list. Current key (index 0) is
+    always tried first; previous key (index 1) is a fallback during rotation.
+
+    Returns True only on successful authentication.
     """
     port.timeout = AUTH_TIMEOUT
 
@@ -137,14 +237,14 @@ def handle_connection(port: serial.Serial, key: bytes) -> bool:
         return False
 
     if line != "ARCHER_AUTH_REQ":
-        # Not our protocol — could be a scan tool. Stay silent.
         log.warning(f"Unrecognised opener: {line!r} — ignoring")
         return False
 
-    # Issue a fresh 32-byte nonce for every attempt (prevents replay attacks)
+    # Issue challenge: fresh nonce + current UTC timestamp
     nonce = secrets.token_bytes(32)
+    ts    = int(time.time())
     try:
-        port.write(f"CHALLENGE:{nonce.hex()}\n".encode("ascii"))
+        port.write(f"CHALLENGE:{nonce.hex()}:{ts}\n".encode("ascii"))
         port.flush()
     except serial.SerialException:
         return False
@@ -158,24 +258,40 @@ def handle_connection(port: serial.Serial, key: bytes) -> bool:
 
     if not response_line.startswith("RESPONSE:"):
         log.warning(f"Expected RESPONSE, got: {response_line!r}")
+        _record_failure()
         return False
 
     client_mac = response_line[len("RESPONSE:"):]
-    expected_mac = hmac.new(key, nonce, hashlib.sha256).hexdigest()
 
-    # Constant-time compare — prevents timing side-channel attacks
-    if hmac.compare_digest(client_mac.lower(), expected_mac.lower()):
-        try:
-            port.write(b"AUTH_OK\n")
-            port.flush()
-        except serial.SerialException:
-            return False
-        log.info("Authentication PASSED")
-        return True
-    else:
-        log.warning("Authentication FAILED — wrong key, staying silent")
-        # No response sent — the port looks dead to the attacker
+    # Verify timestamp is still within window (replay protection)
+    now = time.time()
+    if abs(now - ts) > TIMESTAMP_WINDOW:
+        log.warning(f"Timestamp out of window ({abs(now - ts):.1f}s) — rejecting")
+        _record_failure()
         return False
+
+    # The signed payload: nonce bytes + ':' + timestamp string
+    signed_payload = nonce + b':' + str(ts).encode()
+
+    # Try each key (current first, previous as rotation fallback)
+    for key_idx, key in enumerate(keys):
+        expected_mac = hmac.new(key, signed_payload, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(client_mac.lower(), expected_mac.lower()):
+            try:
+                port.write(b"AUTH_OK\n")
+                port.flush()
+            except serial.SerialException:
+                return False
+            if key_idx > 0:
+                log.warning("Authenticated with PREVIOUS key — rotate key file soon")
+            else:
+                log.info("Authentication PASSED")
+            _reset_failures()
+            return True
+
+    log.warning("Authentication FAILED — wrong key, staying silent")
+    _record_failure()
+    return False
 
 
 # ── main loop ────────────────────────────────────────────────────────
@@ -184,12 +300,13 @@ def main():
     setup_relay()
 
     try:
-        key = load_key()
+        keys = load_keys()
     except Exception as e:
         log.critical(f"Cannot load key from {KEY_FILE}: {e}")
         sys.exit(1)
 
-    log.info(f"OBD2 Gatekeeper running on {AUTH_PORT} — port is LOCKED")
+    log.info(f"OBD2 Gatekeeper running on {AUTH_PORT} — {len(keys)} key(s) loaded")
+    log.info(f"Port is LOCKED — timestamp window: ±{TIMESTAMP_WINDOW}s, max session: {MAX_SESSION_SECS//3600}h")
 
     def _shutdown(sig, _frame):
         log.info("Shutdown signal — locking OBD2 port")
@@ -202,14 +319,22 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
 
     while True:
+        if _check_lockout():
+            time.sleep(5)
+            continue
         try:
             with serial.Serial(AUTH_PORT, BAUD, timeout=AUTH_TIMEOUT) as port:
-                authenticated = handle_connection(port, key)
+                authenticated = handle_connection(port, keys)
                 if authenticated:
                     set_relay(True)
                     run_proxy_session(port)
                     set_relay(False)
-                # Loop back — wait for the next connection attempt
+                    # Reload keys after each session to pick up rotation changes
+                    try:
+                        keys = load_keys()
+                        log.info(f"Keys reloaded: {len(keys)} key(s)")
+                    except Exception as e:
+                        log.error(f"Key reload failed: {e} — keeping previous keys")
         except serial.SerialException as e:
             log.error(f"Serial error on {AUTH_PORT}: {e} — retrying in 3s")
             time.sleep(3)

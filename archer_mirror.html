@@ -79,6 +79,10 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
 @keyframes warnflash{0%,100%{border-color:#cc0000}50%{border-color:transparent}}
 #app.warning{animation:warnflash 0.6s infinite}
 #app.warning{border:2px solid #cc0000}
+
+/* ── NIGHT MODE — dim + red shift for driving in the dark ── */
+body.night { filter: brightness(0.55) sepia(0.3) hue-rotate(330deg); }
+body.red   { filter: brightness(0.45) sepia(0.8) hue-rotate(310deg) saturate(1.5); }
 </style>
 </head>
 <body>
@@ -92,6 +96,8 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
       <div id="tb-clock-date">--- -- ----</div>
     </div>
     <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
+    <button id="mirror-mode-btn" onclick="mirrorCycleMode()" title="Day/Night/Red mode"
+      style="background:none;border:none;color:#444;font-size:11px;cursor:pointer;padding:2px 4px;font-family:'Share Tech Mono',monospace">🌙</button>
   </div>
 
   <!-- CENTER -->
@@ -348,6 +354,34 @@ function scaleToFit() {
 }
 window.addEventListener('resize', scaleToFit);
 scaleToFit();
+
+// ── MIRROR DAY/NIGHT/RED MODE ──────────────────────────────────
+(function() {
+  const CYCLE = {day: 'night', night: 'red', red: 'day'};
+  const ICONS = {day: '🌙', night: '🔴', red: '☀️'};
+  function _autoMode() {
+    const h = new Date().getHours();
+    if (h >= 7 && h < 17) return 'day';
+    if (h >= 17 && h < 21) return 'night';
+    return 'red';
+  }
+  function _applyMode(m) {
+    document.body.classList.remove('night','red');
+    if (m !== 'day') document.body.classList.add(m);
+    const btn = document.getElementById('mirror-mode-btn');
+    if (btn) btn.textContent = ICONS[m] || '🌙';
+  }
+  let _mode = localStorage.getItem('mirror_mode') || 'auto';
+  _applyMode(_mode === 'auto' ? _autoMode() : _mode);
+  setInterval(() => { if (_mode === 'auto') _applyMode(_autoMode()); }, 60000);
+  window.mirrorCycleMode = function() {
+    const cur = document.body.classList.contains('red') ? 'red'
+              : document.body.classList.contains('night') ? 'night' : 'day';
+    _mode = CYCLE[cur];
+    localStorage.setItem('mirror_mode', _mode);
+    _applyMode(_mode);
+  };
+})();
 </script>
 </body>
 </html>

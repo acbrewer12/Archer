@@ -8019,8 +8019,27 @@ def tier4_page():
 # ── TERMINAL ACCESS CONTROL ─────────────────────────────
 TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
 
+# Revoked session tokens: {token_str: expiry_unix_time}
+# Entries are pruned lazily on lookup to keep memory bounded.
+_revoked_tokens: dict = {}
+
+def _revoke_token(token: str):
+    """Mark a session token as revoked for 30 days."""
+    _revoked_tokens[token] = time.time() + 86400 * 30
+
+def _revoke_by_name(name: str, tier: int):
+    """Revoke the deterministic token for a given name+tier combination."""
+    import hashlib as _hl2
+    secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+    token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+    _revoke_token(token)
+
 def get_request_tier(request):
-    """Resolve the tier for any request using MAC auth cookie, fingerprint, or both."""
+    """Resolve the tier for any request using MAC auth cookie, fingerprint, or both.
+
+    Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
+    Checks revoked tokens so logout and MAC deregistration take effect immediately.
+    """
     import hashlib as _hl
     # 1. MAC auth cookie (primary system)
     cookie_val = request.cookies.get('archer_auth', '')
@@ -8032,12 +8051,38 @@ def get_request_tier(request):
                 cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
                 expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
                 if c_token == expected:
+                    # Prune expired revocations, then check
+                    now = time.time()
+                    for t in list(_revoked_tokens):
+                        if _revoked_tokens[t] < now:
+                            del _revoked_tokens[t]
+                    if c_token in _revoked_tokens:
+                        return 5  # treat revoked session as unauthenticated
                     return int(c_tier)
         except Exception:
             pass
     # 2. Fingerprint system (legacy / in-cabin devices)
     fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
+
+@display_app.route('/logout', methods=['POST'])
+def logout():
+    """Invalidate the current session cookie and redirect to the sign-in page.
+
+    The token is added to _revoked_tokens so it is rejected immediately even if
+    the client still holds the cookie (e.g. if the 30-day max_age hasn't elapsed).
+    Safe to call without a valid session — always returns 200.
+    """
+    from flask import request as _lr, make_response as _mk
+    cookie_val = _lr.cookies.get('archer_auth', '')
+    if cookie_val:
+        parts = cookie_val.split(':')
+        if len(parts) == 3:
+            _revoke_token(parts[2])    # revoke the token portion
+            log_security('LOGOUT', name=parts[1] if len(parts) > 1 else '?')
+    resp = _mk(jsonify({'ok': True}))
+    resp.delete_cookie('archer_auth')
+    return resp
 
 def terminal_access_check(request):
     tier = get_request_tier(request)
@@ -8346,6 +8391,7 @@ def export_trip():
     duration, peak RPM, peak boost, best 0-60, hard events, drive quality,
     road name, ethanol %, and weather snapshot.
     """
+    from flask import request as flask_request
     tier = get_request_tier(flask_request)
     if tier > 2:
         return jsonify({'error': 'Not authorized'}), 403
@@ -8798,14 +8844,22 @@ def register_mac():
 @_limiter.limit('5 per minute; 20 per hour')
 @csrf_required
 def deregister_mac():
-    """Remove a MAC from the whitelist (Tier 1 only)."""
+    """Remove a MAC from the whitelist (Tier 1 only).
+
+    Also revokes the session token for the removed device so their browser
+    session is invalidated immediately without waiting for cookie expiry.
+    """
     from flask import request as freq
     data = freq.json or {}
     mac  = data.get('mac', '').upper()
     whitelist = load_mac_whitelist()
     if mac in whitelist and whitelist[mac]['tier'] != 1:
+        entry = whitelist[mac]
         del whitelist[mac]
         save_mac_whitelist(whitelist)
+        # Revoke any active session cookie for this device
+        _revoke_by_name(entry['name'], entry['tier'])
+        log_security('MAC_DEREGISTERED', mac=mac, name=entry['name'], tier=entry['tier'])
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': 'Not found or protected'})
 
