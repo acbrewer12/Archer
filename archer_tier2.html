@@ -209,6 +209,54 @@ body{background:var(--bg);color:var(--text);font-family:'Quicksand',sans-serif;m
       <div class="hdr-badge" id="trip-badge">ON A TRIP</div>
       <button id="t2-mode-btn" onclick="t2ToggleMode()" title="Day/Night mode"
         style="background:none;border:1px solid var(--border2);border-radius:12px;padding:3px 8px;color:var(--pink2);font-size:12px;cursor:pointer;font-family:'Share Tech Mono',monospace">🌙</button>
+      <button onclick="t2ShowHelp()" title="Help"
+        style="background:none;border:1px solid var(--border2);border-radius:12px;padding:3px 8px;color:var(--pink2);font-size:12px;cursor:pointer;font-family:'Share Tech Mono',monospace">?</button>
+    </div>
+  </div>
+
+  <!-- HELP OVERLAY -->
+  <div id="t2-help-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(10,0,8,0.97);overflow-y:auto;padding:16px">
+    <div style="max-width:420px;margin:0 auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:16px;font-weight:700;color:var(--pink);font-family:'Share Tech Mono',monospace;letter-spacing:2px">PASSENGER GUIDE</div>
+        <button onclick="t2HideHelp()" style="background:none;border:1px solid var(--border2);border-radius:8px;padding:4px 12px;color:var(--text2);font-size:13px;cursor:pointer">✕ CLOSE</button>
+      </div>
+      <div style="font-size:10px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:12px">TIER 2 — PASSENGER ACCESS</div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--pink);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">TABS</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.8">
+          <b style="color:var(--pink2)">STATUS</b> — Live speed, RPM, temp, trip stats<br>
+          <b style="color:var(--pink2)">CLIMATE</b> — Fan, heat, A/C controls<br>
+          <b style="color:var(--pink2)">MUSIC</b> — Spotify playback + queue<br>
+          <b style="color:var(--pink2)">COMFORT</b> — Seat heat, ride modes<br>
+          <b style="color:var(--pink2)">NAV</b> — ETA and current route info<br>
+          <b style="color:var(--pink2)">ALERTS</b> — Engine warnings, notifications
+        </div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--pink);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">VOICE COMMANDS</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.8">
+          Type or use the mic at the bottom to talk to Archer.<br><br>
+          <b style="color:var(--pink2)">Music:</b> play, pause, next, skip, volume up/down<br>
+          <b style="color:var(--pink2)">Info:</b> how fast, what's the RPM, temperature<br>
+          <b style="color:var(--pink2)">Trip:</b> how far, trip time, fuel used<br>
+          <b style="color:var(--pink2)">Help:</b> "what can you do"
+        </div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--pink);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">TIPS</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.8">
+          • Tap ☀️/🌙 in the header to toggle day/night mode<br>
+          • Music controls work even without Spotify connected<br>
+          • Alerts tab shows live engine warnings — tap to dismiss<br>
+          • Status auto-refreshes every 3 seconds
+        </div>
+      </div>
+
+      <div style="text-align:center;font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace;letter-spacing:1px;margin-top:16px">ARCHER AI — 2006 GMC SIERRA 2500HD</div>
     </div>
   </div>
 
@@ -1057,6 +1105,10 @@ function tts2(text) {
   u.rate = 1.0; u.pitch = 1.1;
   speechSynthesis.speak(u);
 }
+
+// ── HELP OVERLAY ─────────────────────────────────────────────
+function t2ShowHelp() { document.getElementById('t2-help-overlay').style.display = 'block'; }
+function t2HideHelp() { document.getElementById('t2-help-overlay').style.display = 'none'; }
 
 // ── DAY/NIGHT MODE ───────────────────────────────────────────
 (function() {
