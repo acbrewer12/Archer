@@ -594,7 +594,7 @@
     }
   },
   "vehicle_config": {
-    "make": "GMC",
-    "model": "Sierra 2500HD"
+    "make": null,
+    "model": null
   }
 }
