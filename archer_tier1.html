@@ -80,15 +80,17 @@ body.day{background:#0d0d0d}
 
 /* ─── HEADER ─── */
 .hdr{
-  background:var(--bg2);
-  border-bottom:1px solid #1e0000;
-  box-shadow:0 1px 0 rgba(255,0,0,0.15), 0 2px 12px rgba(255,0,0,0.08);
-  padding:8px 12px;
+  background:linear-gradient(180deg,var(--bg3) 0%,var(--bg2) 100%);
+  border-bottom:1px solid rgba(255,0,0,0.18);
+  box-shadow:0 1px 0 rgba(255,0,0,0.12), 0 3px 16px rgba(0,0,0,0.6);
+  padding:6px 12px;
   display:flex;
   align-items:center;
   justify-content:space-between;
 }
-.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--red);text-shadow:var(--glow-red)}
+.hdr-left{display:flex;flex-direction:column;justify-content:center}
+.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--red);text-shadow:var(--glow-red);line-height:1}
+.hdr-vehicle{font-family:'Share Tech Mono',monospace;font-size:7px;color:#555;letter-spacing:3px;margin-top:1px;transition:color 0.3s}
 .hdr-right{display:flex;gap:8px;align-items:center}
 .hdr-badge{background:var(--bg3);border:1px solid var(--border2);padding:2px 8px;border-radius:3px;font-size:9px;color:var(--red);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 .day-toggle{background:none;border:1px solid var(--border2);border-radius:3px;padding:3px 8px;font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace;cursor:pointer;letter-spacing:1px;transition:all 0.2s}
@@ -120,8 +122,8 @@ body.day{background:#0d0d0d}
 .tabs::-webkit-scrollbar{display:none}
 .tab{
   flex-shrink:0;
-  padding:8px 13px;
-  font-size:9px;
+  padding:9px 14px;
+  font-size:10px;
   letter-spacing:2px;
   color:var(--label);
   cursor:pointer;
@@ -153,15 +155,19 @@ body.day{background:#0d0d0d}
 /* ═══════════════════════════════════════
    SCREEN: DRIVE (safety-focused, glanceable)
 ═══════════════════════════════════════ */
+/* Speedometer arc ring */
+.speed-arc-wrap{position:relative;text-align:center;padding-top:4px}
+.speed-arc-svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);width:220px;height:220px;pointer-events:none;opacity:0.55}
 .drive-speed{
   font-family:'Bebas Neue',sans-serif;
   font-size:110px;
   text-align:center;
   line-height:1;
   color:var(--text);
-  padding:10px 0 0;
+  padding:20px 0 0;
   letter-spacing:-4px;
   text-shadow:0 0 40px rgba(255,255,255,0.12), 0 0 80px rgba(255,255,255,0.04);
+  position:relative;z-index:1;
 }
 .drive-speed-unit{font-size:10px;color:var(--label);letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
 .drive-rpm-row{display:flex;align-items:center;gap:8px;padding:0 6px;margin-bottom:4px}
@@ -181,7 +187,7 @@ body.day{background:#0d0d0d}
 @keyframes boost-pulse{0%,100%{box-shadow:0 0 16px rgba(255,102,0,0.4)}50%{box-shadow:0 0 36px rgba(255,102,0,0.9),0 0 60px rgba(255,102,0,0.3)}}
 .drive-boost-fill.boosting{animation:boost-pulse 0.7s ease-in-out infinite}
 .drive-stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px;padding:0 6px;margin-bottom:4px}
-.drive-stat{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--border2);border-radius:5px;padding:8px 4px;text-align:center;transition:border-top-color 0.3s}
+.drive-stat{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--border2);border-radius:5px;padding:8px 4px;text-align:center;transition:border-top-color 0.5s,background 0.3s}
 .drive-stat-val{font-family:'Share Tech Mono',monospace;font-size:15px;font-weight:bold;line-height:1}
 .drive-stat-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:3px}
 .drive-msg{background:#080000;border:1px solid #1e0000;border-left:2px solid var(--red);border-radius:5px;padding:8px 10px;margin:0 6px 4px;display:flex;align-items:center;gap:8px;box-shadow:inset 0 0 20px rgba(255,0,0,0.04)}
@@ -678,7 +684,10 @@ body.day{background:#0d0d0d}
 
   <!-- HEADER -->
   <div class="hdr">
-    <div class="hdr-title">ARCHER</div>
+    <div class="hdr-left">
+      <div class="hdr-title">ARCHER</div>
+      <div class="hdr-vehicle" id="hdr-vehicle-name">SIERRA / SILVERADO 2500HD</div>
+    </div>
     <div class="hdr-right">
       <span class="auto-badge" id="auto-badge">AUTO</span>
       <span class="auto-badge" id="beamng-badge" style="display:none;color:#00e5ff;border-color:#00e5ff">BEAMNG</span>
@@ -690,6 +699,11 @@ body.day{background:#0d0d0d}
       </div>
       <div class="hdr-badge">T1 v36</div>
     </div>
+  </div>
+
+  <!-- PI OFFLINE BANNER — shown when Flask server is unreachable -->
+  <div id="pi-offline-banner" style="display:none;background:#050505;border-top:2px solid #cc0000;border-bottom:2px solid #cc0000;padding:6px 12px;font-family:'Share Tech Mono',monospace;font-size:10px;color:#ff4400;letter-spacing:2px;text-align:center;animation:blink 1.5s ease-in-out infinite">
+    ⚠ ARCHER OFFLINE — PI UNREACHABLE — LAST KNOWN STATE
   </div>
 
   <!-- SPEED LOCK BANNER -->
@@ -763,9 +777,18 @@ body.day{background:#0d0d0d}
 
     <!-- ══════════ DRIVE (safety) ══════════ -->
     <div class="screen active" id="screen-drive" style="justify-content:space-between;gap:0;padding-bottom:6px">
-      <div style="text-align:center;padding-top:4px">
-        <div class="drive-speed" id="dr-speed" style="padding-top:0">0</div>
-        <div class="drive-speed-unit">MPH</div>
+      <div class="speed-arc-wrap">
+        <!-- Speedometer arc ring — 270° gauge, filled by JS via stroke-dasharray -->
+        <svg class="speed-arc-svg" viewBox="0 0 100 100" aria-hidden="true">
+          <!-- Track -->
+          <circle cx="50" cy="50" r="42" fill="none" stroke="#1a1a1a" stroke-width="4"
+                  stroke-dasharray="198 66" stroke-dashoffset="231" stroke-linecap="round"/>
+          <!-- Fill (speed-driven) — butt linecap avoids phantom dot at 0 mph -->
+          <circle id="speed-arc-el" cx="50" cy="50" r="42" fill="none" stroke="#cc0000" stroke-width="4"
+                  stroke-dasharray="0 264" stroke-dashoffset="231" stroke-linecap="butt"/>
+        </svg>
+        <div class="drive-speed" id="dr-speed">0</div>
+        <div class="drive-speed-unit" style="position:relative;z-index:1">MPH</div>
       </div>
 
       <div class="drive-rpm-row">
@@ -819,11 +842,11 @@ body.day{background:#0d0d0d}
       </div>
 
       <div class="drive-stats">
-        <div class="drive-stat">
+        <div class="drive-stat" id="dr-stat-oil">
           <div class="drive-stat-val" style="color:var(--yellow)" id="dr-oil">205°</div>
           <div class="drive-stat-lbl">OIL</div>
         </div>
-        <div class="drive-stat">
+        <div class="drive-stat" id="dr-stat-bat">
           <div class="drive-stat-val" style="color:var(--green)" id="dr-bat">14.2V</div>
           <div class="drive-stat-lbl">BATT</div>
         </div>
@@ -2285,11 +2308,24 @@ let octaneDisplay  = 87;      // set by pollLive from d.octane
 let dragStaged    = false;
 let dragRunStart  = null;
 let lastDragStage = 'idle';
+let _pollFails    = 0;
 
 async function pollLive() {
   try {
     const r = await fetch('/display_data');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
+    // Pi is reachable — clear offline banner
+    if (_pollFails >= 4) {
+      const pob = document.getElementById('pi-offline-banner');
+      if (pob) pob.style.display = 'none';
+    }
+    _pollFails = 0;
+    // Vehicle name in header
+    if (d.vehicle_name) {
+      const vn = document.getElementById('hdr-vehicle-name');
+      if (vn) vn.textContent = d.vehicle_name.toUpperCase();
+    }
     if (d.rpm      != null) targetData.rpm      = d.rpm;
     if (d.speed    != null) targetData.speed    = d.speed;
     if (d.boost    != null) targetData.boost    = d.boost;
@@ -2627,7 +2663,14 @@ async function pollLive() {
     if (d.gforce_now   != null) set('lv-glong', d.gforce_now.toFixed(2) + 'g');
     if (d.gforce_peak  != null) set('lv-gpeak', Math.abs(d.gforce_peak).toFixed(2) + 'g');
     if (d.speed        != null) set('lv-gmph',  Math.round(d.speed));
-  } catch(e) {}
+  } catch(e) {
+    // Pi unreachable — show offline banner after 4 consecutive failures (4s)
+    _pollFails++;
+    if (_pollFails >= 4) {
+      const pob = document.getElementById('pi-offline-banner');
+      if (pob) pob.style.display = 'block';
+    }
+  }
 }
 
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -2655,6 +2698,14 @@ function update() {
 
   // DRIVE tab
   set('dr-speed', Math.round(liveData.speed));
+  // Speedometer arc — 270° gauge: circumference ≈264, arc track=198, gap=66
+  const _arcEl = document.getElementById('speed-arc-el');
+  if (_arcEl) {
+    const _spd = Math.min(120, Math.max(0, liveData.speed));
+    const _fill = (_spd / 120) * 198;
+    _arcEl.style.strokeDasharray = _fill + ' ' + (264 - _fill);
+    _arcEl.style.stroke = _spd > 90 ? 'var(--red)' : _spd > 60 ? 'var(--orange)' : _spd > 30 ? 'var(--yellow)' : '#663300';
+  }
   setStyle('dr-rpm', r, 'color', rColor);
   setWidth('dr-rpm-bar', rPct);
   set('dr-gear', liveData.gear);
@@ -2677,6 +2728,13 @@ function update() {
   // DRIVE stats row
   set('dr-oil', Math.round(liveData.oilTemp) + '°');
   set('dr-bat', liveData.battery.toFixed(1) + 'V');
+  // Color-coded top borders on DRIVE stat cards (status indicators)
+  const _oilT = Math.round(liveData.oilTemp);
+  const _batV = liveData.battery;
+  const _statOil = document.getElementById('dr-stat-oil');
+  const _statBat = document.getElementById('dr-stat-bat');
+  if (_statOil) _statOil.style.borderTopColor = _oilT > 225 ? 'var(--red)' : _oilT > 210 ? 'var(--yellow)' : '#1a3300';
+  if (_statBat) _statBat.style.borderTopColor = _batV < 11.5 ? 'var(--red)' : _batV < 13.0 ? 'var(--yellow)' : '#003318';
 
   // DASH tab
   setStyle('da-speed', Math.round(liveData.speed), 'color', 'var(--text)');

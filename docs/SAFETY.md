@@ -67,6 +67,20 @@ Run this before the first drive after any hardware change or Archer update.
 
 ---
 
+## Pi Offline / Failsafe
+
+**The truck is fully operable without Archer.** Archer is read-only — it never writes to the ECU or controls any safety system.
+
+If the Pi crashes mid-drive:
+1. The OBD adapter stays plugged in but idle — no engine or drivetrain effect.
+2. Phone UI shows **"ARCHER OFFLINE — PI UNREACHABLE"** after 4 s of failed polls.
+3. Last known telemetry is displayed (frozen). Voice commands stop.
+4. OLED display goes blank after 5 s of stale data.
+
+**Recovery:** Power cycle the Pi via the cab fuse switch. The `archer` systemd service is configured with `Restart=on-failure` and comes back up in ~15 s.
+
+---
+
 ## Emergency Procedures
 
 | Situation | Action |

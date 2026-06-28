@@ -18,6 +18,71 @@ Archer is a custom truck AI and dashboard system. It runs on a Raspberry Pi in t
 
 ---
 
+## Screenshots
+
+| Drive (Tier 1) | Health (Tier 1) |
+|:-:|:-:|
+| ![Drive screen](docs/screenshots/tier1-drive.png) | ![Health screen](docs/screenshots/tier1-health.png) |
+
+*Tier 1 (owner) cockpit — 480px phone portrait. Speedometer arc fills as speed increases. HEALTH tab shows live OBD-II telemetry with color-coded status dots.*
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    Phone["📱 Android Phone\nTier 1–4 Web UI\n(archer_tier1–4.html)"]
+    Pi["🖥️ Raspberry Pi\nArcher OS — archer.py\nFlask on :7860"]
+    OBD["🔌 OBDLink MX+\nBluetooth OBD-II"]
+    Truck["🚛 Sierra / Silverado 2500HD\nGM Class 2 / CAN bus"]
+    OLED["📟 OLED Display\nSSD1306 I2C\nSpeed · RPM · Coolant"]
+    Relay["⚡ OBD Gatekeeper Relay\nGPIO-controlled\n3-sec override button"]
+    BeamNG["🎮 BeamNG.drive\nSimulator (PC)\nUDP :4444"]
+    Cloud["☁️ HuggingFace Space\nRemote fallback\nDocker on :7860"]
+
+    Phone  -- "HTTP/AJAX\nWi-Fi or hotspot" --> Pi
+    Pi     -- "Bluetooth SPP\n/dev/rfcomm0"  --> OBD
+    OBD    -- "OBD-II port\nGM Class 2"      --> Truck
+    Pi     -- "I2C (GPIO 2/3)"               --> OLED
+    Pi     -- "GPIO 5 / relay"               --> Relay
+    Relay  -- "Normally-open contact"        --> OBD
+    BeamNG -- "UDP telemetry"                --> Pi
+    Pi     -. "sync on push" .->             Cloud
+    Phone  -. "fallback when\nPi offline"   .-> Cloud
+
+    style Phone  fill:#1a1a2e,stroke:#4444cc,color:#fff
+    style Pi     fill:#1a0000,stroke:#cc0000,color:#fff
+    style Truck  fill:#0a0a0a,stroke:#555,color:#ccc
+    style OBD    fill:#001a00,stroke:#009900,color:#ccc
+    style OLED   fill:#000a1a,stroke:#0055aa,color:#ccc
+    style Relay  fill:#1a0a00,stroke:#cc6600,color:#ccc
+    style BeamNG fill:#0a001a,stroke:#7700cc,color:#ccc
+    style Cloud  fill:#001a1a,stroke:#007777,color:#ccc
+```
+
+**Data flow at a glance:**
+- The Pi polls the truck's OBD-II port via OBDLink MX+ every 200 ms and streams telemetry to the phone's browser over the local hotspot.
+- The OBD gatekeeper relay sits between the Pi and OBD adapter — the Pi can cut the OBD connection on auth failure; a GPIO override button (hold 3 s) bypasses auth in an emergency.
+- BeamNG.drive can inject sensor data over UDP for bench testing without the truck running.
+- The HuggingFace Space is a Docker mirror of `archer.py` that the phone falls back to when the Pi is unreachable (read-only, no relay control).
+
+---
+
+## Offline / Failsafe
+
+The truck operates **completely normally** without Archer. Archer only reads from and displays OBD data — it never writes to the ECU or controls any safety systems.
+
+| Pi state | What happens |
+|----------|-------------|
+| Pi powered off / crashed | Truck runs normally. OBD port is unaffected. Phone shows "ARCHER OFFLINE — PI UNREACHABLE" after 4 seconds. |
+| OBD adapter pulled while moving | No effect on engine or brakes. Archer loses telemetry and shows last known values. |
+| Flask server crashed (Pi still on) | Restart via `sudo systemctl restart archer`. OLED goes blank after 5 s stale data. |
+| Relay stuck open (gatekeeper failure) | Remove the OBD adapter from the port — relay failure has zero effect on the vehicle. |
+| Phone app closed while driving | Truck continues normally. No autonomous actions are ever taken. |
+
+---
+
 ## Features
 
 | Feature | Details |
