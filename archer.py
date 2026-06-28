@@ -1715,6 +1715,14 @@ def get_display_data():
                           for k, v in module_states.items()},
         # Active fault codes (full descriptions)
         'active_faults': list(active_faults),
+        # Extended ECU PIDs (Mode 01)
+        'maf':          truck_state.get('maf'),
+        'timing':       truck_state.get('timing'),
+        'engine_load':  truck_state.get('engine_load'),
+        'stft_b1':      truck_state.get('stft_b1'),
+        'ltft_b1':      truck_state.get('ltft_b1'),
+        'stft_b2':      truck_state.get('stft_b2'),
+        'ltft_b2':      truck_state.get('ltft_b2'),
         # OBD mode: BEAMNG / EMULATED / REAL_OBD / DISCONNECTED
         'obd_mode': 'BEAMNG' if beamng_state.get('connected') else ('EMULATED' if USE_EMULATOR else 'REAL_OBD') if truck_state['rpm'] > 0 else 'DISCONNECTED',
         # Vehicle identity — null until truck is purchased
