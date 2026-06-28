@@ -91,8 +91,8 @@
   "bluetooth_devices": {},
   "trip_log": [
     {
-      "date": "June 27 2026",
-      "time": "07:56 AM",
+      "date": "June 28 2026",
+      "time": "12:49 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -104,8 +104,8 @@
       "weather": "70F clear"
     },
     {
-      "date": "June 27 2026",
-      "time": "07:56 AM",
+      "date": "June 28 2026",
+      "time": "12:49 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,38 +121,38 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     },
     "test-fp-pass": {
       "name": "Passenger",
       "tier": 2,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     },
     "test-fp-name": {
       "name": "Alice",
       "tier": 3,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     },
     "known-fp-99": {
       "name": "Me",
       "tier": 2,
-      "registered_at": "June 27 2026 07:56 AM"
+      "registered_at": "June 28 2026 12:49 PM"
     }
   },
   "build_tracker": {
     "parts": [
       {
-        "id": "7f2961a0",
+        "id": "75e3c588",
         "name": "Cold Air Intake",
         "part_number": "",
         "category": "intake",
@@ -161,11 +161,11 @@
         "description": "",
         "status": "ordered",
         "cost": 299.99,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       },
       {
-        "id": "279eefee",
+        "id": "c94d20df",
         "name": "Test Part",
         "part_number": "",
         "category": "other",
@@ -174,11 +174,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       },
       {
-        "id": "ebbfc7b3",
+        "id": "01af61a8",
         "name": "Headers",
         "part_number": "",
         "category": "other",
@@ -187,11 +187,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       },
       {
-        "id": "c4b2534f",
+        "id": "19cfdbdf",
         "name": "UpdateMe",
         "part_number": "",
         "category": "other",
@@ -200,11 +200,11 @@
         "description": "",
         "status": "installed",
         "cost": 0.0,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       },
       {
-        "id": "b1591b63",
+        "id": "07ec776c",
         "name": "Dummy",
         "part_number": "",
         "category": "other",
@@ -213,11 +213,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       },
       {
-        "id": "3adba367",
+        "id": "3e444338",
         "name": "Tune",
         "part_number": "",
         "category": "other",
@@ -226,7 +226,7 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 27 2026",
+        "date_added": "June 28 2026",
         "notes": ""
       }
     ],
@@ -243,7 +243,7 @@
     "intake": "Stock Truck Manifold",
     "throttle_body_size": "Stock 78mm",
     "fuel_injectors": "Stock 28 lb/hr",
-    "transmission": "4L60E",
+    "transmission": "4L80E",
     "rear_gear": "3.73",
     "tune": "Stock ECM",
     "cold_air_intake": true,

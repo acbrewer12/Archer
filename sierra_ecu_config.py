@@ -33,7 +33,7 @@ class SierraECU:
     Use set_mode() to jump to a named operating scenario.
     """
 
-    VIN = "1GTHK23U060000000"
+    VIN = "1GTHK23U06F000000"
 
     def __init__(self):
         self._lock = threading.Lock()

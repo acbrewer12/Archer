@@ -2133,7 +2133,7 @@ build_specs = {
     'intake':             'Stock Truck Manifold',
     'throttle_body_size': 'Stock 78mm',
     'fuel_injectors':     'Stock 28 lb/hr',
-    'transmission':       '4L60E',
+    'transmission':       '4L80E',
     'rear_gear':          '3.73',
     'tune':               'Stock ECM',
     # Mod toggles
@@ -2561,6 +2561,26 @@ DTC_DATABASE = {
     'U1255': ('Class 2 Communication Malfunction — Usually Bad Ground or Failing Module', 'high'),
     'U1300': ('Class 2 Short to Ground', 'high'),
     'U1301': ('Class 2 Short to Battery', 'high'),
+    # ── Additional U1xxx GM Class 2 (Sierra/Silverado specific) ────────
+    'U1024': ('Lost Communication With TCM', 'high'),
+    'U1088': ('Lost Communication With SDM (Sensing & Diagnostic Module / Airbag)', 'high'),
+    'U1097': ('Lost Communication With DIC (Driver Information Center)', 'medium'),
+    'U1152': ('Lost Communication With HVAC Control Module', 'medium'),
+    # ── B2xxx Body / Comfort (SLT heated seats) ─────────────────────────
+    'B2425': ('Driver Seat Heater Circuit Malfunction', 'low'),
+    'B2430': ('Passenger Seat Heater Circuit Malfunction', 'low'),
+    # ── C0xxx Chassis / ABS / EBCM (additional) ─────────────────────────
+    'C0244': ('PWM Delivered Torque Circuit Malfunction', 'medium'),
+    'C0245': ('Wheel Speed Sensor Frequency Error', 'medium'),
+    'C0279': ('Powertrain Configuration Not Valid', 'high'),
+    'C0286': ('ABS Indicator Lamp Circuit Shorted to Battery+', 'medium'),
+    'C0287': ('Delivered Torque Circuit Malfunction', 'medium'),
+    'C0288': ('Brake Warning Lamp Circuit Shorted to Battery+', 'medium'),
+    'C0290': ('Lost Communication With PCM (from EBCM)', 'high'),
+    'C0291': ('Lost Communication With BCM (from EBCM)', 'high'),
+    'C0297': ('Powertrain Configuration Signal Not Received', 'high'),
+    'C0298': ('Powertrain Indicated Traction Control Malfunction', 'high'),
+    'C0550': ('EBCM ECU Performance Malfunction', 'high'),
 }
 
 def lookup_dtc(code):
@@ -4018,8 +4038,8 @@ def predict_et():
     eth    = truck_state['ethanol']
     boost  = truck_state['boost']
 
-    # Base ET for LSA-swapped Sierra (~12.8 stock tune)
-    base_et = 12.8
+    # Phase 1 (stock 6.0L LQ4): ~15.5s    Phase 2+ (LSA swap): ~12.8s
+    base_et = 15.5 if get_build_phase() == 1 else 12.8
 
     # Temperature correction — colder is faster
     temp_factor = (temp - 60) * 0.007
@@ -6416,7 +6436,7 @@ canvas.graph { width:100%; border-radius:2px; }
       </div>
       <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
         <div style="font-size:7px;color:#555;letter-spacing:2px">E85</div>
-        <div id="dd-eth" style="font-size:18px;font-weight:bold;color:#00aaff;font-family:monospace">82%</div>
+        <div id="dd-eth" style="font-size:18px;font-weight:bold;color:#00aaff;font-family:monospace">0%</div>
       </div>
       <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:5px;padding:6px 4px;text-align:center">
         <div style="font-size:7px;color:#555;letter-spacing:2px">MODE</div>
@@ -6461,8 +6481,8 @@ canvas.graph { width:100%; border-radius:2px; }
       <div style="background:#111;border-radius:2px;height:7px;overflow:hidden"><div id="p-boost-bar" style="height:100%;border-radius:2px;background:#ff6600;width:0%;transition:width 0.3s"></div></div>
     </div>
     <div style="padding:0 4px">
-      <div style="display:flex;justify-content:space-between;font-size:8px;color:#555;margin-bottom:2px"><span>E85</span><span id="p-eth-val">82%</span></div>
-      <div style="background:#111;border-radius:2px;height:7px;overflow:hidden"><div id="p-eth-bar" style="height:100%;border-radius:2px;background:#00aaff;width:82%;transition:width 0.3s"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:#555;margin-bottom:2px"><span>E85</span><span id="p-eth-val">0%</span></div>
+      <div style="background:#111;border-radius:2px;height:7px;overflow:hidden"><div id="p-eth-bar" style="height:100%;border-radius:2px;background:#00aaff;width:0%;transition:width 0.3s"></div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px">
       <div class="data-box" style="text-align:center"><div class="data-label">OIL</div><div class="data-value" id="p-oil" style="font-size:16px">195F</div></div>
@@ -6536,7 +6556,7 @@ canvas.graph { width:100%; border-radius:2px; }
         </div>
         <div style="background:#000;padding:8px 6px;text-align:center">
           <div style="font-size:7px;color:#444;letter-spacing:1px">E85</div>
-          <div style="font-size:16px;font-weight:bold;color:#00aaff" id="vc-eth">82%</div>
+          <div style="font-size:16px;font-weight:bold;color:#00aaff" id="vc-eth">0%</div>
         </div>
       </div>
 
@@ -6669,7 +6689,7 @@ canvas.graph { width:100%; border-radius:2px; }
     <div class="show-data">
       <span id="show-rpm">750 RPM</span>
       <span id="show-oil">195F</span>
-      <span id="show-eth">E82%</span>
+      <span id="show-eth">E0%</span>
     </div>
   </div>
 
@@ -6679,7 +6699,7 @@ canvas.graph { width:100%; border-radius:2px; }
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px">
       <div class="data-box" style="text-align:center">
         <div class="data-label">TOTAL SPENT</div>
-        <div class="data-value good" id="b-spent" style="font-size:16px">/bin/sh</div>
+        <div class="data-value good" id="b-spent" style="font-size:16px">$0</div>
       </div>
       <div class="data-box" style="text-align:center">
         <div class="data-label">PARTS TRACKED</div>
@@ -10851,17 +10871,18 @@ def obd_autodetect():
                 return round(b[0] * 100 / 255) if b else None
             def _parse_map(b):
                 return round((b[0] - 101.325) * 0.145038, 1) if b else None
-            def _parse_oil_gm(b):
+            def _parse_oil_temp(b):
+                # Mode 01 PID 5C: A - 40 = °C, convert to °F
                 return round((b[0] - 40) * 9 / 5 + 32) if b else None
 
             # PID table: (cmd, name, lo, hi, truck_state_key, sensor_data_key, parser, extra_bytes)
             PID_TABLE = [
-                ('010C', 'RPM',       0,    8000, 'rpm',          None,           _parse_rpm,      None),
-                ('010D', 'speed',     0,    200,  'speed',        None,           _parse_speed,    None),
-                ('0105', 'coolant',   -40,  300,  'coolant_temp', 'coolant_temp', _parse_coolant,  None),
-                ('0111', 'throttle',  0,    100,  'throttle',     None,           _parse_throttle, None),
-                ('010B', 'boost',     -15,  30,   'boost',        None,           _parse_map,      None),
-                ('2201318','oil_gm',  -40,  350,  'oil_temp',     'oil_temp',     _parse_oil_gm,   None),
+                ('010C', 'RPM',      0,    8000, 'rpm',          None,           _parse_rpm,      None),
+                ('010D', 'speed',    0,    200,  'speed',        None,           _parse_speed,    None),
+                ('0105', 'coolant',  -40,  300,  'coolant_temp', 'coolant_temp', _parse_coolant,  None),
+                ('0111', 'throttle', 0,    100,  'throttle',     None,           _parse_throttle, None),
+                ('010B', 'boost',    -15,  30,   'boost',        None,           _parse_map,      None),
+                ('015C', 'oil_temp', -40,  350,  'oil_temp',     'oil_temp',     _parse_oil_temp, None),
             ]
 
             # Adaptive timing state per PID
@@ -11011,6 +11032,18 @@ def main():
         archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
 
     load_state()
+
+    # Export DTC database to JSON so external tools can reference it
+    try:
+        with open('dtc_codes.json', 'w') as _dtc_f:
+            json.dump(
+                [{'code': k, 'description': v[0], 'severity': v[1]}
+                 for k, v in sorted(DTC_DATABASE.items())],
+                _dtc_f, indent=2
+            )
+    except OSError:
+        pass
+
     time.sleep(0.5)
     greeting = get_daily_greeting()
     print(f"[ARCHER] {greeting}")
