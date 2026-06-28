@@ -1029,7 +1029,7 @@ body.day{background:#0d0d0d}
       <div class="health-item" id="hl-intercooler-row" style="display:none"><span class="health-name" style="color:var(--red)">INTERCOOLER</span><span class="health-val hok" id="hl-intercooler-val">OK ✓</span><span class="hdot dok" id="hl-intercooler-dot"></span></div>
 
       <!-- OBD / Gatekeeper section -->
-      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">OBD2 SYSTEM</div>
+      <div class="section-title" style="margin-top:8px">OBD2 SYSTEM</div>
       <div class="health-item">
         <span class="health-name">OBD MODE</span>
         <span class="health-val" id="hl-obd-mode" style="color:var(--green)">EMULATED</span>
@@ -1050,11 +1050,11 @@ body.day{background:#0d0d0d}
       </div>
 
       <!-- Module grid -->
-      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">MODULE STATUS</div>
+      <div class="section-title" style="margin-top:8px">MODULE STATUS</div>
       <div id="hl-module-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px"></div>
 
       <!-- BeamNG indicator -->
-      <div style="font-size:9px;color:var(--label);letter-spacing:3px;margin:8px 0 4px;padding-top:6px;border-top:1px solid var(--border)">SIMULATION</div>
+      <div class="section-title" style="margin-top:8px">BEAMNG SIM</div>
       <div class="health-item">
         <span class="health-name">BEAMNG</span>
         <span class="health-val" id="hl-beamng-state" style="color:#555">OFFLINE</span>
@@ -2470,11 +2470,11 @@ async function pollLive() {
       const obdEl = document.getElementById('hl-obd-mode');
       const obdDot = document.getElementById('hl-obd-dot');
       if (obdEl) {
-        const colors = { EMULATED: 'var(--yellow)', REAL_OBD: 'var(--green)', DISCONNECTED: '#555' };
+        const colors = { EMULATED: 'var(--yellow)', REAL_OBD: 'var(--green)', BEAMNG: '#00e5ff', DISCONNECTED: '#555' };
         obdEl.textContent = d.obd_mode;
         obdEl.style.color = colors[d.obd_mode] || '#555';
       }
-      if (obdDot) obdDot.className = 'hdot ' + (d.obd_mode === 'REAL_OBD' ? 'dok' : d.obd_mode === 'EMULATED' ? 'dwarn' : 'dbad');
+      if (obdDot) obdDot.className = 'hdot ' + (d.obd_mode === 'REAL_OBD' || d.obd_mode === 'BEAMNG' ? 'dok' : d.obd_mode === 'EMULATED' ? 'dwarn' : 'dbad');
     }
 
     // ── HEALTH tab — GATEKEEPER ──────────────────────────────

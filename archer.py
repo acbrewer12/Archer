@@ -1715,8 +1715,8 @@ def get_display_data():
                           for k, v in module_states.items()},
         # Active fault codes (full descriptions)
         'active_faults': list(active_faults),
-        # OBD mode: EMULATED / REAL_OBD / DISCONNECTED
-        'obd_mode': ('EMULATED' if USE_EMULATOR else 'REAL_OBD') if truck_state['rpm'] > 0 else 'DISCONNECTED',
+        # OBD mode: BEAMNG / EMULATED / REAL_OBD / DISCONNECTED
+        'obd_mode': 'BEAMNG' if beamng_state.get('connected') else ('EMULATED' if USE_EMULATOR else 'REAL_OBD') if truck_state['rpm'] > 0 else 'DISCONNECTED',
         # Vehicle identity — null until truck is purchased
         'vehicle_make':  vehicle_config.get('make'),
         'vehicle_model': vehicle_config.get('model'),
