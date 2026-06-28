@@ -18,6 +18,12 @@ Archer is a custom truck AI and dashboard system. It runs on a Raspberry Pi in t
 
 ---
 
+## Demo
+
+![Archer cockpit demo](docs/screenshots/demo.gif)
+
+*Boot → DRIVE cockpit (speedometer arc, RPM bar, boost gauge) → HEALTH tab (OBD-II telemetry) → LIVE sensors → PERF screen.*
+
 ## Screenshots
 
 | Drive (Tier 1) | Health (Tier 1) |
@@ -266,6 +272,14 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 | `ModuleNotFoundError: archer_state` | Ensure `archer_state.py` is present; `sync-to-hf.yml` copies it now |
 | `No module named 'obd'` | `pip install obd` or set `USE_EMULATOR=true` |
 | `CSRF validation failed` | Front-end must call `/csrf_token` first and pass `X-CSRF-Token` header |
+
+---
+
+## API
+
+> **Full API reference → [docs/API.md](docs/API.md)**
+>
+> Documents every Flask endpoint: auth tiers, request/response shapes, rate limits, and how to extend Archer.
 
 ---
 

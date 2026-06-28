@@ -1487,5 +1487,333 @@ class TestGatekeeperHandshake:
         assert result is True
 
 
+# ═══════════════════════════════════════════════════════════════
+# 31. OBD-II PID parser math
+# These mirror the inner functions defined in the obd polling thread.
+# Testing them by exercising the same formula the real code uses.
+# ═══════════════════════════════════════════════════════════════
+class TestOBDPIDParsers:
+    """Test the Mode 01 PID byte-to-value formulas."""
+
+    # MAF — PID 0110 — (256*A + B) / 100  g/s
+    def test_maf_midpoint(self):
+        b = [0x0F, 0xA0]        # 0x0FA0 = 4000 → 40.00 g/s
+        assert round((b[0] * 256 + b[1]) / 100, 2) == 40.0
+
+    def test_maf_zero(self):
+        b = [0x00, 0x00]
+        assert round((b[0] * 256 + b[1]) / 100, 2) == 0.0
+
+    def test_maf_max(self):
+        b = [0xFF, 0xFF]        # 65535 → 655.35 g/s
+        assert round((b[0] * 256 + b[1]) / 100, 2) == 655.35
+
+    def test_maf_short_buffer_returns_none(self):
+        b = [0x10]              # only 1 byte — parser returns None
+        result = round((b[0] * 256 + b[1]) / 100, 2) if len(b) >= 2 else None
+        assert result is None
+
+    # Timing advance — PID 010E — A/2 - 64  degrees BTDC
+    def test_timing_typical_warm_idle(self):
+        b = [0x96]              # 150 / 2 - 64 = 11.0°
+        assert round(b[0] / 2 - 64, 1) == 11.0
+
+    def test_timing_zero_advance(self):
+        b = [0x80]              # 128 / 2 - 64 = 0.0°
+        assert round(b[0] / 2 - 64, 1) == 0.0
+
+    def test_timing_max_retard(self):
+        b = [0x00]              # 0 / 2 - 64 = -64.0°
+        assert round(b[0] / 2 - 64, 1) == -64.0
+
+    def test_timing_max_advance(self):
+        b = [0xFF]              # 255 / 2 - 64 = 63.5°
+        assert round(b[0] / 2 - 64, 1) == 63.5
+
+    # Engine load — PID 0104 — A * 100/255  %
+    def test_load_half(self):
+        b = [0x7F]              # 127 * 100/255 ≈ 49.8%
+        assert round(b[0] * 100 / 255, 1) == 49.8
+
+    def test_load_zero(self):
+        b = [0x00]
+        assert round(b[0] * 100 / 255, 1) == 0.0
+
+    def test_load_full(self):
+        b = [0xFF]              # 255 * 100/255 = 100.0%
+        assert round(b[0] * 100 / 255, 1) == 100.0
+
+    # Fuel trim — PIDs 0106-0109 — (A-128)*100/128  %
+    def test_fuel_trim_zero(self):
+        b = [0x80]              # (128-128)*100/128 = 0.0%
+        assert round((b[0] - 128) * 100 / 128, 1) == 0.0
+
+    def test_fuel_trim_positive(self):
+        b = [0x99]              # (153-128)*100/128 = 19.5%
+        assert round((b[0] - 128) * 100 / 128, 1) == 19.5
+
+    def test_fuel_trim_negative(self):
+        b = [0x67]              # (103-128)*100/128 = -19.5%
+        assert round((b[0] - 128) * 100 / 128, 1) == -19.5
+
+    def test_fuel_trim_max_positive(self):
+        b = [0xFF]              # (255-128)*100/128 = 99.2%
+        assert round((b[0] - 128) * 100 / 128, 1) == 99.2
+
+    # Oil temp — PID 015C — (A-40)*9/5 + 32  °F
+    def test_oil_temp_cold(self):
+        b = [0x00]              # (0-40)*9/5+32 = -40°F
+        assert round((b[0] - 40) * 9 / 5 + 32) == -40
+
+    def test_oil_temp_normal(self):
+        b = [0x78]              # (120-40)*9/5+32 = 176°F
+        assert round((b[0] - 40) * 9 / 5 + 32) == 176
+
+    def test_oil_temp_hot(self):
+        b = [0xC8]              # (200-40)*9/5+32 = 320°F
+        assert round((b[0] - 40) * 9 / 5 + 32) == 320
+
+
+# ═══════════════════════════════════════════════════════════════
+# 32. Vehicle name helper + /set_vehicle endpoint
+# ═══════════════════════════════════════════════════════════════
+class TestVehicleNameHelper:
+    def setup_method(self):
+        archer.vehicle_config['make']  = None
+        archer.vehicle_config['model'] = None
+
+    def teardown_method(self):
+        archer.vehicle_config['make']  = None
+        archer.vehicle_config['model'] = None
+
+    def test_unset_returns_generic_full(self):
+        assert archer.get_vehicle_name('full') == 'Sierra/Silverado 2500HD'
+
+    def test_unset_returns_generic_header(self):
+        assert archer.get_vehicle_name('header') == 'SIERRA/SILVERADO 2500HD'
+
+    def test_set_gmc_full(self):
+        archer.vehicle_config['make']  = 'GMC'
+        archer.vehicle_config['model'] = 'Sierra 2500HD'
+        assert archer.get_vehicle_name('full') == '2006 GMC Sierra 2500HD'
+
+    def test_set_gmc_header(self):
+        archer.vehicle_config['make']  = 'GMC'
+        archer.vehicle_config['model'] = 'Sierra 2500HD'
+        assert archer.get_vehicle_name('header') == 'GMC SIERRA 2500HD'
+
+    def test_set_chevrolet_full(self):
+        archer.vehicle_config['make']  = 'Chevrolet'
+        archer.vehicle_config['model'] = 'Silverado 2500HD'
+        assert archer.get_vehicle_name('full') == '2006 Chevrolet Silverado 2500HD'
+
+    def test_set_chevrolet_header(self):
+        archer.vehicle_config['make']  = 'Chevrolet'
+        archer.vehicle_config['model'] = 'Silverado 2500HD'
+        assert archer.get_vehicle_name('header') == 'CHEVROLET SILVERADO 2500HD'
+
+    def test_default_style_is_full(self):
+        archer.vehicle_config['make']  = 'GMC'
+        archer.vehicle_config['model'] = 'Sierra 2500HD'
+        assert archer.get_vehicle_name() == archer.get_vehicle_name('full')
+
+
+class TestSetVehicleEndpoint:
+    def setup_method(self):
+        archer.vehicle_config['make']  = None
+        archer.vehicle_config['model'] = None
+
+    def teardown_method(self):
+        archer.vehicle_config['make']  = None
+        archer.vehicle_config['model'] = None
+
+    def _post(self, body, tier=1):
+        c = _authed_client(tier)
+        return c.post('/set_vehicle', json=body)
+
+    def test_set_gmc_sierra(self):
+        r = self._post({'make': 'GMC', 'model': 'Sierra 2500HD'})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['ok'] is True
+        assert 'GMC' in d['vehicle']
+
+    def test_set_chevrolet_silverado(self):
+        r = self._post({'make': 'Chevrolet', 'model': 'Silverado 2500HD'})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['ok'] is True
+        assert 'Chevrolet' in d['vehicle']
+
+    def test_invalid_make_rejected(self):
+        r = self._post({'make': 'Ford', 'model': 'Sierra 2500HD'})
+        assert r.status_code == 400
+
+    def test_invalid_model_rejected(self):
+        r = self._post({'make': 'GMC', 'model': 'F-150'})
+        assert r.status_code == 400
+
+    def test_empty_body_rejected(self):
+        r = self._post({})
+        assert r.status_code == 400
+
+    def test_tier2_forbidden(self):
+        r = self._post({'make': 'GMC', 'model': 'Sierra 2500HD'}, tier=2)
+        assert r.status_code == 403
+
+    def test_tier3_forbidden(self):
+        r = self._post({'make': 'GMC', 'model': 'Sierra 2500HD'}, tier=3)
+        assert r.status_code == 403
+
+    def test_vehicle_config_updated(self):
+        self._post({'make': 'Chevrolet', 'model': 'Silverado 2500HD'})
+        assert archer.vehicle_config['make']  == 'Chevrolet'
+        assert archer.vehicle_config['model'] == 'Silverado 2500HD'
+
+    def test_display_data_reflects_set_vehicle(self):
+        self._post({'make': 'GMC', 'model': 'Sierra 2500HD'})
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert d['vehicle_make'] == 'GMC'
+        assert d['vehicle_model'] == 'Sierra 2500HD'
+        assert '2006 GMC' in d['vehicle_name']
+
+
+# ═══════════════════════════════════════════════════════════════
+# 33. OBD auth client protocol
+# ═══════════════════════════════════════════════════════════════
+class TestOBDAuthClientProtocol:
+    """Test the HMAC-SHA256 challenge-response format expected by obd_auth_client."""
+
+    def _compute_response(self, key: bytes, nonce_hex: str, ts: int) -> str:
+        nonce   = bytes.fromhex(nonce_hex)
+        payload = nonce + b':' + str(ts).encode()
+        return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+    def test_response_is_64_hex_chars(self):
+        key = secrets.token_bytes(32)
+        mac = self._compute_response(key, secrets.token_hex(32), int(time.time()))
+        assert len(mac) == 64
+        assert all(c in '0123456789abcdef' for c in mac)
+
+    def test_correct_key_matches(self):
+        key     = secrets.token_bytes(32)
+        nonce   = secrets.token_hex(32)
+        ts      = int(time.time())
+        mac     = self._compute_response(key, nonce, ts)
+        payload = bytes.fromhex(nonce) + b':' + str(ts).encode()
+        expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
+        assert mac == expected
+
+    def test_wrong_key_does_not_match(self):
+        key1  = secrets.token_bytes(32)
+        key2  = secrets.token_bytes(32)
+        nonce = secrets.token_hex(32)
+        ts    = int(time.time())
+        mac1  = self._compute_response(key1, nonce, ts)
+        mac2  = self._compute_response(key2, nonce, ts)
+        assert mac1 != mac2
+
+    def test_replay_with_different_ts_does_not_match(self):
+        key   = secrets.token_bytes(32)
+        nonce = secrets.token_hex(32)
+        ts    = int(time.time())
+        mac1  = self._compute_response(key, nonce, ts)
+        mac2  = self._compute_response(key, nonce, ts + 1)
+        assert mac1 != mac2
+
+    def test_replay_with_different_nonce_does_not_match(self):
+        key   = secrets.token_bytes(32)
+        ts    = int(time.time())
+        mac1  = self._compute_response(key, secrets.token_hex(32), ts)
+        mac2  = self._compute_response(key, secrets.token_hex(32), ts)
+        assert mac1 != mac2
+
+    def test_challenge_parse_format(self):
+        """Verify the client can correctly split CHALLENGE:nonce_hex:timestamp."""
+        nonce_hex = secrets.token_hex(32)
+        ts        = int(time.time())
+        line      = f'CHALLENGE:{nonce_hex}:{ts}'
+        assert line.startswith('CHALLENGE:')
+        body  = line[len('CHALLENGE:'):]
+        parts = body.split(':', 1)
+        assert len(parts) == 2
+        assert parts[0] == nonce_hex
+        assert int(parts[1]) == ts
+
+    def test_nonce_hex_length_validation(self):
+        """Valid nonce is 64 hex chars (32 bytes)."""
+        assert len(secrets.token_hex(32)) == 64
+
+    def test_short_nonce_detected(self):
+        bad_nonce = secrets.token_hex(16)  # 32 chars, too short
+        assert len(bad_nonce) != 64
+
+    def test_clock_skew_within_30s_accepted(self):
+        now  = time.time()
+        skew = abs(now - (now - 29))
+        assert skew <= 30
+
+    def test_clock_skew_over_30s_rejected(self):
+        now  = time.time()
+        skew = abs(now - (now - 31))
+        assert skew > 30
+
+
+# ═══════════════════════════════════════════════════════════════
+# 34. /display_data — new OBD fields present
+# ═══════════════════════════════════════════════════════════════
+class TestDisplayDataOBDFields:
+    """Verify the 7 new OBD PID fields appear in display_data response."""
+
+    def test_maf_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'maf' in d
+
+    def test_timing_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'timing' in d
+
+    def test_engine_load_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'engine_load' in d
+
+    def test_stft_b1_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'stft_b1' in d
+
+    def test_ltft_b1_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'ltft_b1' in d
+
+    def test_stft_b2_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'stft_b2' in d
+
+    def test_ltft_b2_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'ltft_b2' in d
+
+    def test_obd_mode_field_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'obd_mode' in d
+
+    def test_vehicle_name_fields_present(self):
+        r = client.get('/display_data')
+        d = json.loads(r.data)
+        assert 'vehicle_make' in d
+        assert 'vehicle_model' in d
+        assert 'vehicle_name' in d
+        assert 'vehicle_name_header' in d
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

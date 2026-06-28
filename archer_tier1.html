@@ -139,7 +139,8 @@ body.day{background:#0d0d0d}
 /* ─── SCREEN CONTAINER ─── */
 .screens{position:relative;flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0}
 .screen{display:none;flex-direction:column;gap:4px;padding:8px;background:var(--bg)}
-.screen.active{display:flex;flex:1}
+@keyframes screen-in{0%{opacity:0;transform:translateY(5px)}100%{opacity:1;transform:translateY(0)}}
+.screen.active{display:flex;flex:1;animation:screen-in 0.18s cubic-bezier(0.4,0,0.2,1)}
 #screen-drive{justify-content:space-between;gap:0;padding-bottom:6px}
 
 /* ─── SHARED ─── */
@@ -149,7 +150,7 @@ body.day{background:#0d0d0d}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
 .row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px}
 .bar-bg{background:var(--bg3);border-radius:3px;height:8px;overflow:hidden;border:1px solid var(--border)}
-.bar-fill{height:100%;border-radius:3px;transition:width 0.15s}
+.bar-fill{height:100%;border-radius:3px;transition:width 0.2s cubic-bezier(0.4,0,0.2,1)}
 .section-title{font-size:8px;color:var(--label);letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding:2px 0 3px;border-bottom:1px solid var(--border);margin-bottom:3px}
 
 /* ═══════════════════════════════════════
@@ -158,6 +159,7 @@ body.day{background:#0d0d0d}
 /* Speedometer arc ring */
 .speed-arc-wrap{position:relative;text-align:center;padding-top:4px}
 .speed-arc-svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);width:220px;height:220px;pointer-events:none;opacity:0.75}
+#speed-arc-el{transition:stroke-dasharray 0.22s cubic-bezier(0.4,0,0.2,1),stroke 0.35s ease;will-change:stroke-dasharray,stroke}
 .drive-speed{
   font-family:'Bebas Neue',sans-serif;
   font-size:110px;
@@ -168,13 +170,14 @@ body.day{background:#0d0d0d}
   letter-spacing:-4px;
   text-shadow:0 0 40px rgba(255,255,255,0.12), 0 0 80px rgba(255,255,255,0.04);
   position:relative;z-index:1;
+  transition:color 0.3s ease;
 }
 .drive-speed-unit{font-size:10px;color:var(--label);letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:6px}
 .drive-rpm-row{display:flex;align-items:center;gap:8px;padding:0 6px;margin-bottom:4px}
-.drive-rpm-num{font-family:'Bebas Neue',sans-serif;font-size:36px;line-height:1;min-width:70px;transition:color 0.2s}
+.drive-rpm-num{font-family:'Bebas Neue',sans-serif;font-size:36px;line-height:1;min-width:70px;transition:color 0.25s ease;will-change:color}
 .drive-rpm-wrap{flex:1}
 .drive-rpm-bar{background:var(--bg3);border:1px solid var(--border2);border-radius:4px;height:18px;overflow:hidden;position:relative}
-.drive-rpm-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 50%,var(--yellow) 65%,var(--orange) 80%,var(--red) 92%,#ff0000 100%);transition:width 0.1s;box-shadow:0 0 10px rgba(255,80,0,0.25)}
+.drive-rpm-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--green) 0%,var(--green) 50%,var(--yellow) 65%,var(--orange) 80%,var(--red) 92%,#ff0000 100%);transition:width 0.15s cubic-bezier(0.4,0,0.2,1);box-shadow:0 0 10px rgba(255,80,0,0.25)}
 .drive-rpm-redline{position:absolute;right:15%;top:0;bottom:0;width:2px;background:#ff0000;box-shadow:0 0 6px #ff0000;opacity:0.8}
 .drive-gear-box{text-align:center;min-width:44px}
 .drive-gear-lbl{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace}
@@ -183,12 +186,12 @@ body.day{background:#0d0d0d}
 .drive-boost-num{font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--orange);min-width:60px;line-height:1;text-shadow:var(--glow-orange)}
 .drive-boost-label{font-size:7px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;line-height:1.4}
 .drive-boost-bar{background:var(--bg3);border:1px solid var(--border2);border-radius:3px;height:13px;overflow:hidden;flex:1}
-.drive-boost-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#ff4400,#ff6600,#ff9900);transition:width 0.12s;box-shadow:0 0 16px rgba(255,102,0,0.4)}
+.drive-boost-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#ff4400,#ff6600,#ff9900);transition:width 0.18s cubic-bezier(0.4,0,0.2,1);box-shadow:0 0 16px rgba(255,102,0,0.4)}
 @keyframes boost-pulse{0%,100%{box-shadow:0 0 16px rgba(255,102,0,0.4)}50%{box-shadow:0 0 36px rgba(255,102,0,0.9),0 0 60px rgba(255,102,0,0.3)}}
 .drive-boost-fill.boosting{animation:boost-pulse 0.7s ease-in-out infinite}
 .drive-stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px;padding:0 6px;margin-bottom:4px}
-.drive-stat{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--border2);border-radius:5px;padding:8px 4px;text-align:center;transition:border-top-color 0.5s,background 0.3s}
-.drive-stat-val{font-family:'Share Tech Mono',monospace;font-size:15px;font-weight:bold;line-height:1}
+.drive-stat{background:var(--bg2);border:1px solid var(--border);border-top:2px solid var(--border2);border-radius:5px;padding:8px 4px;text-align:center;transition:border-top-color 0.4s ease,background 0.3s}
+.drive-stat-val{font-family:'Share Tech Mono',monospace;font-size:15px;font-weight:bold;line-height:1;transition:color 0.3s ease}
 .drive-stat-lbl{font-size:6px;color:var(--label);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:3px}
 .drive-msg{background:#080000;border:1px solid #1e0000;border-left:2px solid var(--red);border-radius:5px;padding:8px 10px;margin:0 6px 4px;display:flex;align-items:center;gap:8px;box-shadow:inset 0 0 20px rgba(255,0,0,0.04)}
 .drive-msg-tag{font-size:8px;color:var(--red);letter-spacing:2px;font-family:'Share Tech Mono',monospace;flex-shrink:0;text-shadow:0 0 6px rgba(255,0,0,0.5)}
@@ -218,7 +221,7 @@ body.day{background:#0d0d0d}
 .perf-sub{font-size:8px;color:var(--label);letter-spacing:4px;text-align:center;font-family:'Share Tech Mono',monospace;margin-bottom:8px}
 .metric-row{display:flex;justify-content:space-between;font-size:8px;color:var(--label);margin-bottom:2px;font-family:'Share Tech Mono',monospace}
 .thick-bar{background:var(--bg3);border-radius:4px;height:12px;overflow:hidden;margin-bottom:7px;border:1px solid var(--border)}
-.thick-fill{height:100%;border-radius:4px;transition:width 0.15s}
+.thick-fill{height:100%;border-radius:4px;transition:width 0.2s cubic-bezier(0.4,0,0.2,1)}
 .perf-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
 .perf-stat{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:8px 6px;text-align:center}
 .perf-stat-val{font-family:'Bebas Neue',sans-serif;font-size:24px;line-height:1}
@@ -229,7 +232,7 @@ body.day{background:#0d0d0d}
 ═══════════════════════════════════════ */
 .sensor-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:4px}
 .sensor{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:7px 5px;text-align:center}
-.sensor-val{font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:bold;line-height:1}
+.sensor-val{font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:bold;line-height:1;transition:color 0.3s ease}
 .sensor-lbl{font-size:6px;color:var(--label);letter-spacing:2px;margin-top:2px;font-family:'Share Tech Mono',monospace}
 
 /* ═══════════════════════════════════════
