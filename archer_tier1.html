@@ -90,7 +90,7 @@ body.day{background:#0d0d0d}
 }
 .hdr-left{display:flex;flex-direction:column;justify-content:center}
 .hdr-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:5px;color:var(--red);text-shadow:var(--glow-red);line-height:1}
-.hdr-vehicle{font-family:'Share Tech Mono',monospace;font-size:7px;color:#555;letter-spacing:3px;margin-top:1px;transition:color 0.3s}
+.hdr-vehicle{font-family:'Share Tech Mono',monospace;font-size:7px;color:#888;letter-spacing:3px;margin-top:1px;transition:color 0.3s}
 .hdr-right{display:flex;gap:8px;align-items:center}
 .hdr-badge{background:var(--bg3);border:1px solid var(--border2);padding:2px 8px;border-radius:3px;font-size:9px;color:var(--red);font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 .day-toggle{background:none;border:1px solid var(--border2);border-radius:3px;padding:3px 8px;font-size:9px;color:var(--label);font-family:'Share Tech Mono',monospace;cursor:pointer;letter-spacing:1px;transition:all 0.2s}
@@ -157,7 +157,7 @@ body.day{background:#0d0d0d}
 ═══════════════════════════════════════ */
 /* Speedometer arc ring */
 .speed-arc-wrap{position:relative;text-align:center;padding-top:4px}
-.speed-arc-svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);width:220px;height:220px;pointer-events:none;opacity:0.55}
+.speed-arc-svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);width:220px;height:220px;pointer-events:none;opacity:0.75}
 .drive-speed{
   font-family:'Bebas Neue',sans-serif;
   font-size:110px;
@@ -1664,6 +1664,26 @@ body.day{background:#0d0d0d}
         <button onclick="sysLoadLog()" style="width:100%;margin-top:6px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:4px;color:#666;font-size:9px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;padding:6px;cursor:pointer">↺ REFRESH LOGS</button>
       </div>
 
+      <!-- VEHICLE IDENTITY CARD -->
+      <div class="box">
+        <div class="section-title">VEHICLE IDENTITY</div>
+        <div id="sys-vehicle-display" style="font-size:10px;color:#555;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin:8px 0 8px;padding:8px;background:#080808;border:1px solid #1a1a1a;border-radius:4px;text-align:center">
+          NOT SET — PURCHASE PENDING
+        </div>
+        <div style="font-size:9px;color:#444;letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">Set once when the truck is purchased. Updates the header nameplate and all vehicle-specific displays.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <button id="sys-v-gmc" onclick="sysSetVehicle('GMC','Sierra 2500HD')"
+                  style="background:#0a0a0a;border:1px solid #2a2a2a;border-radius:5px;color:#666;font-size:9px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;padding:10px 6px;cursor:pointer;transition:all 0.2s;line-height:1.6">
+            GMC<br><span style="font-size:8px;color:#444">SIERRA 2500HD SLT</span>
+          </button>
+          <button id="sys-v-chevy" onclick="sysSetVehicle('Chevrolet','Silverado 2500HD')"
+                  style="background:#0a0a0a;border:1px solid #2a2a2a;border-radius:5px;color:#666;font-size:9px;letter-spacing:1px;font-family:'Share Tech Mono',monospace;padding:10px 6px;cursor:pointer;transition:all 0.2s;line-height:1.6">
+            CHEVROLET<br><span style="font-size:8px;color:#444">SILVERADO 2500HD LT3</span>
+          </button>
+        </div>
+        <div id="sys-vehicle-status" style="font-size:9px;color:#555;letter-spacing:1px;font-family:'Share Tech Mono',monospace;margin-top:6px;text-align:center;min-height:14px"></div>
+      </div>
+
       <!-- SIGN OUT -->
       <div class="box" style="background:#0a0000;border-color:#220000">
         <div style="font-size:9px;color:#441111;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:8px">SESSION</div>
@@ -2321,10 +2341,18 @@ async function pollLive() {
       if (pob) pob.style.display = 'none';
     }
     _pollFails = 0;
-    // Vehicle name in header
+    // Vehicle name in header + SYS card
     if (d.vehicle_name) {
       const vn = document.getElementById('hdr-vehicle-name');
       if (vn) vn.textContent = d.vehicle_name.toUpperCase();
+      if (d.vehicle_make) {
+        const vd = document.getElementById('sys-vehicle-display');
+        if (vd && vd.style.color !== 'rgb(0, 204, 68)') {
+          vd.textContent = d.vehicle_name.toUpperCase();
+          vd.style.color = '#00cc44';
+          _sysHighlightVehicleBtn(d.vehicle_make);
+        }
+      }
     }
     if (d.rpm      != null) targetData.rpm      = d.rpm;
     if (d.speed    != null) targetData.speed    = d.speed;
@@ -4118,6 +4146,42 @@ function closeBrowser() {
 }
 
 // ── SYS TAB — SIGN-IN CODE ──────────────────────────────
+async function sysSetVehicle(make, model) {
+  const statusEl = document.getElementById('sys-vehicle-status');
+  if (statusEl) { statusEl.textContent = 'SAVING...'; statusEl.style.color = '#888'; }
+  try {
+    const r = await fetch('/set_vehicle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ make, model })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const dispEl = document.getElementById('sys-vehicle-display');
+      if (dispEl) { dispEl.textContent = d.vehicle.toUpperCase(); dispEl.style.color = '#00cc44'; }
+      const hdrEl = document.getElementById('hdr-vehicle-name');
+      if (hdrEl) hdrEl.textContent = d.vehicle.toUpperCase();
+      if (statusEl) { statusEl.textContent = 'SAVED ✓'; statusEl.style.color = '#00cc44'; }
+      _sysHighlightVehicleBtn(make);
+    } else {
+      if (statusEl) { statusEl.textContent = 'ERROR: ' + (d.error || 'unknown'); statusEl.style.color = '#cc0000'; }
+    }
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = 'ERROR — CHECK CONNECTION'; statusEl.style.color = '#cc0000'; }
+  }
+}
+
+function _sysHighlightVehicleBtn(activeMake) {
+  const gmcBtn   = document.getElementById('sys-v-gmc');
+  const chevyBtn = document.getElementById('sys-v-chevy');
+  if (!gmcBtn || !chevyBtn) return;
+  const isGMC = activeMake === 'GMC';
+  gmcBtn.style.borderColor   = isGMC  ? '#00cc44' : '#2a2a2a';
+  gmcBtn.style.color         = isGMC  ? '#00cc44' : '#666';
+  chevyBtn.style.borderColor = !isGMC ? '#00cc44' : '#2a2a2a';
+  chevyBtn.style.color       = !isGMC ? '#00cc44' : '#666';
+}
+
 async function sysLoadCode() {
   try {
     const r = await fetch(T1BASE + '/sign_in_code/status');

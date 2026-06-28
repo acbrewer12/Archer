@@ -10874,15 +10874,34 @@ def obd_autodetect():
             def _parse_oil_temp(b):
                 # Mode 01 PID 5C: A - 40 = °C, convert to °F
                 return round((b[0] - 40) * 9 / 5 + 32) if b else None
+            def _parse_maf(b):
+                # PID 10: (256*A + B) / 100 g/s
+                return round((b[0] * 256 + b[1]) / 100, 2) if len(b) >= 2 else None
+            def _parse_timing(b):
+                # PID 0E: A/2 - 64 degrees BTDC
+                return round(b[0] / 2 - 64, 1) if b else None
+            def _parse_load(b):
+                # PID 04: A * 100/255 %
+                return round(b[0] * 100 / 255, 1) if b else None
+            def _parse_fuel_trim(b):
+                # PIDs 06-09: (A - 128) * 100/128 %
+                return round((b[0] - 128) * 100 / 128, 1) if b else None
 
             # PID table: (cmd, name, lo, hi, truck_state_key, sensor_data_key, parser, extra_bytes)
             PID_TABLE = [
-                ('010C', 'RPM',      0,    8000, 'rpm',          None,           _parse_rpm,      None),
-                ('010D', 'speed',    0,    200,  'speed',        None,           _parse_speed,    None),
-                ('0105', 'coolant',  -40,  300,  'coolant_temp', 'coolant_temp', _parse_coolant,  None),
-                ('0111', 'throttle', 0,    100,  'throttle',     None,           _parse_throttle, None),
-                ('010B', 'boost',    -15,  30,   'boost',        None,           _parse_map,      None),
-                ('015C', 'oil_temp', -40,  350,  'oil_temp',     'oil_temp',     _parse_oil_temp, None),
+                ('010C', 'RPM',      0,    8000,  'rpm',          None,           _parse_rpm,       None),
+                ('010D', 'speed',    0,    200,   'speed',        None,           _parse_speed,     None),
+                ('0105', 'coolant',  -40,  300,   'coolant_temp', 'coolant_temp', _parse_coolant,   None),
+                ('0111', 'throttle', 0,    100,   'throttle',     None,           _parse_throttle,  None),
+                ('010B', 'boost',    -15,  30,    'boost',        None,           _parse_map,       None),
+                ('015C', 'oil_temp', -40,  350,   'oil_temp',     'oil_temp',     _parse_oil_temp,  None),
+                ('0110', 'MAF',      0,    655,   'maf',          'maf',          _parse_maf,       None),
+                ('010E', 'timing',   -64,  63.5,  'timing',       None,           _parse_timing,    None),
+                ('0104', 'load',     0,    100,   'engine_load',  None,           _parse_load,      None),
+                ('0106', 'stft_b1',  -100, 99.2,  'stft_b1',      None,           _parse_fuel_trim, None),
+                ('0107', 'ltft_b1',  -100, 99.2,  'ltft_b1',      None,           _parse_fuel_trim, None),
+                ('0108', 'stft_b2',  -100, 99.2,  'stft_b2',      None,           _parse_fuel_trim, None),
+                ('0109', 'ltft_b2',  -100, 99.2,  'ltft_b2',      None,           _parse_fuel_trim, None),
             ]
 
             # Adaptive timing state per PID

@@ -50,19 +50,35 @@ def authenticate() -> int:
         port.write(b"ARCHER_AUTH_REQ\n")
         port.flush()
 
-        # Step 2: Receive challenge nonce
+        # Step 2: Receive challenge — format: CHALLENGE:{nonce_hex}:{unix_ts}
         line = port.readline().decode("ascii", errors="replace").strip()
         if not line.startswith("CHALLENGE:"):
             print(f"[OBD_AUTH] Unexpected response: {line!r}", file=sys.stderr)
             return 1
-        nonce_hex = line[len("CHALLENGE:"):]
+        challenge_body = line[len("CHALLENGE:"):]
+        parts = challenge_body.split(":", 1)
+        if len(parts) != 2:
+            print(f"[OBD_AUTH] Malformed challenge (expected nonce:ts): {challenge_body!r}", file=sys.stderr)
+            return 1
+        nonce_hex, ts_str = parts
         if len(nonce_hex) != 64:
             print(f"[OBD_AUTH] Bad nonce length ({len(nonce_hex)})", file=sys.stderr)
             return 1
+        try:
+            ts = int(ts_str)
+        except ValueError:
+            print(f"[OBD_AUTH] Bad timestamp in challenge: {ts_str!r}", file=sys.stderr)
+            return 1
+        # Sanity-check timestamp (reject challenges older than 30 s or from the future)
+        skew = abs(time.time() - ts)
+        if skew > 30:
+            print(f"[OBD_AUTH] Timestamp skew {skew:.1f}s — clock sync issue", file=sys.stderr)
+            return 1
         nonce = bytes.fromhex(nonce_hex)
 
-        # Step 3: Compute HMAC-SHA256(shared_key, nonce)
-        mac = hmac.new(key, nonce, hashlib.sha256).hexdigest()
+        # Step 3: Compute HMAC-SHA256(key, nonce_bytes + b':' + timestamp_str)
+        signed_payload = nonce + b':' + str(ts).encode()
+        mac = hmac.new(key, signed_payload, hashlib.sha256).hexdigest()
 
         # Step 4: Send response
         port.write(f"RESPONSE:{mac}\n".encode("ascii"))
