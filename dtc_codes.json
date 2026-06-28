@@ -1,0 +1,962 @@
+[
+  {
+    "code": "B0001",
+    "description": "Driver Frontal Stage 1 Deployment Control",
+    "severity": "critical"
+  },
+  {
+    "code": "B0002",
+    "description": "Passenger Frontal Stage 1 Deployment Control",
+    "severity": "critical"
+  },
+  {
+    "code": "B0051",
+    "description": "Driver Side Air Bag Deployment Loop Resistance Low \u2014 Deployment Commanded",
+    "severity": "critical"
+  },
+  {
+    "code": "B1000",
+    "description": "ECU Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "B1001",
+    "description": "Option Configuration Error \u2014 Module Swap Without Reprogramming",
+    "severity": "high"
+  },
+  {
+    "code": "B1004",
+    "description": "System Configuration Error",
+    "severity": "high"
+  },
+  {
+    "code": "B1325",
+    "description": "Control Module Ignition Off Timer Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "B2425",
+    "description": "Driver Seat Heater Circuit Malfunction",
+    "severity": "low"
+  },
+  {
+    "code": "B2430",
+    "description": "Passenger Seat Heater Circuit Malfunction",
+    "severity": "low"
+  },
+  {
+    "code": "B2960",
+    "description": "Security System Sensor Data Circuit High",
+    "severity": "high"
+  },
+  {
+    "code": "B3055",
+    "description": "Park Brake Switch Circuit Shorted to Ground",
+    "severity": "low"
+  },
+  {
+    "code": "C0035",
+    "description": "Left Front Wheel Speed Sensor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0036",
+    "description": "Left Front Wheel Speed Sensor Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "C0040",
+    "description": "Right Front Wheel Speed Sensor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0041",
+    "description": "Right Front Wheel Speed Sensor Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "C0045",
+    "description": "Left Rear Wheel Speed Sensor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0046",
+    "description": "Left Rear Wheel Speed Sensor Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "C0050",
+    "description": "Right Rear Wheel Speed Sensor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0051",
+    "description": "Right Rear Wheel Speed Sensor Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "C0110",
+    "description": "Pump Motor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0121",
+    "description": "Valve Relay Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0161",
+    "description": "ABS/TCS Brake Switch Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0201",
+    "description": "ABS Enable Relay Contact Circuit Open \u2014 EBCM Ground Fault",
+    "severity": "high"
+  },
+  {
+    "code": "C0244",
+    "description": "PWM Delivered Torque Circuit Malfunction",
+    "severity": "medium"
+  },
+  {
+    "code": "C0245",
+    "description": "Wheel Speed Sensor Frequency Error",
+    "severity": "medium"
+  },
+  {
+    "code": "C0265",
+    "description": "EBCM Relay Circuit \u2014 Cracked Solder Joints on EBCM (TSB 04-05-25-002D)",
+    "severity": "high"
+  },
+  {
+    "code": "C0266",
+    "description": "EBCM Relay Circuit Open",
+    "severity": "high"
+  },
+  {
+    "code": "C0279",
+    "description": "Powertrain Configuration Not Valid",
+    "severity": "high"
+  },
+  {
+    "code": "C0283",
+    "description": "Traction Control Switch Circuit Shorted to Ground",
+    "severity": "medium"
+  },
+  {
+    "code": "C0286",
+    "description": "ABS Indicator Lamp Circuit Shorted to Battery+",
+    "severity": "medium"
+  },
+  {
+    "code": "C0287",
+    "description": "Delivered Torque Circuit Malfunction",
+    "severity": "medium"
+  },
+  {
+    "code": "C0288",
+    "description": "Brake Warning Lamp Circuit Shorted to Battery+",
+    "severity": "medium"
+  },
+  {
+    "code": "C0290",
+    "description": "Lost Communication With PCM (from EBCM)",
+    "severity": "high"
+  },
+  {
+    "code": "C0291",
+    "description": "Lost Communication With BCM (from EBCM)",
+    "severity": "high"
+  },
+  {
+    "code": "C0292",
+    "description": "Requested Torque Fault",
+    "severity": "medium"
+  },
+  {
+    "code": "C0297",
+    "description": "Powertrain Configuration Signal Not Received",
+    "severity": "high"
+  },
+  {
+    "code": "C0298",
+    "description": "Powertrain Indicated Traction Control Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "C0300",
+    "description": "Rear Propshaft Speed Sensor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0306",
+    "description": "Transfer Case Motor Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0327",
+    "description": "Transfer Case Encoder Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "C0369",
+    "description": "Transfer Case Range Sensor Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0374",
+    "description": "Four Wheel Drive System Fault",
+    "severity": "high"
+  },
+  {
+    "code": "C0550",
+    "description": "EBCM ECU Performance Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "C0750",
+    "description": "Tire Pressure System Sensor FL Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0755",
+    "description": "Tire Pressure System Sensor FR Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0760",
+    "description": "Tire Pressure System Sensor RL Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0765",
+    "description": "Tire Pressure System Sensor RR Circuit",
+    "severity": "medium"
+  },
+  {
+    "code": "C0775",
+    "description": "Tire Pressure Low \u2014 Left Front",
+    "severity": "low"
+  },
+  {
+    "code": "C0780",
+    "description": "Tire Pressure Low \u2014 Right Front",
+    "severity": "low"
+  },
+  {
+    "code": "C0785",
+    "description": "Tire Pressure Low \u2014 Left Rear",
+    "severity": "low"
+  },
+  {
+    "code": "C0790",
+    "description": "Tire Pressure Low \u2014 Right Rear",
+    "severity": "low"
+  },
+  {
+    "code": "P0100",
+    "description": "Mass Air Flow Sensor Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0101",
+    "description": "MAF Sensor Range/Performance Problem",
+    "severity": "medium"
+  },
+  {
+    "code": "P0102",
+    "description": "MAF Sensor Circuit Low Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0103",
+    "description": "MAF Sensor Circuit High Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0104",
+    "description": "MAF Sensor Circuit Intermittent",
+    "severity": "medium"
+  },
+  {
+    "code": "P0106",
+    "description": "MAP Sensor Range/Performance Problem",
+    "severity": "medium"
+  },
+  {
+    "code": "P0107",
+    "description": "MAP Sensor Circuit Low Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0108",
+    "description": "MAP Sensor Circuit High Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0111",
+    "description": "Intake Air Temp Sensor Range/Performance",
+    "severity": "low"
+  },
+  {
+    "code": "P0112",
+    "description": "Intake Air Temp Sensor Circuit Low Input",
+    "severity": "medium"
+  },
+  {
+    "code": "P0113",
+    "description": "Intake Air Temp Sensor Circuit High Input",
+    "severity": "medium"
+  },
+  {
+    "code": "P0116",
+    "description": "Engine Coolant Temp Sensor Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0117",
+    "description": "Engine Coolant Temp Sensor Circuit Low",
+    "severity": "high"
+  },
+  {
+    "code": "P0118",
+    "description": "Engine Coolant Temp Sensor Circuit High",
+    "severity": "high"
+  },
+  {
+    "code": "P0120",
+    "description": "Throttle Position Sensor A Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0121",
+    "description": "TPS Circuit Range/Performance Problem",
+    "severity": "medium"
+  },
+  {
+    "code": "P0122",
+    "description": "Throttle/Pedal Position Sensor A Low Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0123",
+    "description": "Throttle/Pedal Position Sensor A High Input",
+    "severity": "high"
+  },
+  {
+    "code": "P0128",
+    "description": "Coolant Thermostat Below Regulating Temperature",
+    "severity": "medium"
+  },
+  {
+    "code": "P0130",
+    "description": "O2 Sensor Circuit Malfunction \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0131",
+    "description": "O2 Sensor Circuit Low Voltage \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0132",
+    "description": "O2 Sensor Circuit High Voltage \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0133",
+    "description": "O2 Sensor Circuit Slow Response \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0134",
+    "description": "O2 Sensor Circuit No Activity \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0135",
+    "description": "O2 Sensor Heater Circuit Malfunction \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0150",
+    "description": "O2 Sensor Circuit Malfunction \u2014 Bank 2 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0155",
+    "description": "O2 Sensor Heater Circuit Malfunction \u2014 Bank 2 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0171",
+    "description": "System Too Lean \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0172",
+    "description": "System Too Rich \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0174",
+    "description": "System Too Lean \u2014 Bank 2",
+    "severity": "high"
+  },
+  {
+    "code": "P0175",
+    "description": "System Too Rich \u2014 Bank 2",
+    "severity": "high"
+  },
+  {
+    "code": "P0190",
+    "description": "Fuel Rail Pressure Sensor Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0191",
+    "description": "Fuel Rail Pressure Sensor Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0192",
+    "description": "Fuel Rail Pressure Sensor Circuit Low",
+    "severity": "high"
+  },
+  {
+    "code": "P0193",
+    "description": "Fuel Rail Pressure Sensor Circuit High",
+    "severity": "high"
+  },
+  {
+    "code": "P0200",
+    "description": "Injector Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0201",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0202",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 2",
+    "severity": "high"
+  },
+  {
+    "code": "P0203",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 3",
+    "severity": "high"
+  },
+  {
+    "code": "P0204",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 4",
+    "severity": "high"
+  },
+  {
+    "code": "P0205",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 5",
+    "severity": "high"
+  },
+  {
+    "code": "P0206",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 6",
+    "severity": "high"
+  },
+  {
+    "code": "P0207",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 7",
+    "severity": "high"
+  },
+  {
+    "code": "P0208",
+    "description": "Injector Circuit Malfunction \u2014 Cylinder 8",
+    "severity": "high"
+  },
+  {
+    "code": "P0300",
+    "description": "Random/Multiple Cylinder Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0301",
+    "description": "Cylinder 1 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0302",
+    "description": "Cylinder 2 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0303",
+    "description": "Cylinder 3 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0304",
+    "description": "Cylinder 4 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0305",
+    "description": "Cylinder 5 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0306",
+    "description": "Cylinder 6 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0307",
+    "description": "Cylinder 7 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0308",
+    "description": "Cylinder 8 Misfire Detected",
+    "severity": "high"
+  },
+  {
+    "code": "P0325",
+    "description": "Knock Sensor 1 Circuit Malfunction \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0326",
+    "description": "Knock Sensor 1 Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0327",
+    "description": "Knock Sensor 1 Circuit Low Input \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0328",
+    "description": "Knock Sensor 1 Circuit High Input \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0330",
+    "description": "Knock Sensor 2 Circuit Malfunction \u2014 Bank 2",
+    "severity": "high"
+  },
+  {
+    "code": "P0335",
+    "description": "Crankshaft Position Sensor A Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0340",
+    "description": "Camshaft Position Sensor A Circuit \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P0351",
+    "description": "Ignition Coil A Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0352",
+    "description": "Ignition Coil B Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0353",
+    "description": "Ignition Coil C Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0354",
+    "description": "Ignition Coil D Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0355",
+    "description": "Ignition Coil E Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0356",
+    "description": "Ignition Coil F Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0357",
+    "description": "Ignition Coil G Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0358",
+    "description": "Ignition Coil H Primary/Secondary Circuit",
+    "severity": "high"
+  },
+  {
+    "code": "P0400",
+    "description": "Exhaust Gas Recirculation Flow Malfunction",
+    "severity": "medium"
+  },
+  {
+    "code": "P0401",
+    "description": "EGR Flow Insufficient Detected",
+    "severity": "medium"
+  },
+  {
+    "code": "P0402",
+    "description": "EGR Excessive Flow Detected",
+    "severity": "medium"
+  },
+  {
+    "code": "P0420",
+    "description": "Catalyst System Efficiency Below Threshold \u2014 Bank 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P0430",
+    "description": "Catalyst System Efficiency Below Threshold \u2014 Bank 2",
+    "severity": "medium"
+  },
+  {
+    "code": "P0440",
+    "description": "Evaporative Emission Control System Malfunction",
+    "severity": "low"
+  },
+  {
+    "code": "P0441",
+    "description": "EVAP Emission Control System Incorrect Purge Flow",
+    "severity": "low"
+  },
+  {
+    "code": "P0442",
+    "description": "EVAP Emission Control System Leak Detected (Small)",
+    "severity": "low"
+  },
+  {
+    "code": "P0443",
+    "description": "EVAP Emission Control System Purge Valve Malfunction",
+    "severity": "low"
+  },
+  {
+    "code": "P0446",
+    "description": "EVAP Emission Control System Vent Control Malfunction",
+    "severity": "low"
+  },
+  {
+    "code": "P0455",
+    "description": "EVAP Emission Control System Leak Detected (Large)",
+    "severity": "medium"
+  },
+  {
+    "code": "P0456",
+    "description": "EVAP Emission Control System Leak Detected (Very Small)",
+    "severity": "low"
+  },
+  {
+    "code": "P0507",
+    "description": "Idle Control System RPM High",
+    "severity": "medium"
+  },
+  {
+    "code": "P0562",
+    "description": "System Voltage Low",
+    "severity": "high"
+  },
+  {
+    "code": "P0563",
+    "description": "System Voltage High",
+    "severity": "high"
+  },
+  {
+    "code": "P0620",
+    "description": "Generator Control Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0700",
+    "description": "Transmission Control System Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0706",
+    "description": "Transmission Range Sensor Circuit Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0711",
+    "description": "Transmission Fluid Temp Sensor Range/Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0712",
+    "description": "Transmission Fluid Temp Sensor Circuit Low Input",
+    "severity": "medium"
+  },
+  {
+    "code": "P0713",
+    "description": "Transmission Fluid Temp Sensor Circuit High Input",
+    "severity": "medium"
+  },
+  {
+    "code": "P0715",
+    "description": "Input/Turbine Speed Sensor Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0720",
+    "description": "Output Speed Sensor Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0730",
+    "description": "Incorrect Gear Ratio",
+    "severity": "high"
+  },
+  {
+    "code": "P0731",
+    "description": "Gear 1 Incorrect Ratio",
+    "severity": "high"
+  },
+  {
+    "code": "P0732",
+    "description": "Gear 2 Incorrect Ratio",
+    "severity": "high"
+  },
+  {
+    "code": "P0740",
+    "description": "Torque Converter Clutch Circuit Malfunction",
+    "severity": "high"
+  },
+  {
+    "code": "P0741",
+    "description": "Torque Converter Clutch Circuit Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P0748",
+    "description": "Pressure Control Solenoid A Electrical",
+    "severity": "high"
+  },
+  {
+    "code": "P0751",
+    "description": "Shift Solenoid A Performance or Stuck Off",
+    "severity": "high"
+  },
+  {
+    "code": "P0753",
+    "description": "Shift Solenoid A Electrical",
+    "severity": "high"
+  },
+  {
+    "code": "P0756",
+    "description": "Shift Solenoid B Performance or Stuck Off",
+    "severity": "high"
+  },
+  {
+    "code": "P0758",
+    "description": "Shift Solenoid B Electrical",
+    "severity": "high"
+  },
+  {
+    "code": "P1133",
+    "description": "HO2S Insufficient Switching \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P1134",
+    "description": "HO2S Transition Time Ratio \u2014 Bank 1 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P1153",
+    "description": "HO2S Insufficient Switching \u2014 Bank 2 Sensor 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P1345",
+    "description": "Camshaft-to-Crankshaft Position Correlation",
+    "severity": "high"
+  },
+  {
+    "code": "P1380",
+    "description": "Rough Road Detected \u2014 ABS Module",
+    "severity": "low"
+  },
+  {
+    "code": "P1515",
+    "description": "Command vs Desired Throttle Body Position",
+    "severity": "high"
+  },
+  {
+    "code": "P1516",
+    "description": "Throttle Actuator Control Module Throttle Actuator Position Performance",
+    "severity": "high"
+  },
+  {
+    "code": "P1626",
+    "description": "Theft Deterrent Fuel Enable Signal Lost",
+    "severity": "high"
+  },
+  {
+    "code": "P1810",
+    "description": "TFP Valve Position Switch Circuit \u2014 Park/Neutral to Drive/Reverse",
+    "severity": "medium"
+  },
+  {
+    "code": "P1860",
+    "description": "TCC PWM Solenoid Circuit Electrical",
+    "severity": "high"
+  },
+  {
+    "code": "P1870",
+    "description": "Transmission Component Slipping",
+    "severity": "high"
+  },
+  {
+    "code": "P203F",
+    "description": "Reductant Level Sensor Performance",
+    "severity": "medium"
+  },
+  {
+    "code": "P204B",
+    "description": "Reductant Pump Control Circuit Range/Performance",
+    "severity": "high"
+  },
+  {
+    "code": "P20EE",
+    "description": "SCR NOx Catalyst Efficiency Below Threshold \u2014 Bank 1",
+    "severity": "high"
+  },
+  {
+    "code": "P2201",
+    "description": "NOx Sensor Circuit Range/Performance \u2014 Bank 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P3400",
+    "description": "Cylinder Deactivation System Bank 1",
+    "severity": "medium"
+  },
+  {
+    "code": "P3401",
+    "description": "Cylinder 1 Deactivation/Intake Valve Control Circuit Open",
+    "severity": "medium"
+  },
+  {
+    "code": "P3404",
+    "description": "Cylinder 4 Deactivation/Intake Valve Control Circuit Open",
+    "severity": "medium"
+  },
+  {
+    "code": "P3411",
+    "description": "Cylinder 5 Deactivation/Intake Valve Control Circuit Open",
+    "severity": "medium"
+  },
+  {
+    "code": "P3441",
+    "description": "Cylinder 7 Deactivation/Intake Valve Control Circuit Open",
+    "severity": "medium"
+  },
+  {
+    "code": "U0001",
+    "description": "[NOT APPLICABLE \u2014 Class 2 bus] High Speed CAN Communication Bus",
+    "severity": "low"
+  },
+  {
+    "code": "U0073",
+    "description": "[NOT APPLICABLE \u2014 Class 2 bus] Control Module Communication Bus Off",
+    "severity": "low"
+  },
+  {
+    "code": "U0100",
+    "description": "Lost Communication With ECM/PCM",
+    "severity": "high"
+  },
+  {
+    "code": "U0101",
+    "description": "Lost Communication With TCM",
+    "severity": "high"
+  },
+  {
+    "code": "U0121",
+    "description": "Lost Communication With Anti-Lock Brake System",
+    "severity": "high"
+  },
+  {
+    "code": "U0140",
+    "description": "Lost Communication With Body Control Module",
+    "severity": "medium"
+  },
+  {
+    "code": "U1000",
+    "description": "Class 2 Communication Malfunction \u2014 Check All Module Grounds",
+    "severity": "high"
+  },
+  {
+    "code": "U1016",
+    "description": "Lost Communication With PCM",
+    "severity": "high"
+  },
+  {
+    "code": "U1024",
+    "description": "Lost Communication With TCM",
+    "severity": "high"
+  },
+  {
+    "code": "U1026",
+    "description": "Lost Communication With Transfer Case Control Module (4WD)",
+    "severity": "high"
+  },
+  {
+    "code": "U1041",
+    "description": "Lost Communication With Electronic Brake Control Module",
+    "severity": "high"
+  },
+  {
+    "code": "U1064",
+    "description": "Lost Communication With Body Control Module",
+    "severity": "high"
+  },
+  {
+    "code": "U1088",
+    "description": "Lost Communication With SDM (Sensing & Diagnostic Module / Airbag)",
+    "severity": "high"
+  },
+  {
+    "code": "U1096",
+    "description": "Lost Communication With Instrument Panel Cluster",
+    "severity": "medium"
+  },
+  {
+    "code": "U1097",
+    "description": "Lost Communication With DIC (Driver Information Center)",
+    "severity": "medium"
+  },
+  {
+    "code": "U1152",
+    "description": "Lost Communication With HVAC Control Module",
+    "severity": "medium"
+  },
+  {
+    "code": "U1192",
+    "description": "Lost Communication With Theft Deterrent Module",
+    "severity": "high"
+  },
+  {
+    "code": "U1255",
+    "description": "Class 2 Communication Malfunction \u2014 Usually Bad Ground or Failing Module",
+    "severity": "high"
+  },
+  {
+    "code": "U1300",
+    "description": "Class 2 Short to Ground",
+    "severity": "high"
+  },
+  {
+    "code": "U1301",
+    "description": "Class 2 Short to Battery",
+    "severity": "high"
+  }
+]
