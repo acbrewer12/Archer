@@ -9,3 +9,6 @@ build/
 archer-os/obd-auth/obd_auth.key
 archer-os/archer.env
 archer.env
+archer_data.db
+archer_data.db-wal
+archer_data.db-shm
