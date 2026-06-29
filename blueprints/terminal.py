@@ -5,9 +5,13 @@ Requires Tier 1 auth for all exec/stream endpoints.
 import os
 import re as _re
 import json
+import secrets as _secrets
 import subprocess
 import platform as _plt
 import time
+
+# Pi registration token — never fall back to a known hardcoded string
+_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
 
 from datetime import datetime
 from flask import Blueprint, jsonify, Response, request
@@ -439,8 +443,7 @@ def pi_register():
     """Pi calls this on connect to register its tunnel URL."""
     data  = request.get_json() or {}
     token = data.get('token', '')
-    pi_token = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
-    if token != pi_token:
+    if token != _ARCHER_PI_TOKEN:
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True

@@ -10,10 +10,12 @@ NEVER hard-code secrets here. Set them in archer.env or GitHub Secrets.
 import os
 
 # ── CORE SECURITY ─────────────────────────────────────────────────────────────
+import secrets as _secrets
 
 # Used for: CSRF tokens, cookie signing, session validation.
-# CHANGE THIS in production — any random 32+ char string.
-ARCHER_SECRET = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+# If not set, a random ephemeral value is used — safe but sessions won't survive restarts.
+# Set ARCHER_SECRET in archer.env (local) or GitHub Secrets (HuggingFace).
+ARCHER_SECRET = os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
 
 # Master owner PIN for Tier 1 sign-in (numeric, min 4 digits).
 ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
@@ -22,8 +24,9 @@ ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
 ARCHER_MASTER_CODE = os.environ.get('ARCHER_MASTER_CODE', '')
 
 # Token the Raspberry Pi uses to register its tunnel URL.
-# Set to a random string on both the Pi and here.
-ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
+# Set ARCHER_PI_TOKEN in archer.env on both the Pi and the server — must match.
+# If not set, a random ephemeral value is used (Pi registration won't work across restarts).
+ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
 
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 

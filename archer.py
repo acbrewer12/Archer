@@ -102,8 +102,13 @@ def get_build_phase():
         return 2
     return 1
 
+# ── SECRETS — never fall back to a known string ──────────────────────────────
+# If ARCHER_SECRET is unset, a cryptographically random value is generated each
+# run.  Sessions won't survive restarts, but the secret is never publicly known.
+_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET') or secrets.token_hex(32)
 if not os.environ.get('ARCHER_SECRET'):
-    print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
+    print('[SECURITY] WARNING: ARCHER_SECRET not set — using ephemeral random secret. '
+          'Sessions will not survive restarts. Set ARCHER_SECRET in archer.env before driving.')
 
 if _IS_PI:
     try:
@@ -137,9 +142,7 @@ from flask import Flask, jsonify, render_template_string, Response, stream_with_
 import logging as _logging
 
 display_app            = Flask(__name__)
-display_app.secret_key = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-if not os.environ.get('ARCHER_SECRET'):
-    print('[ARCHER] WARNING: ARCHER_SECRET not set — running with insecure default. Set it in archer.env before driving.')
+display_app.secret_key = _ARCHER_SECRET
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -162,7 +165,7 @@ display_app.register_blueprint(_modules_bp)
 display_app.register_blueprint(_terminal_bp)
 
 # ── CSRF TOKEN (double-submit cookie, lightweight) ───────────────────────────
-_csrf_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd').encode()
+_csrf_secret = _ARCHER_SECRET.encode()
 
 def _csrf_token_for(session_id: str) -> str:
     return hmac.new(_csrf_secret, session_id.encode(), hashlib.sha256).hexdigest()[:32]
@@ -8470,7 +8473,7 @@ def _revoke_token(token: str):
 def _revoke_by_name(name: str, tier: int):
     """Revoke the deterministic token for a given name+tier combination."""
     import hashlib as _hl2
-    secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+    secret = _ARCHER_SECRET
     token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
     _revoke_token(token)
 
@@ -8488,7 +8491,7 @@ def get_request_tier(request):
             parts = cookie_val.split(':')
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                cookie_secret = _ARCHER_SECRET
                 expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                 if c_token == expected:
                     # Prune expired revocations, then check
@@ -8989,7 +8992,7 @@ def index():
     # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
     owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
     if owner_pin and freq.args.get('pin') == owner_pin:
-        cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+        cookie_secret = _ARCHER_SECRET
         import hashlib as _hl2
         token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:32]
         resp = make_response()
@@ -9012,7 +9015,7 @@ def index():
                 parts = cookie_val.split(':')
                 if len(parts) == 3:
                     c_tier, c_name, c_token = parts
-                    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                    cookie_secret = _ARCHER_SECRET
                     expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                     if c_token == expected:
                         tier_info = {'tier': int(c_tier), 'name': c_name}
@@ -9296,7 +9299,7 @@ def register_mac():
         print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
 
     # Set auth cookie regardless
-    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+    cookie_secret = _ARCHER_SECRET
     token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:32]
     cookie_val = f'{tier}:{name}:{token}'
 
@@ -10271,9 +10274,8 @@ def boot_status():
     # 1. Archer core
     all_checks.append({'id': 'core', 'label': 'ARCHER CORE', 'status': 'ok', 'detail': f'up {uptime_s}s'})
 
-    # 2. Auth system
-    secret = os.environ.get('ARCHER_SECRET', '')
-    secret_ok = bool(secret) and secret != 'archer2500hd'
+    # 2. Auth system — flag if running with the known bad default or no env var set
+    secret_ok = bool(os.environ.get('ARCHER_SECRET')) and _ARCHER_SECRET != 'archer2500hd'
     all_checks.append({
         'id': 'auth', 'label': 'AUTH SYSTEM',
         'status': 'ok' if secret_ok else 'warn',
