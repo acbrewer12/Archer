@@ -135,17 +135,24 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
 ### Wiring Diagram (Arduino)
 
 ```
-Arduino Uno                 Sierra Fuse Box
+Arduino Uno                 Sierra Fuse Box / Battery
 -----------                 ---------------
 Pin 2  ──── Tach signal (from coil 1 low-side or tach terminal)
 Pin 3  ──── Boost signal (0-5V from MAP sensor tap)
 Pin A0 ──── Fuel level sender (0-90Ω → 0-5V via resistor divider)
+Pin A1 ──── Aux battery voltage (via 10kΩ/3.3kΩ divider — see below)
 GND    ──── Ground (chassis ground, battery negative)
 Vin    ──── +12V (switched, through 7805 regulator to 5V)
 
 Fan relay board (if installed):
 Pin 7  ──── Fan relay IN1 (low-side trigger, active-low)
 Pin 8  ──── Fan relay IN2 (spare)
+
+Aux battery voltage divider (dual-battery mod — future install):
+  Aux (+) ── 10kΩ ── A1 ── 3.3kΩ ── GND
+  Sketch: archer-os/arduino/aux_battery_monitor.ino
+  Sends "AUX_BATT:12.84" over serial; Archer reads it automatically.
+  HEALTH tab shows "-- PENDING MOD" until this is wired up.
 ```
 
 ### OLED Wiring (I2C)

@@ -261,7 +261,7 @@ obd2_display = {
     'mode':      'default',
 }
 
-arduino_state = {'connected': False, 'port': None, 'conn': None}
+arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None}
 
 beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
 
@@ -794,7 +794,8 @@ def get_tier_label():
 truck_state = {
     # ── Core engine ───────────────────────────────────────────
     'oil_temp': 195, 'coolant_temp': 190, 'rpm': 750, 'speed': 0,
-    'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': 13.6,
+    'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': None,
+    'battery_aux_live': False,   # True once Arduino dual-battery mod sends AUX_BATT: readings
     'exhaust': 30, 'tc_locked': False, 'tc_on': True, 'cool_on': False,
     'idle_on': False, 'bed_lights': False, 'hood_lights': False,
     'ghost_mode': False, 'octane': 87, 'octane_mode': 'AKI',
@@ -1480,6 +1481,8 @@ def update_awareness():
         warnings = []
         if oil > 225:                            warnings.append('oil_high')
         if truck_state['battery_main'] < 12.0:  warnings.append('battery_low')
+        if truck_state.get('battery_aux_live') and truck_state.get('battery_aux', 99) < 12.0:
+            warnings.append('battery_aux_low')
         if eth < 30 and boost > 5:              warnings.append('low_ethanol_under_boost')
         if rpm > 5800:                           warnings.append('near_redline')
         awareness['warnings_active'] = warnings
@@ -1631,6 +1634,8 @@ def get_display_data():
         'boost':         truck_state['boost'],
         'ethanol':       truck_state['ethanol'],
         'battery':       truck_state['battery_main'],
+        'battery_aux':      truck_state.get('battery_aux'),
+        'battery_aux_live': truck_state.get('battery_aux_live', False),
         'exhaust':       truck_state['exhaust'],
         'octane':        f"{truck_state['octane']} {truck_state['octane_mode']}",
         'tc_on':         truck_state['tc_on'],
@@ -10630,6 +10635,53 @@ load();
 # ── ARDUINO SERIAL ───────────────────────────────────────
 _ARDUINO_KEYWORDS = ('arduino', 'ch340', 'cp210', 'cp2102', 'ftdi', 'uno', 'mega', 'nano')
 
+def _arduino_reader(conn):
+    """Read telemetry lines from the Arduino.
+
+    Protocol — Arduino sends plain-text lines over serial:
+        AUX_BATT:12.8     — aux battery voltage (V), from a voltage-divider on A1
+                            wiring: aux battery + → 10kΩ → A1 → 3.3kΩ → GND
+                            formula in sketch: v = analogRead(A1) * (5.0/1023.0) * (10+3.3)/3.3
+
+    Add new sensor lines here as hardware is installed.
+    Runs in its own daemon thread while arduino_state['connected'] is True.
+    Sets battery_aux_live=False and exits when the connection drops.
+    """
+    print('[ARDUINO] Reader thread started')
+    try:
+        while arduino_state['connected']:
+            try:
+                raw = conn.readline()
+            except Exception as e:
+                print(f'[ARDUINO] Read error: {e}')
+                break
+            if not raw:
+                continue
+            line = raw.decode('utf-8', errors='replace').strip()
+            if not line:
+                continue
+
+            if line.startswith('AUX_BATT:'):
+                try:
+                    v = float(line[len('AUX_BATT:'):])
+                    if 8.0 <= v <= 16.5:    # sanity range for a 12V lead-acid system
+                        truck_state['battery_aux']      = round(v, 1)
+                        truck_state['battery_aux_live'] = True
+                        if v < 12.0:
+                            print(f'[ARCHER] ⚡ Aux battery low: {v}V')
+                except ValueError:
+                    pass
+
+            # ── Future sensors ───────────────────────────────────────────
+            # elif line.startswith('TACH:'):   — raw tach pulse count
+            # elif line.startswith('FUEL_LEVEL:'):   — resistive sender %
+            # ─────────────────────────────────────────────────────────────
+
+    finally:
+        truck_state['battery_aux_live'] = False
+        print('[ARDUINO] Reader thread stopped')
+
+
 def arduino_send(cmd):
     """Send a command to the Arduino over serial. Always logs to stdout."""
     print(f'[ARDUINO] → {cmd}')
@@ -10662,6 +10714,9 @@ def arduino_autodetect():
                             arduino_state['port']      = p.device
                             arduino_state['conn']      = conn
                             print(f'[ARDUINO] Connected on {p.device}')
+                            t = threading.Thread(target=_arduino_reader, args=(conn,), daemon=True)
+                            arduino_state['reader_thread'] = t
+                            t.start()
                         except Exception as e:
                             print(f'[ARDUINO] connect error: {e}')
                     break
