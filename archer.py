@@ -28,8 +28,9 @@ except ImportError:
     _ecu = None
 
 # ── LOG CAPTURE (captures all print() output into a ring buffer) ──
-_log_buffer = collections.deque(maxlen=2000)
-_log_lock   = threading.Lock()
+_log_buffer  = collections.deque(maxlen=2000)
+_log_lock    = threading.Lock()
+_memory_lock = threading.RLock()  # guards archer_memory and all global state writes
 
 class _TeeWriter:
     """Writes to original stdout AND appends to _log_buffer."""
@@ -102,8 +103,20 @@ def get_build_phase():
         return 2
     return 1
 
-if not os.environ.get('ARCHER_SECRET'):
-    print("[SECURITY] WARNING: ARCHER_SECRET env var not set — using insecure default. Set it in HF Space secrets.")
+# ── SECRETS — machine-bound via HSM, then archer_state ───────────────────────
+# HSM derives a stable secret from /etc/archer/master.key (or env var).
+# archer_state reads os.environ['ARCHER_SECRET']; set it before archer_state loads.
+from hsm import get_or_create_secret as _hsm_get_secret
+import os as _os_hsm
+if not _os_hsm.environ.get('ARCHER_SECRET'):
+    _os_hsm.environ['ARCHER_SECRET'] = _hsm_get_secret()
+
+from archer_state import (
+    _ARCHER_SECRET, _csrf_token_for, _validate_csrf,
+    csrf_required as _csrf_required_imported,
+    make_auth_jwt, decode_auth_jwt,
+)
+csrf_required = _csrf_required_imported
 
 if _IS_PI:
     try:
@@ -137,7 +150,7 @@ from flask import Flask, jsonify, render_template_string, Response, stream_with_
 import logging as _logging
 
 display_app            = Flask(__name__)
-display_app.secret_key = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+display_app.secret_key = _ARCHER_SECRET
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -152,44 +165,22 @@ if not _LIMITER_AVAILABLE:
     print('[ARCHER] flask-limiter not installed — rate limiting disabled')
 
 # ── BLUEPRINT REGISTRATION ────────────────────────────────────────────────────
-from blueprints.fans import bp as _fans_bp
-from blueprints.modules import bp as _modules_bp
+from blueprints.fans     import bp as _fans_bp
+from blueprints.modules  import bp as _modules_bp
 from blueprints.terminal import bp as _terminal_bp
+from blueprints.spotify  import bp as _spotify_bp
+from blueprints.auth     import bp as _auth_bp
+from blueprints.vehicle  import bp as _vehicle_bp
+from blueprints.build    import bp as _build_bp
+from blueprints.nav      import bp as _nav_bp
 display_app.register_blueprint(_fans_bp)
 display_app.register_blueprint(_modules_bp)
 display_app.register_blueprint(_terminal_bp)
-
-# ── CSRF TOKEN (double-submit cookie, lightweight) ───────────────────────────
-_csrf_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd').encode()
-
-def _csrf_token_for(session_id: str) -> str:
-    return hmac.new(_csrf_secret, session_id.encode(), hashlib.sha256).hexdigest()[:32]
-
-def _validate_csrf(req) -> bool:
-    """Return True if request carries a valid CSRF token or is localhost-only."""
-    remote = req.remote_addr or ''
-    if remote in ('127.0.0.1', '::1'):
-        return True
-    sid = req.cookies.get('archer_sid', '')
-    if not sid:
-        log_security('CSRF_NO_SESSION', path=req.path, ip=remote)
-        return False
-    expected = _csrf_token_for(sid)
-    token    = req.headers.get('X-CSRF-Token', '')
-    if not hmac.compare_digest(token, expected):
-        log_security('CSRF_TOKEN_MISMATCH', path=req.path, ip=remote)
-        return False
-    return True
-
-def csrf_required(f):
-    """Decorator: reject requests missing a valid CSRF token (except localhost)."""
-    @functools.wraps(f)
-    def _wrapped(*args, **kwargs):
-        from flask import request as _r
-        if not _validate_csrf(_r):
-            return jsonify({'error': 'CSRF validation failed'}), 403
-        return f(*args, **kwargs)
-    return _wrapped
+display_app.register_blueprint(_spotify_bp)
+display_app.register_blueprint(_auth_bp)
+display_app.register_blueprint(_vehicle_bp)
+display_app.register_blueprint(_build_bp)
+display_app.register_blueprint(_nav_bp)
 
 @display_app.route('/csrf_token')
 def csrf_token_endpoint():
@@ -261,7 +252,7 @@ obd2_display = {
     'mode':      'default',
 }
 
-arduino_state = {'connected': False, 'port': None, 'conn': None}
+arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None}
 
 beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
 
@@ -620,61 +611,96 @@ def save_state():
         'weather_alerts':    [a['event'] for a in (_active_alert_ids and []) or []],
         'nav_places':        nav_places,
         'vehicle_config':    vehicle_config,
+        'geofences':         geofences,
+        'rivalry_full':      rivalry,
+        'trailer_full':      trailer,
+        'heat_soak_full':    heat_soak,
+        'crash_events_full': crash_detection['events'][-50:],
+        'compustar_log':     compustar['trigger_log'][-50:],
     }
     try:
-        tmp = SAVE_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
-    except Exception as e:
-        print(f'[ARCHER] save_state failed: {e}')
+        from db import db_save
+        db_save(data)
+    except Exception as _e:
+        print(f'[ARCHER] db_save failed: {_e}')
+    with _memory_lock:
+        try:
+            tmp = SAVE_FILE + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
+        except Exception as e:
+            print(f'[ARCHER] save_state JSON failed: {e}')
 
 def load_state():
     global current_road, current_profile
-    if not os.path.exists(SAVE_FILE):
-        return
+    data = None
     try:
-        with open(SAVE_FILE, 'r') as f:
-            data = json.load(f)
-        personal_bests.update(data.get('personal_bests', {}))
-        music_state['song_memories'] = data.get('music_memories', {})
-        music_state['song_lighting'] = data.get('song_lighting', {})
-        current_road = data.get('last_road', None)
-        tier_state['current'] = data.get('tier', 1)
-        archer_memory.update(data.get('archer_memory', {}))
-        nav_places.update(data.get('nav_places', {}))
-        legacy.update(data.get('legacy', {}))
-        if 'driver_profiles' in data:
-            driver_profiles.update(data['driver_profiles'])
-        current_profile = data.get('current_profile', 'ayden')
-        bluetooth_devices.update(data.get('bluetooth_devices', {}))
-        trip_log.extend(data.get('trip_log', []))
-        trusted_devices.update(data.get('trusted_devices', {}))
-        build_tracker.update(data.get('build_tracker', {}))
-        if 'parts' not in build_tracker: build_tracker['parts'] = []
-        if 'mods'  not in build_tracker: build_tracker['mods']  = []
-        build_specs.update(data.get('build_specs', {}))
-        maintenance_log.update(data.get('maintenance_log', {}))
-        odometer.update(data.get('odometer', {}))
-        fault_codes.extend(data.get('fault_codes', []))
-        race_session['runs'] = data.get('race_session_runs', [])
-        display_settings.update(data.get('display_settings', {}))
-        surveillance.update(data.get('surveillance', {}))
-        if 'cameras' not in surveillance: surveillance['cameras'] = {}
-        if 'valet_log' not in surveillance: surveillance['valet_log'] = []
-        drag_timer['runs']     = data.get('drag_runs', [])
-        drag_timer['best_et']  = data.get('drag_best_et')
-        drag_timer['best_mph'] = data.get('drag_best_mph')
-        parking_mode.update(data.get('parking_mode', {}))
-        audio_system.update(data.get('audio_system', {}))
-        location_data.update(data.get('location_data', {}))
-        vc = data.get('vehicle_config', {})
-        vehicle_config['make']  = vc.get('make')
-        vehicle_config['model'] = vc.get('model')
-        _recalc_build_spent()
-        print("[ARCHER] Memory loaded.")
-    except Exception:
-        print("[ARCHER] Starting fresh.")
+        from db import db_load, db_has_data
+        if db_has_data():
+            data = db_load()
+    except Exception as _e:
+        print(f'[ARCHER] SQLite load failed, falling back to JSON: {_e}')
+    if data is None:
+        if not os.path.exists(SAVE_FILE):
+            return
+        with _memory_lock:
+            try:
+                with open(SAVE_FILE, 'r') as f:
+                    data = json.load(f)
+            except Exception:
+                print("[ARCHER] Starting fresh.")
+                return
+    personal_bests.update(data.get('personal_bests', {}))
+    music_state['song_memories'] = data.get('music_memories', {})
+    music_state['song_lighting'] = data.get('song_lighting', {})
+    current_road = data.get('last_road', None)
+    tier_state['current'] = data.get('tier', 1)
+    archer_memory.update(data.get('archer_memory', {}))
+    nav_places.update(data.get('nav_places', {}))
+    legacy.update(data.get('legacy', {}))
+    if 'driver_profiles' in data:
+        driver_profiles.update(data['driver_profiles'])
+    current_profile = data.get('current_profile', 'ayden')
+    bluetooth_devices.update(data.get('bluetooth_devices', {}))
+    trip_log.extend(data.get('trip_log', []))
+    trusted_devices.update(data.get('trusted_devices', {}))
+    build_tracker.update(data.get('build_tracker', {}))
+    if 'parts' not in build_tracker: build_tracker['parts'] = []
+    if 'mods'  not in build_tracker: build_tracker['mods']  = []
+    build_specs.update(data.get('build_specs', {}))
+    maintenance_log.update(data.get('maintenance_log', {}))
+    odometer.update(data.get('odometer', {}))
+    fault_codes.extend(data.get('fault_codes', []))
+    race_session['runs'] = data.get('race_session_runs', [])
+    display_settings.update(data.get('display_settings', {}))
+    surveillance.update(data.get('surveillance', {}))
+    if 'cameras' not in surveillance: surveillance['cameras'] = {}
+    if 'valet_log' not in surveillance: surveillance['valet_log'] = []
+    drag_timer['runs']     = data.get('drag_runs', [])
+    drag_timer['best_et']  = data.get('drag_best_et')
+    drag_timer['best_mph'] = data.get('drag_best_mph')
+    parking_mode.update(data.get('parking_mode', {}))
+    audio_system.update(data.get('audio_system', {}))
+    location_data.update(data.get('location_data', {}))
+    vc = data.get('vehicle_config', {})
+    vehicle_config['make']  = vc.get('make')
+    vehicle_config['model'] = vc.get('model')
+    saved_fences = data.get('geofences', [])
+    if saved_fences:
+        geofences.clear()
+        geofences.extend(saved_fences)
+    rivalry.update(data.get('rivalry_full', {}))
+    trailer.update(data.get('trailer_full', {}))
+    heat_soak.update(data.get('heat_soak_full', {}))
+    saved_crashes = data.get('crash_events_full', [])
+    if saved_crashes:
+        crash_detection['events'].extend(saved_crashes)
+    saved_clog = data.get('compustar_log', [])
+    if saved_clog:
+        compustar['trigger_log'].extend(saved_clog)
+    _recalc_build_spent()
+    print("[ARCHER] Memory loaded.")
 
 # ── TIER SYSTEM ─────────────────────────
 tier_state = {'current': 1}
@@ -794,7 +820,8 @@ def get_tier_label():
 truck_state = {
     # ── Core engine ───────────────────────────────────────────
     'oil_temp': 195, 'coolant_temp': 190, 'rpm': 750, 'speed': 0,
-    'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': 13.6,
+    'ethanol': 0, 'boost': 0, 'battery_main': 13.8, 'battery_aux': None,
+    'battery_aux_live': False,   # True once Arduino dual-battery mod sends AUX_BATT: readings
     'exhaust': 30, 'tc_locked': False, 'tc_on': True, 'cool_on': False,
     'idle_on': False, 'bed_lights': False, 'hood_lights': False,
     'ghost_mode': False, 'octane': 87, 'octane_mode': 'AKI',
@@ -1480,6 +1507,8 @@ def update_awareness():
         warnings = []
         if oil > 225:                            warnings.append('oil_high')
         if truck_state['battery_main'] < 12.0:  warnings.append('battery_low')
+        if truck_state.get('battery_aux_live') and truck_state.get('battery_aux', 99) < 12.0:
+            warnings.append('battery_aux_low')
         if eth < 30 and boost > 5:              warnings.append('low_ethanol_under_boost')
         if rpm > 5800:                           warnings.append('near_redline')
         awareness['warnings_active'] = warnings
@@ -1631,6 +1660,8 @@ def get_display_data():
         'boost':         truck_state['boost'],
         'ethanol':       truck_state['ethanol'],
         'battery':       truck_state['battery_main'],
+        'battery_aux':      truck_state.get('battery_aux'),
+        'battery_aux_live': truck_state.get('battery_aux_live', False),
         'exhaust':       truck_state['exhaust'],
         'octane':        f"{truck_state['octane']} {truck_state['octane_mode']}",
         'tc_on':         truck_state['tc_on'],
@@ -3090,15 +3121,35 @@ parking_mode = {
 
 def activate_parking_mode(location=''):
     parking_mode['active']    = True
-    parking_mode['location']  = location or 'unknown location'
+    parking_mode['location']  = location or location_data.get('location_name') or 'unknown location'
     parking_mode['parked_at'] = datetime.now().strftime('%I:%M %p')
     arm_surveillance(True)
+    save_state()
     msg = f'Parking mode active at {parking_mode["location"]}. Surveillance armed.'
+    lat = location_data.get('lat', '')
+    lon = location_data.get('lon', '')
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    discord_alert(
+        'parking_armed',
+        f'🅿️ **Parked** at {parking_mode["location"]} — {parking_mode["parked_at"]}\n'
+        + (f'[Map]({maps_link})' if maps_link else ''),
+        title='PARKING MODE ON',
+        channel='alerts',
+        color=0x0055FF,
+    )
     return msg
 
 def deactivate_parking_mode():
     parking_mode['active'] = False
     arm_surveillance(False)
+    save_state()
+    discord_alert(
+        'parking_disarmed',
+        f'✅ Parking mode off. Back in the truck at {datetime.now().strftime("%I:%M %p")}.',
+        title='PARKING MODE OFF',
+        channel='alerts',
+        color=0x00AA44,
+    )
     return 'Parking mode off. Welcome back.'
 
 # ══════════════════════════════════════════
@@ -3107,18 +3158,26 @@ def deactivate_parking_mode():
 
 _LOC_CACHE = '/tmp/archer_location.json'
 def _load_location_cache():
+    # Try persistent memory first (survives reboot), then /tmp fallback
+    mem = archer_memory.get('last_known_location', {})
+    if mem.get('lat') is not None:
+        return mem.get('lat'), mem.get('lon'), mem.get('name', '')
     try:
         with open(_LOC_CACHE) as f:
             c = json.load(f)
         return c.get('lat'), c.get('lon'), c.get('name', '')
     except Exception:
         return None, None, ''
+
 def _save_location_cache(lat, lon, name):
+    # Write to both /tmp (fast) and archer_memory (persistent across reboots)
     try:
         with open(_LOC_CACHE, 'w') as f:
             json.dump({'lat': lat, 'lon': lon, 'name': name}, f)
     except Exception:
         pass
+    archer_memory['last_known_location'] = {'lat': lat, 'lon': lon, 'name': name}
+    save_state()
 
 _cached_lat, _cached_lon, _cached_name = _load_location_cache()
 location_data = {
@@ -3570,6 +3629,35 @@ def set_shock_sensitivity(level):
     save_state()
     return f'Shock sensitivity set to {level}.'
 
+def compustar_trigger(trigger_type='unknown'):
+    """Called when Compustar alarm fires (shock/tilt/door/hood)."""
+    if compustar['disarmed']:
+        return
+    event = {
+        'time':  datetime.now().strftime('%I:%M %p'),
+        'type':  trigger_type,
+        'lat':   location_data.get('lat'),
+        'lon':   location_data.get('lon'),
+        'loc':   location_data.get('location_name', 'unknown'),
+    }
+    compustar['trigger_log'].append(event)
+    compustar['last_trigger'] = event
+    parking_mode.setdefault('alerts', []).append(event)
+    save_state()
+    speak(f'Security alert. {trigger_type} detected on the truck.')
+    lat = event['lat']
+    lon = event['lon']
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    discord_alert(
+        f'compustar_{trigger_type}',
+        f'🚨 **{trigger_type.upper()} TRIGGERED** at {event["time"]}\n'
+        f'Location: {event["loc"]}'
+        + (f'\n[Map]({maps_link})' if maps_link else ''),
+        title='COMPUSTAR ALERT',
+        channel='alerts',
+        color=0xFF4400,
+    )
+
 # ══════════════════════════════════════════
 # HELIX DSP AUDIO PROCESSOR
 # ══════════════════════════════════════════
@@ -3606,15 +3694,40 @@ HELIX_PRESETS = {
     'night':     'Reduced bass. No rattles at night.',
 }
 
+HELIX_PRESET_BANDS = {
+    'daily':     {'60hz': 2,  '120hz': 1,  '250hz': 0,  '500hz': -1, '1khz': 0,  '2khz': 1,  '4khz': 0,  '8khz': 2,  '16khz': 1},
+    'bass':      {'60hz': 6,  '120hz': 4,  '250hz': 2,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': 0,  '8khz': 1,  '16khz': 1},
+    'stage':     {'60hz': 1,  '120hz': 1,  '250hz': 0,  '500hz': 0,  '1khz': 1,  '2khz': 2,  '4khz': 2,  '8khz': 3,  '16khz': 2},
+    'reference': {'60hz': 0,  '120hz': 0,  '250hz': 0,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': 0,  '8khz': 0,  '16khz': 0},
+    'night':     {'60hz': -2, '120hz': -1, '250hz': 0,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': -1, '8khz': -1, '16khz': -2},
+}
+
+def _helix_arduino_sync():
+    """Push Helix DSP settings to Arduino via serial for relay to processor."""
+    p = helix_dsp['preset']
+    bands = HELIX_PRESET_BANDS.get(p, {})
+    band_str = ','.join(f'{k}:{v}' for k, v in bands.items())
+    arduino_send(f'HELIX:PRESET:{p.upper()}')
+    arduino_send(f'HELIX:SUB:{helix_dsp["sub_level"]}')
+    arduino_send(f'HELIX:MID:{helix_dsp["mid_level"]}')
+    arduino_send(f'HELIX:HIGH:{helix_dsp["high_level"]}')
+    arduino_send(f'HELIX:FADER:{helix_dsp["fader_front"]},{helix_dsp["fader_rear"]}')
+    if band_str:
+        arduino_send(f'HELIX:EQ:{band_str}')
+
 def set_helix_preset(preset):
     if preset in HELIX_PRESETS:
         helix_dsp['preset'] = preset
+        if preset in HELIX_PRESET_BANDS:
+            helix_dsp['eq_bands'].update(HELIX_PRESET_BANDS[preset])
+        _helix_arduino_sync()
         save_state()
         return f'Helix preset: {HELIX_PRESETS[preset]}'
     return f'Presets: {", ".join(HELIX_PRESETS.keys())}.'
 
 def set_sub_level(pct):
     helix_dsp['sub_level'] = max(0, min(100, int(pct)))
+    arduino_send(f'HELIX:SUB:{helix_dsp["sub_level"]}')
     save_state()
     return f'Sub level at {helix_dsp["sub_level"]}%.'
 
@@ -3634,6 +3747,18 @@ ambient_lighting = {
     'master':   False,
 }
 
+def _ambient_arduino_sync():
+    """Push current ambient_lighting state to Arduino as AMBIENT:<zone>:<R>,<G>,<B>,<bri> commands."""
+    for zone_key, z in ambient_lighting['zones'].items():
+        col = z.get('color', '#000000').lstrip('#')
+        try:
+            r, g, b = int(col[0:2], 16), int(col[2:4], 16), int(col[4:6], 16)
+        except Exception:
+            r, g, b = 204, 0, 0
+        bri = z.get('brightness', 80)
+        state = 'ON' if z.get('on') else 'OFF'
+        arduino_send(f'AMBIENT:{zone_key.upper()}:{state}:{r},{g},{b},{bri}')
+
 def set_ambient(zone, on, color=None, brightness=None):
     if zone == 'all':
         for z in ambient_lighting['zones']:
@@ -3643,6 +3768,7 @@ def set_ambient(zone, on, color=None, brightness=None):
         ambient_lighting['zones'][zone]['on'] = on
         if color:      ambient_lighting['zones'][zone]['color']      = color
         if brightness: ambient_lighting['zones'][zone]['brightness'] = brightness
+    _ambient_arduino_sync()
     save_state()
     return f'Ambient {zone} {"on" if on else "off"}.'
 
@@ -3656,6 +3782,7 @@ def ambient_mode(mode):
         for z in ambient_lighting['zones']:
             ambient_lighting['zones'][z]['on'] = False
         ambient_lighting['master'] = False
+    _ambient_arduino_sync()
     save_state()
     return f'Ambient mode: {mode}.'
 
@@ -4423,6 +4550,17 @@ def check_crash():
         crash_detection['last_event'] = event
         speak(f'Impact detected. {round(g, 1)} G. Are you okay?')
         show_emergency_info()
+        lat  = location_data.get('lat', '')
+        lon  = location_data.get('lon', '')
+        loc  = location_data.get('location_name', '') or (f'{lat}, {lon}' if lat else 'unknown location')
+        discord_alert(
+            'crash',
+            f'⚠️ **Impact detected** — {round(g, 2)}G at {event["speed"]} mph\n'
+            f'Road: {event["road"]} | Location: {loc}\nTime: {event["time"]}',
+            title='CRASH ALERT',
+            channel='alerts',
+            color=0xFF0000,
+        )
 
 # ══════════════════════════════════════════
 # DROWSY DRIVING DETECTION
@@ -5211,9 +5349,10 @@ def log_moment(category, description):
         'road':     road_memory[current_road]['name'] if current_road else 'unknown',
         'weather':  f"{weather['temp']}F {weather['condition']}",
     }
-    archer_memory['moments'].append(moment)
-    if len(archer_memory['moments']) > 50:
-        archer_memory['moments'] = archer_memory['moments'][-50:]
+    with _memory_lock:
+        archer_memory['moments'].append(moment)
+        if len(archer_memory['moments']) > 50:
+            archer_memory['moments'] = archer_memory['moments'][-50:]
     save_state()
 
 def show_archer_memory():
@@ -5328,6 +5467,161 @@ def set_drive_mode(mode):
     return m['desc']
 
 # ── CASUAL CONVERSATION ──────────────────
+# ══════════════════════════════════════════
+# GEOFENCE BACKGROUND MONITOR
+# ══════════════════════════════════════════
+_geofence_inside: set = set()   # names of fences currently inside
+
+def geofence_monitor():
+    """Check active geofences every 15 s and announce enter/exit events."""
+    global _geofence_inside
+    time.sleep(30)
+    while True:
+        time.sleep(15)
+        if not geofences:
+            continue
+        lat = location_data.get('lat')
+        lon = location_data.get('lon')
+        if lat is None or lon is None:
+            continue
+        import math
+        now_inside: set = set()
+        for fence in geofences:
+            if not fence.get('active'):
+                continue
+            dlat = abs(lat - fence['lat']) * 69
+            dlon = abs(lon - fence['lon']) * 69 * math.cos(math.radians(fence['lat']))
+            dist = math.sqrt(dlat**2 + dlon**2)
+            if dist < fence['radius_miles']:
+                now_inside.add(fence['name'])
+        entered = now_inside - _geofence_inside
+        exited  = _geofence_inside - now_inside
+        for name in entered:
+            speak(f'Entering {name}.')
+            discord_alert(f'geo_enter_{name}', f'📍 Entered geofence: **{name}**', title='GEOFENCE', channel='alerts', color=0x0088FF)
+        for name in exited:
+            speak(f'Leaving {name}.')
+            discord_alert(f'geo_exit_{name}', f'📍 Left geofence: **{name}**', title='GEOFENCE', channel='alerts', color=0x888888)
+        _geofence_inside = now_inside
+
+# ══════════════════════════════════════════
+# HEAT SOAK ENFORCEMENT MONITOR
+# ══════════════════════════════════════════
+_HEAT_SOAK_BOOST_CAP = 8.0   # PSI cap when heat soak is critical
+
+def heat_soak_monitor():
+    """Every 30 s, check heat soak and cap boost if critical."""
+    time.sleep(60)
+    while True:
+        time.sleep(30)
+        ambient = weather.get('temp', 75)
+        intake  = sensor_data.get('intake_temp', ambient)
+        delta   = intake - ambient
+        if delta > 80:
+            heat_soak['heat_soak_risk']   = 'critical'
+            heat_soak['cool_down_needed'] = True
+            if truck_state.get('boost', 0) > _HEAT_SOAK_BOOST_CAP:
+                truck_state['boost'] = _HEAT_SOAK_BOOST_CAP
+            awareness['warnings_active'] = list(set(awareness['warnings_active']) | {'heat_soak_critical'})
+            discord_alert('heat_soak', f'🌡️ Heat soak CRITICAL — intake Δ{delta}°F over ambient. Boost capped at {_HEAT_SOAK_BOOST_CAP} PSI.', title='HEAT SOAK', channel='alerts', color=0xFF6600)
+        elif delta > 50:
+            heat_soak['heat_soak_risk'] = 'high'
+        elif delta > 25:
+            heat_soak['heat_soak_risk'] = 'moderate'
+        else:
+            heat_soak['heat_soak_risk']   = 'low'
+            heat_soak['cool_down_needed'] = False
+            awareness['warnings_active'] = [w for w in awareness['warnings_active'] if w != 'heat_soak_critical']
+
+# ══════════════════════════════════════════
+# TRAILER SWAY MONITOR
+# ══════════════════════════════════════════
+def trailer_sway_monitor():
+    """While trailer connected, watch lateral G-forces for sway every 2 s."""
+    while True:
+        time.sleep(2)
+        if not trailer['connected']:
+            continue
+        lateral_g = abs(sensor_data.get('accel_x', 0))
+        if lateral_g > 0.4 and not trailer['sway_detected']:
+            trailer['sway_detected'] = True
+            speak('Trailer sway detected. Ease off the throttle and hold the wheel steady.')
+            discord_alert('trailer_sway', f'⚠️ Trailer sway detected — {lateral_g:.2f}G lateral at {truck_state.get("speed", 0)} mph.', title='TRAILER SWAY', channel='alerts', color=0xFF8800)
+        elif lateral_g <= 0.2:
+            trailer['sway_detected'] = False
+
+# ══════════════════════════════════════════
+# VOICE NAVIGATION — TURN-BY-TURN
+# ══════════════════════════════════════════
+nav_session = {
+    'active':      False,
+    'dest_name':   '',
+    'dest_lat':    None,
+    'dest_lon':    None,
+    'steps':       [],   # list of {instruction, lat, lon, distance_m}
+    'step_index':  0,
+    'started_at':  None,
+    'eta_mins':    None,
+}
+
+def _haversine_m(la1, lo1, la2, lo2):
+    import math
+    R = 6_371_000
+    φ1, φ2 = math.radians(la1), math.radians(la2)
+    dφ = math.radians(la2 - la1)
+    dλ = math.radians(lo2 - lo1)
+    a  = math.sin(dφ/2)**2 + math.cos(φ1)*math.cos(φ2)*math.sin(dλ/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+def start_navigation(dest_name, dest_lat, dest_lon, steps):
+    nav_session.update({
+        'active':     True,
+        'dest_name':  dest_name,
+        'dest_lat':   float(dest_lat),
+        'dest_lon':   float(dest_lon),
+        'steps':      steps,
+        'step_index': 0,
+        'started_at': datetime.now().strftime('%I:%M %p'),
+    })
+    if steps:
+        first = steps[0].get('instruction', 'Head toward destination')
+        speak(f'Navigation started to {dest_name}. {first}')
+    return f'Navigation to {dest_name} started. {len(steps)} steps.'
+
+def stop_navigation():
+    nav_session['active'] = False
+    nav_session['steps']  = []
+    speak('Navigation off.')
+    return 'Navigation stopped.'
+
+def nav_turn_monitor():
+    """Announce turns 200m ahead and advance steps as they are reached."""
+    _announced_step = [-1]
+    while True:
+        time.sleep(3)
+        if not nav_session['active'] or not nav_session['steps']:
+            continue
+        lat = location_data.get('lat')
+        lon = location_data.get('lon')
+        if lat is None or lon is None:
+            continue
+        idx   = nav_session['step_index']
+        steps = nav_session['steps']
+        if idx >= len(steps):
+            speak(f'You have arrived at {nav_session["dest_name"]}.')
+            nav_session['active'] = False
+            continue
+        step = steps[idx]
+        dist = _haversine_m(lat, lon, float(step['lat']), float(step['lon']))
+        # Announce upcoming turn at ~200 m
+        if dist < 200 and _announced_step[0] != idx:
+            _announced_step[0] = idx
+            instr = step.get('instruction', 'Continue')
+            speak(instr)
+        # Advance to next step when within 30 m of waypoint
+        if dist < 30:
+            nav_session['step_index'] += 1
+
 def casual_monitor():
     global last_casual
     time.sleep(90)
@@ -7863,15 +8157,23 @@ def navigate_endpoint():
                         })
         except Exception as e:
             print(f'[NAV] OSRM failed: {e}')
-    print(f'[NAV] Route to {dest_name}: {round(total_dist_m*0.000621371,1)} mi, {round(total_dur_s/60)} min, {len(steps)} steps')
+    total_mi  = round(total_dist_m * 0.000621371, 1)
+    total_min = round(total_dur_s / 60)
+    print(f'[NAV] Route to {dest_name}: {total_mi} mi, {total_min} min, {len(steps)} steps')
+
+    # Auto-start voice navigation if ?auto_nav=1 and steps are available
+    if _req.args.get('auto_nav') == '1' and steps and lat and lon:
+        nav_session['eta_mins'] = total_min
+        threading.Thread(target=start_navigation, args=(dest_name, dest_lat, dest_lon, steps), daemon=True).start()
+
     return jsonify({
         'ok':                True,
         'destination':       dest_name,
         'dest_lat':          dest_lat,
         'dest_lon':          dest_lon,
         'steps':             steps,
-        'total_distance_mi': round(total_dist_m * 0.000621371, 1),
-        'total_duration_min':round(total_dur_s / 60),
+        'total_distance_mi': total_mi,
+        'total_duration_min':total_min,
     })
 
 DANGEROUS_COMMANDS = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
@@ -7899,6 +8201,7 @@ def _check_driving_rate(ip: str) -> bool:
 
 @display_app.route('/voice_command', methods=['POST'])
 @_limiter.limit('40 per minute; 200 per hour')
+@csrf_required
 def voice_command_endpoint():
     """POST /voice_command — process a voice command from any UI tier.
 
@@ -8006,6 +8309,7 @@ def _resolve_location_from_nws(lat, lon):
         _save_location_cache(lat, lon, fallback)
 
 @display_app.route('/location/update', methods=['POST'])
+@csrf_required
 def location_update_route():
     global _nws_station_url, _nws_forecast_url
     data = request.get_json() or {}
@@ -8013,21 +8317,28 @@ def location_update_route():
     lon  = data.get('lon')
     name = data.get('name', '')
     if lat is not None and lon is not None:
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid coordinates'}), 400
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            return jsonify({'error': 'Coordinates out of range'}), 400
         old_lat = location_data.get('lat')
         old_lon = location_data.get('lon')
-        location_data['lat'] = float(lat)
-        location_data['lon'] = float(lon)
+        location_data['lat'] = lat
+        location_data['lon'] = lon
         print(f'[GPS] received lat={lat}, lon={lon}  old=({old_lat},{old_lon})')
         if name:
             location_data['location_name'] = name
             print(f'[GPS] name from browser: {name}')
-        if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
+        if old_lat is None or old_lon is None or (abs(lat - old_lat) + abs(lon - old_lon) > 0.07):
             if not name:
                 location_data['location_name'] = ''
             _nws_station_url = None
             _nws_forecast_url = None
             weather['last_update'] = 0
-            threading.Thread(target=_resolve_location_from_nws, args=(float(lat), float(lon)), daemon=True).start()
+            threading.Thread(target=_resolve_location_from_nws, args=(lat, lon), daemon=True).start()
     return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
                     'name': location_data.get('location_name', '')})
 
@@ -8091,6 +8402,7 @@ def build_part_remove():
                     'parts': list(build_tracker['parts'])})
 
 @display_app.route('/register_device', methods=['POST'])
+@csrf_required
 def register_device_endpoint():
     from flask import request as flask_request
     data        = flask_request.get_json()
@@ -8103,6 +8415,7 @@ def register_device_endpoint():
     return jsonify({'ok': True, 'name': name, 'tier': tier})
 
 @display_app.route('/device_tier', methods=['POST'])
+@csrf_required
 def device_tier_endpoint():
     from flask import request as flask_request
     data        = flask_request.get_json()
@@ -8147,45 +8460,72 @@ def tier4_page():
 TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
 
 # Revoked session tokens: {token_str: expiry_unix_time}
-# Entries are pruned lazily on lookup to keep memory bounded.
-_revoked_tokens: dict = {}
+# Oldest entries are evicted when the cap is reached; expired entries pruned on lookup.
+_MAX_REVOKED = 10_000
+_revoked_tokens: collections.OrderedDict = collections.OrderedDict()
+# Revoked name+tier combinations: {'Name:tier': revoked_at_unix_time}
+# JWT tokens issued BEFORE this time for that name/tier are rejected.
+_revoked_names: dict = {}
 
 def _revoke_token(token: str):
     """Mark a session token as revoked for 30 days."""
+    if token in _revoked_tokens:
+        _revoked_tokens.move_to_end(token)
     _revoked_tokens[token] = time.time() + 86400 * 30
+    if len(_revoked_tokens) > _MAX_REVOKED:
+        _revoked_tokens.popitem(last=False)  # evict oldest
 
 def _revoke_by_name(name: str, tier: int):
-    """Revoke the deterministic token for a given name+tier combination."""
+    """Revoke all sessions for a given name+tier combination."""
     import hashlib as _hl2
-    secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-    token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+    token = _hl2.sha256(f'{name}{tier}{_ARCHER_SECRET}'.encode()).hexdigest()[:32]
     _revoke_token(token)
+    # Revoke all JWT sessions for this name+tier issued before now
+    _revoked_names[f'{name}:{tier}'] = time.time()
 
 def get_request_tier(request):
     """Resolve the tier for any request using MAC auth cookie, fingerprint, or both.
 
     Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
-    Checks revoked tokens so logout and MAC deregistration take effect immediately.
+    Accepts both HS256 JWT and legacy tier:name:hmac cookies for backward compat.
+    Checks revoked tokens/names so logout and MAC deregistration take effect immediately.
     """
     import hashlib as _hl
-    # 1. MAC auth cookie (primary system)
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
+        # 1a. Try JWT (HS256) format first
+        try:
+            payload = decode_auth_jwt(cookie_val)
+            tier = int(payload['tier'])
+            jti  = payload.get('jti', '')
+            name = payload.get('name', '')
+            now  = time.time()
+            # Prune expired revocations
+            for t in list(_revoked_tokens):
+                if _revoked_tokens[t] < now:
+                    del _revoked_tokens[t]
+            if jti and jti in _revoked_tokens:
+                return 5
+            revoked_at = _revoked_names.get(f'{name}:{tier}', 0)
+            if revoked_at and payload.get('iat', now) < revoked_at:
+                return 5
+            return max(1, min(4, tier))
+        except ValueError:
+            pass
+        # 1b. Legacy tier:name:hmac format (backward compat)
         try:
             parts = cookie_val.split(':')
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
-                if c_token == expected:
-                    # Prune expired revocations, then check
+                expected = _hl.sha256(f'{c_name}{c_tier}{_ARCHER_SECRET}'.encode()).hexdigest()[:32]
+                if hmac.compare_digest(c_token, expected):
                     now = time.time()
                     for t in list(_revoked_tokens):
                         if _revoked_tokens[t] < now:
                             del _revoked_tokens[t]
                     if c_token in _revoked_tokens:
-                        return 5  # treat revoked session as unauthenticated
-                    return int(c_tier)
+                        return 5
+                    return max(1, min(4, int(c_tier)))
         except Exception:
             pass
     # 2. Fingerprint system (legacy / in-cabin devices)
@@ -8193,25 +8533,33 @@ def get_request_tier(request):
     return get_device_tier(fp)
 
 @display_app.route('/logout', methods=['POST'])
+@csrf_required
 def logout():
-    """Invalidate the current session cookie and redirect to the sign-in page.
+    """Invalidate the current session cookie.
 
-    The token is added to _revoked_tokens so it is rejected immediately even if
-    the client still holds the cookie (e.g. if the 30-day max_age hasn't elapsed).
-    Safe to call without a valid session — always returns 200.
+    The token/jti is added to _revoked_tokens so it is rejected immediately even
+    if the client still holds the cookie. Safe to call without a valid session.
     """
     from flask import request as _lr, make_response as _mk
     cookie_val = _lr.cookies.get('archer_auth', '')
     if cookie_val:
-        parts = cookie_val.split(':')
-        if len(parts) == 3:
-            _revoke_token(parts[2])    # revoke the token portion
-            log_security('LOGOUT', name=parts[1] if len(parts) > 1 else '?')
+        try:
+            payload = decode_auth_jwt(cookie_val)
+            jti = payload.get('jti', '')
+            if jti:
+                _revoke_token(jti)
+            log_security('LOGOUT', name=payload.get('name', '?'))
+        except ValueError:
+            parts = cookie_val.split(':')
+            if len(parts) == 3:
+                _revoke_token(parts[2])
+                log_security('LOGOUT', name=parts[1])
     resp = _mk(jsonify({'ok': True}))
     resp.delete_cookie('archer_auth')
     return resp
 
 @display_app.route('/set_vehicle', methods=['POST'])
+@csrf_required
 def set_vehicle():
     """Record which truck was purchased (tier 1 only).
 
@@ -8676,15 +9024,11 @@ def index():
     # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
     owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
     if owner_pin and freq.args.get('pin') == owner_pin:
-        cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-        import hashlib as _hl2
-        token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:16]
-        resp = make_response()
-        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
+        jwt_val = make_auth_jwt(1, 'Ayden')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
         r2.headers['Cache-Control'] = 'no-store'
-        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
+        r2.set_cookie('archer_auth', jwt_val, max_age=86400*30, httponly=True, samesite='Lax')
         return r2
 
     # 1. Try MAC detection
@@ -8699,8 +9043,8 @@ def index():
                 parts = cookie_val.split(':')
                 if len(parts) == 3:
                     c_tier, c_name, c_token = parts
-                    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                    cookie_secret = _ARCHER_SECRET
+                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                     if c_token == expected:
                         tier_info = {'tier': int(c_tier), 'name': c_name}
                         print(f'[AUTH] Cookie auth: {c_name} Tier {c_tier}')
@@ -8948,7 +9292,6 @@ async function submitCode() {{
 def register_mac():
     """Register a new device using a one-time code."""
     from flask import request as freq, make_response
-    import hashlib as _hashlib
     data = freq.json or {}
     code = data.get('code', '').strip()
     mac  = data.get('mac', '').upper()
@@ -8982,14 +9325,10 @@ def register_mac():
         save_mac_whitelist(whitelist)
         print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
 
-    # Set auth cookie regardless
-    cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-    token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:16]
-    cookie_val = f'{tier}:{name}:{token}'
-
+    # Set auth cookie (HS256 JWT)
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
     resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', cookie_val, max_age=86400*30, httponly=True, samesite='Lax')
+    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax')
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
@@ -9188,9 +9527,7 @@ def revoke_code():
 def sign_in_code_status():
     """Return master code status and registered devices — Tier 1 only."""
     _check_master_auto_enable()
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     try:
         wl = load_mac_whitelist()
@@ -9239,9 +9576,7 @@ def sign_in_code_status():
 def sign_in_code_toggle():
     """Toggle master sign-in code on or off — Tier 1 only."""
     global _master_code_enabled
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     _master_code_enabled = not _master_code_enabled
     return jsonify({'success': True, 'enabled': _master_code_enabled})
@@ -9252,9 +9587,7 @@ def sign_in_code_toggle():
 def sign_in_code_refresh():
     """Generate a new master sign-in code — Tier 1 only."""
     global _master_code
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     import random as _r
     _master_code = str(_r.randint(100000, 999999))
@@ -9284,6 +9617,7 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
 
 @display_app.route('/notify_tier1', methods=['POST'])
 @_limiter.limit('20 per minute')
+@csrf_required
 def notify_tier1():
     from flask import request as freq
     # Require at least tier 2 (passenger) — reject unauthenticated senders
@@ -9304,6 +9638,7 @@ def get_tier_notifications():
     return jsonify({'notifications': list(tier_notifications)})
 
 @display_app.route('/tier_cancel', methods=['POST'])
+@csrf_required
 def tier_cancel():
     """Tier 2 cancels a pending request — removes it from queue."""
     from flask import request as freq
@@ -9321,6 +9656,7 @@ def tier_cancel():
     return jsonify({'ok': True})
 
 @display_app.route('/tier_respond', methods=['POST'])
+@csrf_required
 def tier_respond():
     from flask import request as freq
     ok, tier = require_tier1(freq)
@@ -9530,241 +9866,6 @@ def spotify_api(method, endpoint, data=None):
         print(f'[SPOTIFY] API error {endpoint}: {e}')
         return None
 
-@display_app.route('/spotify/dj', methods=['POST'])
-def spotify_dj_toggle():
-    dj_state['enabled'] = not dj_state['enabled']
-    if dj_state['enabled']:
-        dj_state['last_track_id'] = None   # re-announce current song
-        speak("DJ mode on. I've got the intro.")
-    else:
-        speak("DJ mode off.")
-    return jsonify({'enabled': dj_state['enabled']})
-
-@display_app.route('/spotify/disconnect')
-def spotify_disconnect():
-    spotify_tokens['access_token']  = None
-    spotify_tokens['refresh_token'] = None
-    spotify_tokens['expires_at']    = 0
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/login')
-def spotify_login():
-    """Redirect to Spotify OAuth."""
-    from flask import request as freq
-    redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
-    params = urllib.parse.urlencode({
-        'client_id':     SPOTIFY_CLIENT_ID,
-        'response_type': 'code',
-        'redirect_uri':  redirect_uri,
-        'scope':         SPOTIFY_SCOPES,
-        'show_dialog':   'true',
-    })
-    return json.dumps({'redirect': f'https://accounts.spotify.com/authorize?{params}'}), 200, {'Content-Type': 'application/json'}
-
-@display_app.route('/spotify/callback')
-def spotify_callback():
-    """Handle Spotify OAuth callback."""
-    from flask import request as freq
-    code  = freq.args.get('code')
-    error = freq.args.get('error')
-    if error or not code:
-        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
-    if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
-        import uuid as _suuid2
-        _bt2 = str(_suuid2.uuid4())
-        system_health['boot_tokens'][_bt2] = time.time() + 15
-        return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
-<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
-<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt2}'}},1000)</script></body></html>"""
-    try:
-        creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
-        redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
-        data  = urllib.parse.urlencode({
-            'grant_type':   'authorization_code',
-            'code':          code,
-            'redirect_uri':  redirect_uri,
-        }).encode()
-        req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
-                  headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            resp = json.loads(r.read())
-            spotify_tokens['access_token']  = resp['access_token']
-            spotify_tokens['refresh_token'] = resp.get('refresh_token')
-            spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
-            print(f'[SPOTIFY] Authenticated. Granted scopes: {resp.get("scope")}')
-            import uuid as _suuid
-            _bt = str(_suuid.uuid4())
-            system_health['boot_tokens'][_bt] = time.time() + 15
-            return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
-<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
-<div style="font-size:12px;color:#444">You can close this tab</div>
-<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt}'}},1500)</script></body></html>"""
-    except Exception as e:
-        print(f'[SPOTIFY] Token exchange failed: {e}')
-        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
-
-@display_app.route('/spotify/status')
-def spotify_status():
-    """Check if Spotify is connected and return current playback."""
-    if not spotify_tokens['access_token']:
-        return jsonify({'connected': False})
-    data = spotify_api('GET', 'me/player')
-    if not data:
-        return jsonify({'connected': True, 'playing': False, 'track': None})
-    item = data.get('item', {})
-    artists   = ', '.join(a['name'] for a in item.get('artists', []))
-    album     = item.get('album', {})
-    track_id  = item.get('id')
-    art_url   = _get_art_cached(track_id, album.get('images', []))
-    progress  = data.get('progress_ms', 0)
-    duration  = item.get('duration_ms', 1) or 1
-    progress_pct = round((progress / duration) * 100, 1)
-    intensity = _dj_intensity_level()
-    return jsonify({
-        'connected':      True,
-        'playing':        data.get('is_playing', False),
-        'track':          item.get('name', ''),
-        'track_id':       track_id,
-        'artist':         artists,
-        'album':          album.get('name', ''),
-        'art':            art_url,
-        'progress':       progress,
-        'progress_pct':   progress_pct,   # 0-100 percent
-        'duration':       duration,
-        'volume':         data.get('device', {}).get('volume_percent', 50),
-        'device':         data.get('device', {}).get('name', ''),
-        'dj_enabled':     dj_state['enabled'],
-        'dj_intensity':   intensity,       # calm / moderate / aggressive
-    })
-
-@display_app.route('/spotify/play', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_play():
-    spotify_api('PUT', 'me/player/play')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/pause', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_pause():
-    spotify_api('PUT', 'me/player/pause')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/next', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_next():
-    spotify_api('POST', 'me/player/next')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/prev', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_prev():
-    spotify_api('POST', 'me/player/previous')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/volume', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_volume():
-    from flask import request as freq
-    vol = int((freq.json or {}).get('volume', 50))
-    vol = max(0, min(100, vol))
-    spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/seek', methods=['POST'])
-@_limiter.limit('60 per minute')
-def spotify_seek():
-    """Seek to a position in the current track."""
-    from flask import request as freq
-    pos_ms = max(0, int((freq.json or {}).get('position_ms', 0)))
-    spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/playlists')
-def spotify_playlists():
-    """Return user playlists with optional intensity filter and driving-intensity suggestion."""
-    from flask import request as freq
-    intensity_filter = freq.args.get('intensity')   # 'aggressive' | 'moderate' | 'calm'
-    search_q         = (freq.args.get('q') or '').lower().strip()
-    try:
-        data = spotify_api('GET', 'me/playlists?limit=50')
-        if not data:
-            return jsonify({'playlists': [], 'suggested': None, 'intensity': _dj_intensity_level()})
-        playlists = []
-        for p in data.get('items', []):
-            try:
-                tracks_obj   = p.get('tracks')
-                tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
-                name_lower   = p['name'].lower()
-                # Tag playlist with detected intensity
-                detected_intensity = None
-                for lvl, keywords in DJ_PLAYLIST_KEYWORDS.items():
-                    if any(kw in name_lower for kw in keywords):
-                        detected_intensity = lvl
-                        break
-                # Apply filters
-                if intensity_filter and detected_intensity != intensity_filter:
-                    continue
-                if search_q and search_q not in name_lower:
-                    continue
-                playlists.append({
-                    'id':        p['id'],
-                    'name':      p['name'],
-                    'tracks':    tracks_total,
-                    'art':       p['images'][0]['url'] if p.get('images') else '',
-                    'intensity': detected_intensity,
-                })
-            except Exception:
-                continue
-
-        # Suggest a playlist that matches current driving intensity
-        current_intensity = _dj_intensity_level()
-        suggested = next(
-            (pl for pl in playlists if pl.get('intensity') == current_intensity),
-            None
-        )
-        return jsonify({
-            'playlists':       playlists,
-            'total':           len(playlists),
-            'intensity':       current_intensity,
-            'suggested':       suggested,
-            'dj_intensity_mode': dj_state.get('intensity_mode', 'auto'),
-        })
-    except Exception as e:
-        print(f'[SPOTIFY] Playlists error: {e}')
-        return jsonify({'error': str(e), 'playlists': []}), 500
-
-
-@display_app.route('/spotify/dj/intensity', methods=['POST'])
-@_limiter.limit('20 per minute')
-def spotify_dj_intensity():
-    """Override DJ intensity mode: auto | calm | moderate | aggressive."""
-    from flask import request as freq
-    mode = (freq.json or {}).get('mode', 'auto')
-    if mode not in ('auto', 'calm', 'moderate', 'aggressive'):
-        return jsonify({'error': 'Invalid mode'}), 400
-    dj_state['intensity_mode'] = mode
-    return jsonify({'intensity_mode': mode, 'current': _dj_intensity_level()})
-
-@display_app.route('/spotify/play_playlist', methods=['POST'])
-@_limiter.limit('20 per minute')
-def spotify_play_playlist():
-    from flask import request as freq
-    playlist_id = (freq.json or {}).get('playlist_id', '')
-    if playlist_id and isinstance(playlist_id, str) and len(playlist_id) < 64:
-        spotify_api('PUT', 'me/player/play', {'context_uri': f'spotify:playlist:{playlist_id}'})
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/queue')
-def spotify_queue():
-    data = spotify_api('GET', 'me/player/queue')
-    if not data:
-        return jsonify({'queue': []})
-    queue_items = []
-    for item in data.get('queue', [])[:8]:
-        artists = ', '.join(a['name'] for a in item.get('artists', []))
-        queue_items.append({'name': item.get('name',''), 'artist': artists,
-                            'duration': item.get('duration_ms', 0)})
-    return jsonify({'queue': queue_items})
 
 
 @display_app.route('/specs')
@@ -9958,9 +10059,8 @@ def boot_status():
     # 1. Archer core
     all_checks.append({'id': 'core', 'label': 'ARCHER CORE', 'status': 'ok', 'detail': f'up {uptime_s}s'})
 
-    # 2. Auth system
-    secret = os.environ.get('ARCHER_SECRET', '')
-    secret_ok = bool(secret) and secret != 'archer2500hd'
+    # 2. Auth system — flag if running with the known bad default or no env var set
+    secret_ok = bool(os.environ.get('ARCHER_SECRET'))
     all_checks.append({
         'id': 'auth', 'label': 'AUTH SYSTEM',
         'status': 'ok' if secret_ok else 'warn',
@@ -10086,6 +10186,7 @@ def boot_page():
 
 
 @display_app.route('/tpms', methods=['GET', 'POST'])
+@csrf_required
 def tpms_endpoint():
     """GET  → return current TPMS data for all four wheels.
     POST → update one or more wheel pressures.
@@ -10630,6 +10731,53 @@ load();
 # ── ARDUINO SERIAL ───────────────────────────────────────
 _ARDUINO_KEYWORDS = ('arduino', 'ch340', 'cp210', 'cp2102', 'ftdi', 'uno', 'mega', 'nano')
 
+def _arduino_reader(conn):
+    """Read telemetry lines from the Arduino.
+
+    Protocol — Arduino sends plain-text lines over serial:
+        AUX_BATT:12.8     — aux battery voltage (V), from a voltage-divider on A1
+                            wiring: aux battery + → 10kΩ → A1 → 3.3kΩ → GND
+                            formula in sketch: v = analogRead(A1) * (5.0/1023.0) * (10+3.3)/3.3
+
+    Add new sensor lines here as hardware is installed.
+    Runs in its own daemon thread while arduino_state['connected'] is True.
+    Sets battery_aux_live=False and exits when the connection drops.
+    """
+    print('[ARDUINO] Reader thread started')
+    try:
+        while arduino_state['connected']:
+            try:
+                raw = conn.readline()
+            except Exception as e:
+                print(f'[ARDUINO] Read error: {e}')
+                break
+            if not raw:
+                continue
+            line = raw.decode('utf-8', errors='replace').strip()
+            if not line:
+                continue
+
+            if line.startswith('AUX_BATT:'):
+                try:
+                    v = float(line[len('AUX_BATT:'):])
+                    if 8.0 <= v <= 16.5:    # sanity range for a 12V lead-acid system
+                        truck_state['battery_aux']      = round(v, 1)
+                        truck_state['battery_aux_live'] = True
+                        if v < 12.0:
+                            print(f'[ARCHER] ⚡ Aux battery low: {v}V')
+                except ValueError:
+                    pass
+
+            # ── Future sensors ───────────────────────────────────────────
+            # elif line.startswith('TACH:'):   — raw tach pulse count
+            # elif line.startswith('FUEL_LEVEL:'):   — resistive sender %
+            # ─────────────────────────────────────────────────────────────
+
+    finally:
+        truck_state['battery_aux_live'] = False
+        print('[ARDUINO] Reader thread stopped')
+
+
 def arduino_send(cmd):
     """Send a command to the Arduino over serial. Always logs to stdout."""
     print(f'[ARDUINO] → {cmd}')
@@ -10662,6 +10810,9 @@ def arduino_autodetect():
                             arduino_state['port']      = p.device
                             arduino_state['conn']      = conn
                             print(f'[ARDUINO] Connected on {p.device}')
+                            t = threading.Thread(target=_arduino_reader, args=(conn,), daemon=True)
+                            arduino_state['reader_thread'] = t
+                            t.start()
                         except Exception as e:
                             print(f'[ARDUINO] connect error: {e}')
                     break
@@ -10782,6 +10933,313 @@ def archer_os_status():
         'key_gen':             '/archer-os/obd-auth/keygen.sh',
         'build_script':        '/archer-os/build.sh',
     })
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE ROUTES — GEOFENCE, REMOTE START, COMPUSTAR, AMBIENT, HELIX,
+#                  TRAILER, PARKING, CRASH, RIVAL, NAVIGATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── GEOFENCE ─────────────────────────────────────────────
+@display_app.route('/geofence/add', methods=['POST'])
+@csrf_required
+def geofence_add():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data   = request.get_json() or {}
+    name   = data.get('name', '').strip()
+    lat    = data.get('lat')
+    lon    = data.get('lon')
+    radius = float(data.get('radius_miles', 0.5))
+    if not name or lat is None or lon is None:
+        return jsonify({'error': 'name, lat, and lon required'}), 400
+    msg = add_geofence(name, float(lat), float(lon), radius)
+    return jsonify({'ok': True, 'msg': msg, 'count': len(geofences)})
+
+@display_app.route('/geofence/list')
+def geofence_list():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({'geofences': geofences, 'count': len(geofences), 'inside': list(_geofence_inside)})
+
+@display_app.route('/geofence/remove', methods=['POST'])
+@csrf_required
+def geofence_remove():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    name = (request.get_json() or {}).get('name', '')
+    before = len(geofences)
+    geofences[:] = [f for f in geofences if f['name'] != name]
+    save_state()
+    removed = before - len(geofences)
+    return jsonify({'ok': True, 'removed': removed, 'count': len(geofences)})
+
+# ── REMOTE START / STOP ───────────────────────────────────
+@display_app.route('/remote/start', methods=['POST'])
+@csrf_required
+def remote_start_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = remote_start_engine()
+    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg or 'Starting.'})
+
+@display_app.route('/remote/stop', methods=['POST'])
+@csrf_required
+def remote_stop_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = remote_stop_engine()
+    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg})
+
+@display_app.route('/remote/status')
+def remote_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({
+        'status':        remote_start['status'],
+        'runtime_mins':  round(remote_start['runtime_mins'], 1),
+        'auto_off_mins': remote_start['auto_off_mins'],
+        'started_at':    remote_start['started_at'],
+        'warm_temp':     remote_start['warm_temp'],
+        'oil_temp':      truck_state.get('oil_temp'),
+    })
+
+# ── COMPUSTAR ─────────────────────────────────────────────
+@display_app.route('/compustar/arm', methods=['POST'])
+@csrf_required
+def compustar_arm_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({'ok': True, 'msg': arm_compustar(), 'armed': compustar['armed']})
+
+@display_app.route('/compustar/disarm', methods=['POST'])
+@csrf_required
+def compustar_disarm_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({'ok': True, 'msg': disarm_compustar(), 'armed': compustar['armed']})
+
+@display_app.route('/compustar/trigger', methods=['POST'])
+@csrf_required
+def compustar_trigger_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    ttype = (request.get_json() or {}).get('type', 'unknown')
+    compustar_trigger(ttype)
+    return jsonify({'ok': True, 'triggered': ttype, 'log_count': len(compustar['trigger_log'])})
+
+@display_app.route('/compustar/status')
+def compustar_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({
+        'armed':        compustar['armed'],
+        'disarmed':     compustar['disarmed'],
+        'shock_sens':   compustar['shock_sens'],
+        'tilt_sens':    compustar['tilt_sens'],
+        'panic_active': compustar['panic_active'],
+        'last_trigger': compustar['last_trigger'],
+        'trigger_count': len(compustar['trigger_log']),
+    })
+
+# ── AMBIENT LIGHTING ──────────────────────────────────────
+@display_app.route('/ambient/set', methods=['POST'])
+@csrf_required
+def ambient_set_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data       = request.get_json() or {}
+    zone       = data.get('zone', 'all')
+    on         = bool(data.get('on', True))
+    color      = data.get('color')
+    brightness = data.get('brightness')
+    msg = set_ambient(zone, on, color, brightness)
+    return jsonify({'ok': True, 'msg': msg, 'state': ambient_lighting})
+
+@display_app.route('/ambient/mode', methods=['POST'])
+@csrf_required
+def ambient_mode_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    mode = (request.get_json() or {}).get('mode', 'off')
+    msg  = ambient_mode(mode)
+    return jsonify({'ok': True, 'msg': msg, 'mode': ambient_lighting['mode']})
+
+@display_app.route('/ambient/status')
+def ambient_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({'zones': ambient_lighting['zones'], 'mode': ambient_lighting['mode'], 'master': ambient_lighting['master']})
+
+# ── HELIX DSP ─────────────────────────────────────────────
+@display_app.route('/helix/preset', methods=['POST'])
+@csrf_required
+def helix_preset_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    preset = (request.get_json() or {}).get('preset', '')
+    msg    = set_helix_preset(preset)
+    return jsonify({'ok': True, 'msg': msg, 'preset': helix_dsp['preset']})
+
+@display_app.route('/helix/sub', methods=['POST'])
+@csrf_required
+def helix_sub_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    pct = (request.get_json() or {}).get('level', helix_dsp['sub_level'])
+    msg = set_sub_level(pct)
+    return jsonify({'ok': True, 'msg': msg, 'sub_level': helix_dsp['sub_level']})
+
+@display_app.route('/helix/status')
+def helix_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({**helix_dsp, 'presets': HELIX_PRESETS})
+
+# ── TRAILER ───────────────────────────────────────────────
+@display_app.route('/trailer/connect', methods=['POST'])
+@csrf_required
+def trailer_connect_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data   = request.get_json() or {}
+    ttype  = data.get('type', '')
+    weight = data.get('weight', 0)
+    msg    = connect_trailer(ttype, weight)
+    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
+
+@display_app.route('/trailer/disconnect', methods=['POST'])
+@csrf_required
+def trailer_disconnect_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = disconnect_trailer()
+    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
+
+@display_app.route('/trailer/status')
+def trailer_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify(trailer)
+
+# ── PARKING MODE ──────────────────────────────────────────
+@display_app.route('/parking/activate', methods=['POST'])
+@csrf_required
+def parking_activate_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    location = (request.get_json() or {}).get('location', '')
+    msg      = activate_parking_mode(location)
+    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
+
+@display_app.route('/parking/deactivate', methods=['POST'])
+@csrf_required
+def parking_deactivate_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = deactivate_parking_mode()
+    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
+
+@display_app.route('/parking/status')
+def parking_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({**parking_mode, 'surveillance_armed': surveillance.get('armed', False)})
+
+# ── CRASH DETECTION ───────────────────────────────────────
+@display_app.route('/crash/events')
+def crash_events_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({
+        'enabled':    crash_detection['enabled'],
+        'threshold_g': crash_detection['threshold_g'],
+        'last_event': crash_detection['last_event'],
+        'events':     crash_detection['events'][-20:],
+        'count':      len(crash_detection['events']),
+    })
+
+@display_app.route('/crash/clear', methods=['POST'])
+@csrf_required
+def crash_clear_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    crash_detection['events']     = []
+    crash_detection['last_event'] = None
+    return jsonify({'ok': True})
+
+# ── RIVALRY ───────────────────────────────────────────────
+@display_app.route('/rival/set', methods=['POST'])
+@csrf_required
+def rival_set_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data = request.get_json() or {}
+    msg  = set_rival(data.get('name', ''), data.get('et'), data.get('mph'))
+    return jsonify({'ok': True, 'msg': msg, 'rivalry': rivalry})
+
+@display_app.route('/rival/status')
+def rival_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify(rivalry)
+
+@display_app.route('/rival/reset', methods=['POST'])
+@csrf_required
+def rival_reset_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    rivalry.update({'rival': '', 'rival_et': None, 'rival_mph': None, 'active': False, 'wins': 0, 'losses': 0, 'sessions': []})
+    save_state()
+    return jsonify({'ok': True, 'rivalry': rivalry})
+
+# ── VOICE NAVIGATION ──────────────────────────────────────
+@display_app.route('/navigate/start', methods=['POST'])
+@csrf_required
+def navigate_start_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data      = request.get_json() or {}
+    dest_name = data.get('dest_name', 'destination')
+    dest_lat  = data.get('dest_lat')
+    dest_lon  = data.get('dest_lon')
+    steps     = data.get('steps', [])
+    if dest_lat is None or dest_lon is None:
+        return jsonify({'error': 'dest_lat and dest_lon required'}), 400
+    msg = start_navigation(dest_name, dest_lat, dest_lon, steps)
+    return jsonify({'ok': True, 'msg': msg, 'steps': len(steps)})
+
+@display_app.route('/navigate/stop', methods=['POST'])
+@csrf_required
+def navigate_stop_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    msg = stop_navigation()
+    return jsonify({'ok': True, 'msg': msg})
+
+@display_app.route('/navigate/status')
+def navigate_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    idx   = nav_session['step_index']
+    steps = nav_session['steps']
+    return jsonify({
+        'active':       nav_session['active'],
+        'dest_name':    nav_session['dest_name'],
+        'dest_lat':     nav_session['dest_lat'],
+        'dest_lon':     nav_session['dest_lon'],
+        'step_index':   idx,
+        'total_steps':  len(steps),
+        'current_step': steps[idx] if idx < len(steps) else None,
+        'eta_mins':     nav_session['eta_mins'],
+        'started_at':   nav_session['started_at'],
+    })
+
+# ── HEAT SOAK ────────────────────────────────────────────
+@display_app.route('/heat_soak/status')
+def heat_soak_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({**heat_soak, 'boost_cap_active': heat_soak['heat_soak_risk'] == 'critical', 'boost_cap_psi': _HEAT_SOAK_BOOST_CAP})
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────
 def _obd_cmd(ser, cmd, timeout=2.0):
@@ -11040,6 +11498,10 @@ def main():
         (weather_alert_monitor,   'weather_alert_monitor'),
         (live_data_loop,          'live_data_loop'),
         (client_timeout_monitor,  'client_timeout_monitor'),
+        (geofence_monitor,        'geofence_monitor'),
+        (heat_soak_monitor,       'heat_soak_monitor'),
+        (trailer_sway_monitor,    'trailer_sway_monitor'),
+        (nav_turn_monitor,        'nav_turn_monitor'),
     ]
     for fn, name in _guarded_threads:
         threading.Thread(target=_guarded(fn, name), daemon=True).start()
@@ -11054,9 +11516,10 @@ def main():
     threading.Thread(target=obd_autodetect,      daemon=True).start()
     threading.Thread(target=arduino_autodetect,  daemon=True).start()
 
-    archer_memory['total_sessions'] += 1
-    if not archer_memory['first_drive']:
-        archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
+    with _memory_lock:
+        archer_memory['total_sessions'] += 1
+        if not archer_memory['first_drive']:
+            archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
 
     load_state()
 

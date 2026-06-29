@@ -5,9 +5,14 @@ Requires Tier 1 auth for all exec/stream endpoints.
 import os
 import re as _re
 import json
+import shlex
+import secrets as _secrets
 import subprocess
 import platform as _plt
 import time
+
+# Pi registration token — never fall back to a known hardcoded string
+_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
 
 from datetime import datetime
 from flask import Blueprint, jsonify, Response, request
@@ -32,23 +37,9 @@ TERMINAL_ALLOWED_TIERS = [1]
 
 
 def _get_request_tier(req):
-    """Resolve tier from auth cookie or fingerprint."""
-    import hashlib as _hl
+    """Delegate to archer.get_request_tier (supports JWT and legacy hmac format)."""
     import archer as _a
-    cookie_val = req.cookies.get('archer_auth', '')
-    if cookie_val:
-        try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
-                if c_token == expected:
-                    return int(c_tier)
-        except Exception:
-            pass
-    fp = req.args.get('fp') or req.cookies.get('archer_fp', 'unknown')
-    return _a.get_device_tier(fp)
+    return _a.get_request_tier(req)
 
 
 def _terminal_access_check(req):
@@ -367,6 +358,7 @@ def terminal_exec():
             "\nGPS / Location  (single-line, paste as-is)\n"
             "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
             "\nType any shell command to run it on the server.\n"
+            "For pipes or redirects, use: bash -c 'cmd | pipe'\n"
         )
         return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
 
@@ -383,13 +375,20 @@ def terminal_exec():
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
+        cmd_list = shlex.split(cmd)
+    except ValueError as e:
+        return jsonify({'error': f'Invalid command syntax: {e}'})
+    if not cmd_list:
+        return jsonify({'stdout': '', 'stderr': ''})
+    try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=15,
-            cwd='/app'
+            cmd_list, shell=False, capture_output=True, text=True, timeout=15,
         )
         return jsonify({'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode})
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'Command timed out (15s limit)'})
+    except FileNotFoundError:
+        return jsonify({'error': f'Command not found: {cmd_list[0]}'})
     except Exception as e:
         return jsonify({'error': str(e)})
 
@@ -439,8 +438,7 @@ def pi_register():
     """Pi calls this on connect to register its tunnel URL."""
     data  = request.get_json() or {}
     token = data.get('token', '')
-    pi_token = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
-    if token != pi_token:
+    if token != _ARCHER_PI_TOKEN:
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True

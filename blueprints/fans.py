@@ -7,7 +7,7 @@ import json
 
 from flask import Blueprint, jsonify, Response, request
 
-from archer_state import _limiter
+from archer_state import _limiter, decode_auth_jwt, _ARCHER_SECRET
 
 bp = Blueprint('fans', __name__)
 
@@ -20,16 +20,23 @@ def fan_page():
     user_info = None
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
+        # Try JWT first
         try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
-                if c_token == expected:
-                    user_info = {'tier': int(c_tier), 'name': c_name}
-        except Exception:
+            payload = decode_auth_jwt(cookie_val)
+            user_info = {'tier': int(payload['tier']), 'name': payload.get('name', '')}
+        except ValueError:
             pass
+        # Legacy tier:name:hmac format
+        if user_info is None:
+            try:
+                parts = cookie_val.split(':')
+                if len(parts) == 3:
+                    c_tier, c_name, c_token = parts
+                    expected = _hl.sha256(f'{c_name}{c_tier}{_ARCHER_SECRET}'.encode()).hexdigest()[:32]
+                    if c_token == expected:
+                        user_info = {'tier': int(c_tier), 'name': c_name}
+            except Exception:
+                pass
     user_json = json.dumps(user_info) if user_info else 'null'
     if os.path.exists('archer_fan.html'):
         with open('archer_fan.html', 'r', encoding='utf-8') as f:

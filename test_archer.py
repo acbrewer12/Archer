@@ -27,21 +27,44 @@ import archer  # noqa: E402
 
 threading.Thread.start = _real_thread_start
 
-client = archer.display_app.test_client()
 archer.display_app.config['TESTING'] = True
 
 
 # ── Helpers ──────────────────────────────────────────────────────
 def _make_cookie(tier: int, name: str = 'Tester') -> str:
     secret = os.environ['ARCHER_SECRET']
-    token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+    token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
     return f'{tier}:{name}:{token}'
+
+
+class _CsrfClient:
+    """Wraps a Flask test client and auto-injects X-CSRF-Token on every POST.
+
+    Calls GET /csrf_token on construction so the session cookie is set, then
+    includes the matching token header on all POST requests.  Every other method
+    is forwarded transparently to the underlying client.
+    """
+    def __init__(self, base_client):
+        self._c = base_client
+        r = base_client.get('/csrf_token')
+        self._token = json.loads(r.data)['token']
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def post(self, *args, **kwargs):
+        headers = dict(kwargs.pop('headers', None) or {})
+        headers.setdefault('X-CSRF-Token', self._token)
+        return self._c.post(*args, headers=headers, **kwargs)
+
+
+client = _CsrfClient(archer.display_app.test_client())
 
 
 def _authed_client(tier: int, name: str = 'Tester'):
     c = archer.display_app.test_client()
     c.set_cookie('archer_auth', _make_cookie(tier, name))
-    return c
+    return _CsrfClient(c)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -72,7 +95,7 @@ class TestGetRequestTier:
 
     def test_tampered_token_rejected(self):
         parts = _make_cookie(1).split(':')
-        parts[2] = 'AAAAAAAAAAAAAAAA'  # wrong token
+        parts[2] = 'A' * 32  # wrong token (32 hex chars to match expected length)
         bad_cookie = ':'.join(parts)
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth={bad_cookie}'}
@@ -103,7 +126,7 @@ class TestGetRequestTier:
 
     def test_wrong_secret_rejected(self):
         # Cookie signed with a different secret
-        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:16]
+        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:32]
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth=1:Ayden:{bad_token}'}
         ):
@@ -175,8 +198,7 @@ class TestDisplayData:
 # ═══════════════════════════════════════════════════════════════
 class TestVoiceCommand:
     def _post(self, command, tier=1, log_only=False):
-        c = archer.display_app.test_client()
-        c.set_cookie('archer_auth', _make_cookie(tier))
+        c = _authed_client(tier)
         return c.post('/voice_command', json={'command': command, 'log_only': log_only})
 
     def test_log_only_returns_empty(self):
@@ -539,7 +561,7 @@ class TestCookieFormat:
         assert len(parts) == 3
         assert parts[0] == '2'
         assert parts[1] == 'Khloe'
-        assert len(parts[2]) == 16
+        assert len(parts[2]) == 32
 
     def test_token_is_hex(self):
         parts = _make_cookie(1, 'Ayden').split(':')
@@ -704,8 +726,7 @@ class TestTierNotifications:
         archer.tier_notifications.clear()
         archer.tier_responses.clear()
 
-    # notify_tier1 requires at least tier 2 (passenger) + CSRF skipped in test
-    # because _validate_csrf returns True when no session token is set (test env)
+    # notify_tier1 requires at least tier 2 (passenger); CSRF handled by _CsrfClient
 
     def test_notify_returns_ok(self):
         c = _authed_client(2, 'Passenger')
@@ -1093,7 +1114,7 @@ class TestIndexRoute:
 class TestCookieTierBounds:
     def _make_signed_cookie(self, tier, name='Tester'):
         secret = os.environ['ARCHER_SECRET']
-        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
         return f'{tier}:{name}:{token}'
 
     def test_tier_zero_returns_int(self):
@@ -1114,15 +1135,15 @@ class TestCookieTierBounds:
             result = archer.get_request_tier(request)
             assert isinstance(result, int)
 
-    def test_tier_99_accepted_by_current_code(self):
-        # Documents current behavior — tier is not bounds-checked
+    def test_tier_99_clamped_to_4(self):
+        # Tier is now clamped to [1, 4] — tier 99 in cookie returns 4
         cookie = self._make_signed_cookie(99)
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth={cookie}'}
         ):
             from flask import request
             result = archer.get_request_tier(request)
-            assert isinstance(result, int)
+            assert result == 4, f'Expected 4 (clamped), got {result}'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1289,7 +1310,7 @@ class TestLogout:
         import hashlib as hl
         secret = os.environ['ARCHER_SECRET']
         name, tier = 'LogoutTest', 2
-        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
         c = _authed_client(tier, name)
         c.post('/logout')
         assert token in archer._revoked_tokens
