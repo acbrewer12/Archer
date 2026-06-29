@@ -92,7 +92,7 @@
   "trip_log": [
     {
       "date": "June 29 2026",
-      "time": "06:10 PM",
+      "time": "06:25 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -105,7 +105,7 @@
     },
     {
       "date": "June 29 2026",
-      "time": "06:10 PM",
+      "time": "06:25 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,38 +121,38 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     },
     "test-fp-pass": {
       "name": "Passenger",
       "tier": 2,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     },
     "test-fp-name": {
       "name": "Alice",
       "tier": 3,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     },
     "known-fp-99": {
       "name": "Me",
       "tier": 2,
-      "registered_at": "June 29 2026 06:10 PM"
+      "registered_at": "June 29 2026 06:25 PM"
     }
   },
   "build_tracker": {
     "parts": [
       {
-        "id": "18ab67c6",
+        "id": "ff840673",
         "name": "Cold Air Intake",
         "part_number": "",
         "category": "intake",
@@ -165,7 +165,7 @@
         "notes": ""
       },
       {
-        "id": "308be3af",
+        "id": "cc0cc348",
         "name": "Test Part",
         "part_number": "",
         "category": "other",
@@ -178,7 +178,7 @@
         "notes": ""
       },
       {
-        "id": "072403dc",
+        "id": "769857a3",
         "name": "Headers",
         "part_number": "",
         "category": "other",
@@ -191,7 +191,7 @@
         "notes": ""
       },
       {
-        "id": "4b4ff4d1",
+        "id": "33b08045",
         "name": "UpdateMe",
         "part_number": "",
         "category": "other",
@@ -204,7 +204,7 @@
         "notes": ""
       },
       {
-        "id": "d60a0feb",
+        "id": "018ff847",
         "name": "Dummy",
         "part_number": "",
         "category": "other",
@@ -217,7 +217,7 @@
         "notes": ""
       },
       {
-        "id": "4df48a03",
+        "id": "301d6b37",
         "name": "Tune",
         "part_number": "",
         "category": "other",
@@ -596,5 +596,34 @@
   "vehicle_config": {
     "make": "GMC",
     "model": "Sierra 2500HD"
-  }
+  },
+  "geofences": [],
+  "rivalry_full": {
+    "rival": "",
+    "rival_et": null,
+    "rival_mph": null,
+    "sessions": [],
+    "wins": 0,
+    "losses": 0,
+    "active": false
+  },
+  "trailer_full": {
+    "connected": false,
+    "est_weight_lbs": 0,
+    "type": "",
+    "brake_gain": 5,
+    "sway_detected": false,
+    "tow_rating_lbs": 13000,
+    "tongue_weight": 0
+  },
+  "heat_soak_full": {
+    "ic_inlet_temp": 75,
+    "ic_outlet_temp": 70,
+    "ic_efficiency": 95,
+    "heat_soak_risk": "low",
+    "cool_down_needed": false,
+    "soak_history": []
+  },
+  "crash_events_full": [],
+  "compustar_log": []
 }
