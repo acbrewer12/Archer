@@ -17,13 +17,10 @@ import * as Notifications    from 'expo-notifications';
 import * as Haptics          from 'expo-haptics';
 import NetInfo               from '@react-native-community/netinfo';
 
-const DEFAULT_PORT   = '7860';
-const STORE_KEY      = 'archer_server_ip';
-const POLL_MS        = 5000;
-const FAIL_THRESH    = 3;
-const TRUCK_SSID     = 'ARCHER-2500HD';
-const TRUCK_IP       = '192.168.4.1';
-const SPEAKING_MS    = 4000;
+const { buildUrl: _buildUrl, DEFAULT_PORT, TRUCK_IP, FAIL_THRESH, TRUCK_SSID } = require('./helpers');
+const STORE_KEY   = 'archer_server_ip';
+const POLL_MS     = 5000;
+const SPEAKING_MS = 4000;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -34,12 +31,7 @@ Notifications.setNotificationHandler({
 });
 
 // ── Helpers ──────────────────────────────────────────────
-function buildUrl(ip) {
-  if (!ip) return null;
-  if (ip.startsWith('http')) return ip.replace(/\/$/, '');
-  const [host, port] = ip.split(':');
-  return `http://${host}:${port || DEFAULT_PORT}`;
-}
+const buildUrl = _buildUrl;
 
 async function pingServer(baseUrl) {
   try {
@@ -372,7 +364,7 @@ export default function App() {
     return () => handler.remove();
   }, [canGoBack, serverUrl]);
 
-  const handleRetry = useCallback(() => setServerUrl(prev => prev), []);
+  const handleRetry = useCallback(() => { webRef.current?.reload(); }, []);
 
   if (loading) return <SplashScreen />;
 
@@ -382,7 +374,7 @@ export default function App() {
     (function() {
       document.body.style.overscrollBehavior = 'none';
       window.ARCHER_APP    = true;
-      window.ARCHER_SERVER = '${serverUrl}';
+      window.ARCHER_SERVER = ${JSON.stringify(serverUrl)};
     })();
     true;
   `;

@@ -138,6 +138,8 @@ import logging as _logging
 
 display_app            = Flask(__name__)
 display_app.secret_key = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+if not os.environ.get('ARCHER_SECRET'):
+    print('[ARCHER] WARNING: ARCHER_SECRET not set — running with insecure default. Set it in archer.env before driving.')
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -166,7 +168,12 @@ def _csrf_token_for(session_id: str) -> str:
     return hmac.new(_csrf_secret, session_id.encode(), hashlib.sha256).hexdigest()[:32]
 
 def _validate_csrf(req) -> bool:
-    """Return True if request carries a valid CSRF token or is localhost-only."""
+    """Return True if request carries a valid CSRF token.
+
+    Localhost (127.0.0.1 / ::1) is exempt: browsers cannot issue cross-site
+    requests to loopback addresses, so CSRF from a third-party page is
+    structurally impossible. This also covers Pi-local tooling and the test suite.
+    """
     remote = req.remote_addr or ''
     if remote in ('127.0.0.1', '::1'):
         return True
@@ -8018,21 +8025,28 @@ def location_update_route():
     lon  = data.get('lon')
     name = data.get('name', '')
     if lat is not None and lon is not None:
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid coordinates'}), 400
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            return jsonify({'error': 'Coordinates out of range'}), 400
         old_lat = location_data.get('lat')
         old_lon = location_data.get('lon')
-        location_data['lat'] = float(lat)
-        location_data['lon'] = float(lon)
+        location_data['lat'] = lat
+        location_data['lon'] = lon
         print(f'[GPS] received lat={lat}, lon={lon}  old=({old_lat},{old_lon})')
         if name:
             location_data['location_name'] = name
             print(f'[GPS] name from browser: {name}')
-        if old_lat is None or old_lon is None or (abs(float(lat) - old_lat) + abs(float(lon) - old_lon) > 0.07):
+        if old_lat is None or old_lon is None or (abs(lat - old_lat) + abs(lon - old_lon) > 0.07):
             if not name:
                 location_data['location_name'] = ''
             _nws_station_url = None
             _nws_forecast_url = None
             weather['last_update'] = 0
-            threading.Thread(target=_resolve_location_from_nws, args=(float(lat), float(lon)), daemon=True).start()
+            threading.Thread(target=_resolve_location_from_nws, args=(lat, lon), daemon=True).start()
     return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
                     'name': location_data.get('location_name', '')})
 
@@ -8152,18 +8166,23 @@ def tier4_page():
 TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
 
 # Revoked session tokens: {token_str: expiry_unix_time}
-# Entries are pruned lazily on lookup to keep memory bounded.
-_revoked_tokens: dict = {}
+# Oldest entries are evicted when the cap is reached; expired entries pruned on lookup.
+_MAX_REVOKED = 10_000
+_revoked_tokens: collections.OrderedDict = collections.OrderedDict()
 
 def _revoke_token(token: str):
     """Mark a session token as revoked for 30 days."""
+    if token in _revoked_tokens:
+        _revoked_tokens.move_to_end(token)
     _revoked_tokens[token] = time.time() + 86400 * 30
+    if len(_revoked_tokens) > _MAX_REVOKED:
+        _revoked_tokens.popitem(last=False)  # evict oldest
 
 def _revoke_by_name(name: str, tier: int):
     """Revoke the deterministic token for a given name+tier combination."""
     import hashlib as _hl2
     secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-    token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+    token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
     _revoke_token(token)
 
 def get_request_tier(request):
@@ -8181,7 +8200,7 @@ def get_request_tier(request):
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
                 cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                 if c_token == expected:
                     # Prune expired revocations, then check
                     now = time.time()
@@ -8190,7 +8209,7 @@ def get_request_tier(request):
                             del _revoked_tokens[t]
                     if c_token in _revoked_tokens:
                         return 5  # treat revoked session as unauthenticated
-                    return int(c_tier)
+                    return max(1, min(4, int(c_tier)))
         except Exception:
             pass
     # 2. Fingerprint system (legacy / in-cabin devices)
@@ -8683,7 +8702,7 @@ def index():
     if owner_pin and freq.args.get('pin') == owner_pin:
         cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
         import hashlib as _hl2
-        token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:16]
+        token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:32]
         resp = make_response()
         resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
         from flask import Response as FR
@@ -8705,7 +8724,7 @@ def index():
                 if len(parts) == 3:
                     c_tier, c_name, c_token = parts
                     cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                     if c_token == expected:
                         tier_info = {'tier': int(c_tier), 'name': c_name}
                         print(f'[AUTH] Cookie auth: {c_name} Tier {c_tier}')
@@ -8989,7 +9008,7 @@ def register_mac():
 
     # Set auth cookie regardless
     cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-    token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:16]
+    token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:32]
     cookie_val = f'{tier}:{name}:{token}'
 
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}

@@ -42,7 +42,7 @@ def _get_request_tier(req):
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
                 cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                 if c_token == expected:
                     return int(c_tier)
         except Exception:

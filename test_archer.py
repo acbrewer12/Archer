@@ -34,7 +34,7 @@ archer.display_app.config['TESTING'] = True
 # ── Helpers ──────────────────────────────────────────────────────
 def _make_cookie(tier: int, name: str = 'Tester') -> str:
     secret = os.environ['ARCHER_SECRET']
-    token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+    token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
     return f'{tier}:{name}:{token}'
 
 
@@ -72,7 +72,7 @@ class TestGetRequestTier:
 
     def test_tampered_token_rejected(self):
         parts = _make_cookie(1).split(':')
-        parts[2] = 'AAAAAAAAAAAAAAAA'  # wrong token
+        parts[2] = 'A' * 32  # wrong token (32 hex chars to match expected length)
         bad_cookie = ':'.join(parts)
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth={bad_cookie}'}
@@ -103,7 +103,7 @@ class TestGetRequestTier:
 
     def test_wrong_secret_rejected(self):
         # Cookie signed with a different secret
-        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:16]
+        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:32]
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth=1:Ayden:{bad_token}'}
         ):
@@ -539,7 +539,7 @@ class TestCookieFormat:
         assert len(parts) == 3
         assert parts[0] == '2'
         assert parts[1] == 'Khloe'
-        assert len(parts[2]) == 16
+        assert len(parts[2]) == 32
 
     def test_token_is_hex(self):
         parts = _make_cookie(1, 'Ayden').split(':')
@@ -1093,7 +1093,7 @@ class TestIndexRoute:
 class TestCookieTierBounds:
     def _make_signed_cookie(self, tier, name='Tester'):
         secret = os.environ['ARCHER_SECRET']
-        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
         return f'{tier}:{name}:{token}'
 
     def test_tier_zero_returns_int(self):
@@ -1289,7 +1289,7 @@ class TestLogout:
         import hashlib as hl
         secret = os.environ['ARCHER_SECRET']
         name, tier = 'LogoutTest', 2
-        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:16]
+        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
         c = _authed_client(tier, name)
         c.post('/logout')
         assert token in archer._revoked_tokens
