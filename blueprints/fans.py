@@ -5,14 +5,10 @@ All routes here are public (no tier auth required).
 import os
 import json
 import hashlib as _hl
-import secrets as _secrets
 
 from flask import Blueprint, jsonify, Response, request
 
-from archer_state import _limiter
-
-# Match the token length used by the main app
-_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
+from archer_state import _limiter, _ARCHER_SECRET
 
 bp = Blueprint('fans', __name__)
 

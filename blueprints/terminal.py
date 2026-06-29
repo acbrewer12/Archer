@@ -5,6 +5,7 @@ Requires Tier 1 auth for all exec/stream endpoints.
 import os
 import re as _re
 import json
+import shlex
 import secrets as _secrets
 import subprocess
 import platform as _plt
@@ -45,7 +46,7 @@ def _get_request_tier(req):
             parts = cookie_val.split(':')
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+                cookie_secret = _a._ARCHER_SECRET
                 expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                 if c_token == expected:
                     return int(c_tier)
@@ -371,6 +372,7 @@ def terminal_exec():
             "\nGPS / Location  (single-line, paste as-is)\n"
             "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
             "\nType any shell command to run it on the server.\n"
+            "For pipes or redirects, use: bash -c 'cmd | pipe'\n"
         )
         return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
 
@@ -387,13 +389,20 @@ def terminal_exec():
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
+        cmd_list = shlex.split(cmd)
+    except ValueError as e:
+        return jsonify({'error': f'Invalid command syntax: {e}'})
+    if not cmd_list:
+        return jsonify({'stdout': '', 'stderr': ''})
+    try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=15,
-            cwd='/app'
+            cmd_list, shell=False, capture_output=True, text=True, timeout=15,
         )
         return jsonify({'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode})
     except subprocess.TimeoutExpired:
         return jsonify({'error': 'Command timed out (15s limit)'})
+    except FileNotFoundError:
+        return jsonify({'error': f'Command not found: {cmd_list[0]}'})
     except Exception as e:
         return jsonify({'error': str(e)})
 

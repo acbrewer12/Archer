@@ -28,8 +28,9 @@ except ImportError:
     _ecu = None
 
 # ── LOG CAPTURE (captures all print() output into a ring buffer) ──
-_log_buffer = collections.deque(maxlen=2000)
-_log_lock   = threading.Lock()
+_log_buffer  = collections.deque(maxlen=2000)
+_log_lock    = threading.Lock()
+_memory_lock = threading.RLock()  # guards archer_memory and all global state writes
 
 class _TeeWriter:
     """Writes to original stdout AND appends to _log_buffer."""
@@ -102,13 +103,10 @@ def get_build_phase():
         return 2
     return 1
 
-# ── SECRETS — never fall back to a known string ──────────────────────────────
-# If ARCHER_SECRET is unset, a cryptographically random value is generated each
-# run.  Sessions won't survive restarts, but the secret is never publicly known.
-_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET') or secrets.token_hex(32)
-if not os.environ.get('ARCHER_SECRET'):
-    print('[SECURITY] WARNING: ARCHER_SECRET not set — using ephemeral random secret. '
-          'Sessions will not survive restarts. Set ARCHER_SECRET in archer.env before driving.')
+# ── SECRETS — sourced from archer_state (single authoritative location) ───────
+from archer_state import _ARCHER_SECRET, _csrf_token_for, _validate_csrf, csrf_required as _csrf_required_imported
+# Re-export so the rest of this module can use the same names unchanged.
+csrf_required = _csrf_required_imported
 
 if _IS_PI:
     try:
@@ -157,49 +155,14 @@ if not _LIMITER_AVAILABLE:
     print('[ARCHER] flask-limiter not installed — rate limiting disabled')
 
 # ── BLUEPRINT REGISTRATION ────────────────────────────────────────────────────
-from blueprints.fans import bp as _fans_bp
-from blueprints.modules import bp as _modules_bp
+from blueprints.fans     import bp as _fans_bp
+from blueprints.modules  import bp as _modules_bp
 from blueprints.terminal import bp as _terminal_bp
+from blueprints.spotify  import bp as _spotify_bp
 display_app.register_blueprint(_fans_bp)
 display_app.register_blueprint(_modules_bp)
 display_app.register_blueprint(_terminal_bp)
-
-# ── CSRF TOKEN (double-submit cookie, lightweight) ───────────────────────────
-_csrf_secret = _ARCHER_SECRET.encode()
-
-def _csrf_token_for(session_id: str) -> str:
-    return hmac.new(_csrf_secret, session_id.encode(), hashlib.sha256).hexdigest()[:32]
-
-def _validate_csrf(req) -> bool:
-    """Return True if request carries a valid CSRF token.
-
-    Localhost (127.0.0.1 / ::1) is exempt: browsers cannot issue cross-site
-    requests to loopback addresses, so CSRF from a third-party page is
-    structurally impossible. This also covers Pi-local tooling and the test suite.
-    """
-    remote = req.remote_addr or ''
-    if remote in ('127.0.0.1', '::1'):
-        return True
-    sid = req.cookies.get('archer_sid', '')
-    if not sid:
-        log_security('CSRF_NO_SESSION', path=req.path, ip=remote)
-        return False
-    expected = _csrf_token_for(sid)
-    token    = req.headers.get('X-CSRF-Token', '')
-    if not hmac.compare_digest(token, expected):
-        log_security('CSRF_TOKEN_MISMATCH', path=req.path, ip=remote)
-        return False
-    return True
-
-def csrf_required(f):
-    """Decorator: reject requests missing a valid CSRF token (except localhost)."""
-    @functools.wraps(f)
-    def _wrapped(*args, **kwargs):
-        from flask import request as _r
-        if not _validate_csrf(_r):
-            return jsonify({'error': 'CSRF validation failed'}), 403
-        return f(*args, **kwargs)
-    return _wrapped
+display_app.register_blueprint(_spotify_bp)
 
 @display_app.route('/csrf_token')
 def csrf_token_endpoint():
@@ -637,73 +600,76 @@ def save_state():
         'crash_events_full': crash_detection['events'][-50:],
         'compustar_log':     compustar['trigger_log'][-50:],
     }
-    try:
-        tmp = SAVE_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
-    except Exception as e:
-        print(f'[ARCHER] save_state failed: {e}')
+    with _memory_lock:
+        try:
+            tmp = SAVE_FILE + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
+        except Exception as e:
+            print(f'[ARCHER] save_state failed: {e}')
 
 def load_state():
     global current_road, current_profile
     if not os.path.exists(SAVE_FILE):
         return
-    try:
-        with open(SAVE_FILE, 'r') as f:
-            data = json.load(f)
-        personal_bests.update(data.get('personal_bests', {}))
-        music_state['song_memories'] = data.get('music_memories', {})
-        music_state['song_lighting'] = data.get('song_lighting', {})
-        current_road = data.get('last_road', None)
-        tier_state['current'] = data.get('tier', 1)
-        archer_memory.update(data.get('archer_memory', {}))
-        nav_places.update(data.get('nav_places', {}))
-        legacy.update(data.get('legacy', {}))
-        if 'driver_profiles' in data:
-            driver_profiles.update(data['driver_profiles'])
-        current_profile = data.get('current_profile', 'ayden')
-        bluetooth_devices.update(data.get('bluetooth_devices', {}))
-        trip_log.extend(data.get('trip_log', []))
-        trusted_devices.update(data.get('trusted_devices', {}))
-        build_tracker.update(data.get('build_tracker', {}))
-        if 'parts' not in build_tracker: build_tracker['parts'] = []
-        if 'mods'  not in build_tracker: build_tracker['mods']  = []
-        build_specs.update(data.get('build_specs', {}))
-        maintenance_log.update(data.get('maintenance_log', {}))
-        odometer.update(data.get('odometer', {}))
-        fault_codes.extend(data.get('fault_codes', []))
-        race_session['runs'] = data.get('race_session_runs', [])
-        display_settings.update(data.get('display_settings', {}))
-        surveillance.update(data.get('surveillance', {}))
-        if 'cameras' not in surveillance: surveillance['cameras'] = {}
-        if 'valet_log' not in surveillance: surveillance['valet_log'] = []
-        drag_timer['runs']     = data.get('drag_runs', [])
-        drag_timer['best_et']  = data.get('drag_best_et')
-        drag_timer['best_mph'] = data.get('drag_best_mph')
-        parking_mode.update(data.get('parking_mode', {}))
-        audio_system.update(data.get('audio_system', {}))
-        location_data.update(data.get('location_data', {}))
-        vc = data.get('vehicle_config', {})
-        vehicle_config['make']  = vc.get('make')
-        vehicle_config['model'] = vc.get('model')
-        saved_fences = data.get('geofences', [])
-        if saved_fences:
-            geofences.clear()
-            geofences.extend(saved_fences)
-        rivalry.update(data.get('rivalry_full', {}))
-        trailer.update(data.get('trailer_full', {}))
-        heat_soak.update(data.get('heat_soak_full', {}))
-        saved_crashes = data.get('crash_events_full', [])
-        if saved_crashes:
-            crash_detection['events'].extend(saved_crashes)
-        saved_clog = data.get('compustar_log', [])
-        if saved_clog:
-            compustar['trigger_log'].extend(saved_clog)
-        _recalc_build_spent()
-        print("[ARCHER] Memory loaded.")
-    except Exception:
-        print("[ARCHER] Starting fresh.")
+    with _memory_lock:
+        try:
+            with open(SAVE_FILE, 'r') as f:
+                data = json.load(f)
+        except Exception:
+            print("[ARCHER] Starting fresh.")
+            return
+    personal_bests.update(data.get('personal_bests', {}))
+    music_state['song_memories'] = data.get('music_memories', {})
+    music_state['song_lighting'] = data.get('song_lighting', {})
+    current_road = data.get('last_road', None)
+    tier_state['current'] = data.get('tier', 1)
+    archer_memory.update(data.get('archer_memory', {}))
+    nav_places.update(data.get('nav_places', {}))
+    legacy.update(data.get('legacy', {}))
+    if 'driver_profiles' in data:
+        driver_profiles.update(data['driver_profiles'])
+    current_profile = data.get('current_profile', 'ayden')
+    bluetooth_devices.update(data.get('bluetooth_devices', {}))
+    trip_log.extend(data.get('trip_log', []))
+    trusted_devices.update(data.get('trusted_devices', {}))
+    build_tracker.update(data.get('build_tracker', {}))
+    if 'parts' not in build_tracker: build_tracker['parts'] = []
+    if 'mods'  not in build_tracker: build_tracker['mods']  = []
+    build_specs.update(data.get('build_specs', {}))
+    maintenance_log.update(data.get('maintenance_log', {}))
+    odometer.update(data.get('odometer', {}))
+    fault_codes.extend(data.get('fault_codes', []))
+    race_session['runs'] = data.get('race_session_runs', [])
+    display_settings.update(data.get('display_settings', {}))
+    surveillance.update(data.get('surveillance', {}))
+    if 'cameras' not in surveillance: surveillance['cameras'] = {}
+    if 'valet_log' not in surveillance: surveillance['valet_log'] = []
+    drag_timer['runs']     = data.get('drag_runs', [])
+    drag_timer['best_et']  = data.get('drag_best_et')
+    drag_timer['best_mph'] = data.get('drag_best_mph')
+    parking_mode.update(data.get('parking_mode', {}))
+    audio_system.update(data.get('audio_system', {}))
+    location_data.update(data.get('location_data', {}))
+    vc = data.get('vehicle_config', {})
+    vehicle_config['make']  = vc.get('make')
+    vehicle_config['model'] = vc.get('model')
+    saved_fences = data.get('geofences', [])
+    if saved_fences:
+        geofences.clear()
+        geofences.extend(saved_fences)
+    rivalry.update(data.get('rivalry_full', {}))
+    trailer.update(data.get('trailer_full', {}))
+    heat_soak.update(data.get('heat_soak_full', {}))
+    saved_crashes = data.get('crash_events_full', [])
+    if saved_crashes:
+        crash_detection['events'].extend(saved_crashes)
+    saved_clog = data.get('compustar_log', [])
+    if saved_clog:
+        compustar['trigger_log'].extend(saved_clog)
+    _recalc_build_spent()
+    print("[ARCHER] Memory loaded.")
 
 # ── TIER SYSTEM ─────────────────────────
 tier_state = {'current': 1}
@@ -5352,9 +5318,10 @@ def log_moment(category, description):
         'road':     road_memory[current_road]['name'] if current_road else 'unknown',
         'weather':  f"{weather['temp']}F {weather['condition']}",
     }
-    archer_memory['moments'].append(moment)
-    if len(archer_memory['moments']) > 50:
-        archer_memory['moments'] = archer_memory['moments'][-50:]
+    with _memory_lock:
+        archer_memory['moments'].append(moment)
+        if len(archer_memory['moments']) > 50:
+            archer_memory['moments'] = archer_memory['moments'][-50:]
     save_state()
 
 def show_archer_memory():
@@ -8417,6 +8384,7 @@ def register_device_endpoint():
     return jsonify({'ok': True, 'name': name, 'tier': tier})
 
 @display_app.route('/device_tier', methods=['POST'])
+@csrf_required
 def device_tier_endpoint():
     from flask import request as flask_request
     data        = flask_request.get_json()
@@ -9854,250 +9822,6 @@ def spotify_api(method, endpoint, data=None):
         print(f'[SPOTIFY] API error {endpoint}: {e}')
         return None
 
-@display_app.route('/spotify/dj', methods=['POST'])
-@csrf_required
-def spotify_dj_toggle():
-    dj_state['enabled'] = not dj_state['enabled']
-    if dj_state['enabled']:
-        dj_state['last_track_id'] = None   # re-announce current song
-        speak("DJ mode on. I've got the intro.")
-    else:
-        speak("DJ mode off.")
-    return jsonify({'enabled': dj_state['enabled']})
-
-@display_app.route('/spotify/disconnect')
-def spotify_disconnect():
-    spotify_tokens['access_token']  = None
-    spotify_tokens['refresh_token'] = None
-    spotify_tokens['expires_at']    = 0
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/login')
-def spotify_login():
-    """Redirect to Spotify OAuth."""
-    from flask import request as freq
-    redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
-    params = urllib.parse.urlencode({
-        'client_id':     SPOTIFY_CLIENT_ID,
-        'response_type': 'code',
-        'redirect_uri':  redirect_uri,
-        'scope':         SPOTIFY_SCOPES,
-        'show_dialog':   'true',
-    })
-    return json.dumps({'redirect': f'https://accounts.spotify.com/authorize?{params}'}), 200, {'Content-Type': 'application/json'}
-
-@display_app.route('/spotify/callback')
-def spotify_callback():
-    """Handle Spotify OAuth callback."""
-    from flask import request as freq
-    code  = freq.args.get('code')
-    error = freq.args.get('error')
-    if error or not code:
-        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
-    if spotify_tokens['access_token'] and time.time() < spotify_tokens['expires_at']:
-        import uuid as _suuid2
-        _bt2 = str(_suuid2.uuid4())
-        system_health['boot_tokens'][_bt2] = time.time() + 15
-        return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
-<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">ALREADY CONNECTED</div>
-<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt2}'}},1000)</script></body></html>"""
-    try:
-        creds = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
-        redirect_uri = SPOTIFY_REDIRECT_URI or f'{freq.scheme}://{freq.host}/spotify/callback'
-        data  = urllib.parse.urlencode({
-            'grant_type':   'authorization_code',
-            'code':          code,
-            'redirect_uri':  redirect_uri,
-        }).encode()
-        req = urllib.request.Request('https://accounts.spotify.com/api/token', data=data,
-                  headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            resp = json.loads(r.read())
-            spotify_tokens['access_token']  = resp['access_token']
-            spotify_tokens['refresh_token'] = resp.get('refresh_token')
-            spotify_tokens['expires_at']    = time.time() + resp.get('expires_in', 3600) - 60
-            print(f'[SPOTIFY] Authenticated. Granted scopes: {resp.get("scope")}')
-            import uuid as _suuid
-            _bt = str(_suuid.uuid4())
-            system_health['boot_tokens'][_bt] = time.time() + 15
-            return f"""<html><head><style>body{{background:#000;color:#00cc44;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}}</style></head>
-<body><div style="font-size:32px">✓</div><div style="font-size:18px;letter-spacing:3px">SPOTIFY CONNECTED</div>
-<div style="font-size:12px;color:#444">You can close this tab</div>
-<script>setTimeout(()=>{{window.location.href='/display?spotify=ok&_bt={_bt}'}},1500)</script></body></html>"""
-    except Exception as e:
-        print(f'[SPOTIFY] Token exchange failed: {e}')
-        return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Token exchange failed: {e}</h2>'
-
-@display_app.route('/spotify/status')
-def spotify_status():
-    """Check if Spotify is connected and return current playback."""
-    if not spotify_tokens['access_token']:
-        return jsonify({'connected': False})
-    data = spotify_api('GET', 'me/player')
-    if not data:
-        return jsonify({'connected': True, 'playing': False, 'track': None})
-    item = data.get('item', {})
-    artists   = ', '.join(a['name'] for a in item.get('artists', []))
-    album     = item.get('album', {})
-    track_id  = item.get('id')
-    art_url   = _get_art_cached(track_id, album.get('images', []))
-    progress  = data.get('progress_ms', 0)
-    duration  = item.get('duration_ms', 1) or 1
-    progress_pct = round((progress / duration) * 100, 1)
-    intensity = _dj_intensity_level()
-    return jsonify({
-        'connected':      True,
-        'playing':        data.get('is_playing', False),
-        'track':          item.get('name', ''),
-        'track_id':       track_id,
-        'artist':         artists,
-        'album':          album.get('name', ''),
-        'art':            art_url,
-        'progress':       progress,
-        'progress_pct':   progress_pct,   # 0-100 percent
-        'duration':       duration,
-        'volume':         data.get('device', {}).get('volume_percent', 50),
-        'device':         data.get('device', {}).get('name', ''),
-        'dj_enabled':     dj_state['enabled'],
-        'dj_intensity':   intensity,       # calm / moderate / aggressive
-    })
-
-@display_app.route('/spotify/play', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_play():
-    spotify_api('PUT', 'me/player/play')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/pause', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_pause():
-    spotify_api('PUT', 'me/player/pause')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/next', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_next():
-    spotify_api('POST', 'me/player/next')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/prev', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_prev():
-    spotify_api('POST', 'me/player/previous')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/volume', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_volume():
-    from flask import request as freq
-    vol = int((freq.json or {}).get('volume', 50))
-    vol = max(0, min(100, vol))
-    spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/seek', methods=['POST'])
-@_limiter.limit('60 per minute')
-@csrf_required
-def spotify_seek():
-    """Seek to a position in the current track."""
-    from flask import request as freq
-    pos_ms = max(0, int((freq.json or {}).get('position_ms', 0)))
-    spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/playlists')
-def spotify_playlists():
-    """Return user playlists with optional intensity filter and driving-intensity suggestion."""
-    from flask import request as freq
-    intensity_filter = freq.args.get('intensity')   # 'aggressive' | 'moderate' | 'calm'
-    search_q         = (freq.args.get('q') or '').lower().strip()
-    try:
-        data = spotify_api('GET', 'me/playlists?limit=50')
-        if not data:
-            return jsonify({'playlists': [], 'suggested': None, 'intensity': _dj_intensity_level()})
-        playlists = []
-        for p in data.get('items', []):
-            try:
-                tracks_obj   = p.get('tracks')
-                tracks_total = tracks_obj.get('total') if isinstance(tracks_obj, dict) else None
-                name_lower   = p['name'].lower()
-                # Tag playlist with detected intensity
-                detected_intensity = None
-                for lvl, keywords in DJ_PLAYLIST_KEYWORDS.items():
-                    if any(kw in name_lower for kw in keywords):
-                        detected_intensity = lvl
-                        break
-                # Apply filters
-                if intensity_filter and detected_intensity != intensity_filter:
-                    continue
-                if search_q and search_q not in name_lower:
-                    continue
-                playlists.append({
-                    'id':        p['id'],
-                    'name':      p['name'],
-                    'tracks':    tracks_total,
-                    'art':       p['images'][0]['url'] if p.get('images') else '',
-                    'intensity': detected_intensity,
-                })
-            except Exception:
-                continue
-
-        # Suggest a playlist that matches current driving intensity
-        current_intensity = _dj_intensity_level()
-        suggested = next(
-            (pl for pl in playlists if pl.get('intensity') == current_intensity),
-            None
-        )
-        return jsonify({
-            'playlists':       playlists,
-            'total':           len(playlists),
-            'intensity':       current_intensity,
-            'suggested':       suggested,
-            'dj_intensity_mode': dj_state.get('intensity_mode', 'auto'),
-        })
-    except Exception as e:
-        print(f'[SPOTIFY] Playlists error: {e}')
-        return jsonify({'error': str(e), 'playlists': []}), 500
-
-
-@display_app.route('/spotify/dj/intensity', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def spotify_dj_intensity():
-    """Override DJ intensity mode: auto | calm | moderate | aggressive."""
-    from flask import request as freq
-    mode = (freq.json or {}).get('mode', 'auto')
-    if mode not in ('auto', 'calm', 'moderate', 'aggressive'):
-        return jsonify({'error': 'Invalid mode'}), 400
-    dj_state['intensity_mode'] = mode
-    return jsonify({'intensity_mode': mode, 'current': _dj_intensity_level()})
-
-@display_app.route('/spotify/play_playlist', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def spotify_play_playlist():
-    from flask import request as freq
-    playlist_id = (freq.json or {}).get('playlist_id', '')
-    if playlist_id and isinstance(playlist_id, str) and len(playlist_id) < 64:
-        spotify_api('PUT', 'me/player/play', {'context_uri': f'spotify:playlist:{playlist_id}'})
-    return jsonify({'ok': True})
-
-@display_app.route('/spotify/queue')
-def spotify_queue():
-    data = spotify_api('GET', 'me/player/queue')
-    if not data:
-        return jsonify({'queue': []})
-    queue_items = []
-    for item in data.get('queue', [])[:8]:
-        artists = ', '.join(a['name'] for a in item.get('artists', []))
-        queue_items.append({'name': item.get('name',''), 'artist': artists,
-                            'duration': item.get('duration_ms', 0)})
-    return jsonify({'queue': queue_items})
 
 
 @display_app.route('/specs')
@@ -10292,7 +10016,7 @@ def boot_status():
     all_checks.append({'id': 'core', 'label': 'ARCHER CORE', 'status': 'ok', 'detail': f'up {uptime_s}s'})
 
     # 2. Auth system — flag if running with the known bad default or no env var set
-    secret_ok = bool(os.environ.get('ARCHER_SECRET')) and _ARCHER_SECRET != 'archer2500hd'
+    secret_ok = bool(os.environ.get('ARCHER_SECRET'))
     all_checks.append({
         'id': 'auth', 'label': 'AUTH SYSTEM',
         'status': 'ok' if secret_ok else 'warn',
@@ -11748,9 +11472,10 @@ def main():
     threading.Thread(target=obd_autodetect,      daemon=True).start()
     threading.Thread(target=arduino_autodetect,  daemon=True).start()
 
-    archer_memory['total_sessions'] += 1
-    if not archer_memory['first_drive']:
-        archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
+    with _memory_lock:
+        archer_memory['total_sessions'] += 1
+        if not archer_memory['first_drive']:
+            archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
 
     load_state()
 

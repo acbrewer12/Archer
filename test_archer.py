@@ -27,7 +27,6 @@ import archer  # noqa: E402
 
 threading.Thread.start = _real_thread_start
 
-client = archer.display_app.test_client()
 archer.display_app.config['TESTING'] = True
 
 
@@ -38,10 +37,34 @@ def _make_cookie(tier: int, name: str = 'Tester') -> str:
     return f'{tier}:{name}:{token}'
 
 
+class _CsrfClient:
+    """Wraps a Flask test client and auto-injects X-CSRF-Token on every POST.
+
+    Calls GET /csrf_token on construction so the session cookie is set, then
+    includes the matching token header on all POST requests.  Every other method
+    is forwarded transparently to the underlying client.
+    """
+    def __init__(self, base_client):
+        self._c = base_client
+        r = base_client.get('/csrf_token')
+        self._token = json.loads(r.data)['token']
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def post(self, *args, **kwargs):
+        headers = dict(kwargs.pop('headers', None) or {})
+        headers.setdefault('X-CSRF-Token', self._token)
+        return self._c.post(*args, headers=headers, **kwargs)
+
+
+client = _CsrfClient(archer.display_app.test_client())
+
+
 def _authed_client(tier: int, name: str = 'Tester'):
     c = archer.display_app.test_client()
     c.set_cookie('archer_auth', _make_cookie(tier, name))
-    return c
+    return _CsrfClient(c)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -175,8 +198,7 @@ class TestDisplayData:
 # ═══════════════════════════════════════════════════════════════
 class TestVoiceCommand:
     def _post(self, command, tier=1, log_only=False):
-        c = archer.display_app.test_client()
-        c.set_cookie('archer_auth', _make_cookie(tier))
+        c = _authed_client(tier)
         return c.post('/voice_command', json={'command': command, 'log_only': log_only})
 
     def test_log_only_returns_empty(self):
@@ -704,8 +726,7 @@ class TestTierNotifications:
         archer.tier_notifications.clear()
         archer.tier_responses.clear()
 
-    # notify_tier1 requires at least tier 2 (passenger) + CSRF skipped in test
-    # because _validate_csrf returns True when no session token is set (test env)
+    # notify_tier1 requires at least tier 2 (passenger); CSRF handled by _CsrfClient
 
     def test_notify_returns_ok(self):
         c = _authed_client(2, 'Passenger')
