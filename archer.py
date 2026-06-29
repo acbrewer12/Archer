@@ -627,6 +627,12 @@ def save_state():
         'weather_alerts':    [a['event'] for a in (_active_alert_ids and []) or []],
         'nav_places':        nav_places,
         'vehicle_config':    vehicle_config,
+        'geofences':         geofences,
+        'rivalry_full':      rivalry,
+        'trailer_full':      trailer,
+        'heat_soak_full':    heat_soak,
+        'crash_events_full': crash_detection['events'][-50:],
+        'compustar_log':     compustar['trigger_log'][-50:],
     }
     try:
         tmp = SAVE_FILE + '.tmp'
@@ -678,6 +684,19 @@ def load_state():
         vc = data.get('vehicle_config', {})
         vehicle_config['make']  = vc.get('make')
         vehicle_config['model'] = vc.get('model')
+        saved_fences = data.get('geofences', [])
+        if saved_fences:
+            geofences.clear()
+            geofences.extend(saved_fences)
+        rivalry.update(data.get('rivalry_full', {}))
+        trailer.update(data.get('trailer_full', {}))
+        heat_soak.update(data.get('heat_soak_full', {}))
+        saved_crashes = data.get('crash_events_full', [])
+        if saved_crashes:
+            crash_detection['events'].extend(saved_crashes)
+        saved_clog = data.get('compustar_log', [])
+        if saved_clog:
+            compustar['trigger_log'].extend(saved_clog)
         _recalc_build_spent()
         print("[ARCHER] Memory loaded.")
     except Exception:
@@ -3102,15 +3121,35 @@ parking_mode = {
 
 def activate_parking_mode(location=''):
     parking_mode['active']    = True
-    parking_mode['location']  = location or 'unknown location'
+    parking_mode['location']  = location or location_data.get('location_name') or 'unknown location'
     parking_mode['parked_at'] = datetime.now().strftime('%I:%M %p')
     arm_surveillance(True)
+    save_state()
     msg = f'Parking mode active at {parking_mode["location"]}. Surveillance armed.'
+    lat = location_data.get('lat', '')
+    lon = location_data.get('lon', '')
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    discord_alert(
+        'parking_armed',
+        f'🅿️ **Parked** at {parking_mode["location"]} — {parking_mode["parked_at"]}\n'
+        + (f'[Map]({maps_link})' if maps_link else ''),
+        title='PARKING MODE ON',
+        channel='alerts',
+        color=0x0055FF,
+    )
     return msg
 
 def deactivate_parking_mode():
     parking_mode['active'] = False
     arm_surveillance(False)
+    save_state()
+    discord_alert(
+        'parking_disarmed',
+        f'✅ Parking mode off. Back in the truck at {datetime.now().strftime("%I:%M %p")}.',
+        title='PARKING MODE OFF',
+        channel='alerts',
+        color=0x00AA44,
+    )
     return 'Parking mode off. Welcome back.'
 
 # ══════════════════════════════════════════
@@ -3119,18 +3158,26 @@ def deactivate_parking_mode():
 
 _LOC_CACHE = '/tmp/archer_location.json'
 def _load_location_cache():
+    # Try persistent memory first (survives reboot), then /tmp fallback
+    mem = archer_memory.get('last_known_location', {})
+    if mem.get('lat') is not None:
+        return mem.get('lat'), mem.get('lon'), mem.get('name', '')
     try:
         with open(_LOC_CACHE) as f:
             c = json.load(f)
         return c.get('lat'), c.get('lon'), c.get('name', '')
     except Exception:
         return None, None, ''
+
 def _save_location_cache(lat, lon, name):
+    # Write to both /tmp (fast) and archer_memory (persistent across reboots)
     try:
         with open(_LOC_CACHE, 'w') as f:
             json.dump({'lat': lat, 'lon': lon, 'name': name}, f)
     except Exception:
         pass
+    archer_memory['last_known_location'] = {'lat': lat, 'lon': lon, 'name': name}
+    save_state()
 
 _cached_lat, _cached_lon, _cached_name = _load_location_cache()
 location_data = {
@@ -3582,6 +3629,35 @@ def set_shock_sensitivity(level):
     save_state()
     return f'Shock sensitivity set to {level}.'
 
+def compustar_trigger(trigger_type='unknown'):
+    """Called when Compustar alarm fires (shock/tilt/door/hood)."""
+    if compustar['disarmed']:
+        return
+    event = {
+        'time':  datetime.now().strftime('%I:%M %p'),
+        'type':  trigger_type,
+        'lat':   location_data.get('lat'),
+        'lon':   location_data.get('lon'),
+        'loc':   location_data.get('location_name', 'unknown'),
+    }
+    compustar['trigger_log'].append(event)
+    compustar['last_trigger'] = event
+    parking_mode.setdefault('alerts', []).append(event)
+    save_state()
+    speak(f'Security alert. {trigger_type} detected on the truck.')
+    lat = event['lat']
+    lon = event['lon']
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    discord_alert(
+        f'compustar_{trigger_type}',
+        f'🚨 **{trigger_type.upper()} TRIGGERED** at {event["time"]}\n'
+        f'Location: {event["loc"]}'
+        + (f'\n[Map]({maps_link})' if maps_link else ''),
+        title='COMPUSTAR ALERT',
+        channel='alerts',
+        color=0xFF4400,
+    )
+
 # ══════════════════════════════════════════
 # HELIX DSP AUDIO PROCESSOR
 # ══════════════════════════════════════════
@@ -3618,15 +3694,40 @@ HELIX_PRESETS = {
     'night':     'Reduced bass. No rattles at night.',
 }
 
+HELIX_PRESET_BANDS = {
+    'daily':     {'60hz': 2,  '120hz': 1,  '250hz': 0,  '500hz': -1, '1khz': 0,  '2khz': 1,  '4khz': 0,  '8khz': 2,  '16khz': 1},
+    'bass':      {'60hz': 6,  '120hz': 4,  '250hz': 2,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': 0,  '8khz': 1,  '16khz': 1},
+    'stage':     {'60hz': 1,  '120hz': 1,  '250hz': 0,  '500hz': 0,  '1khz': 1,  '2khz': 2,  '4khz': 2,  '8khz': 3,  '16khz': 2},
+    'reference': {'60hz': 0,  '120hz': 0,  '250hz': 0,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': 0,  '8khz': 0,  '16khz': 0},
+    'night':     {'60hz': -2, '120hz': -1, '250hz': 0,  '500hz': 0,  '1khz': 0,  '2khz': 0,  '4khz': -1, '8khz': -1, '16khz': -2},
+}
+
+def _helix_arduino_sync():
+    """Push Helix DSP settings to Arduino via serial for relay to processor."""
+    p = helix_dsp['preset']
+    bands = HELIX_PRESET_BANDS.get(p, {})
+    band_str = ','.join(f'{k}:{v}' for k, v in bands.items())
+    arduino_send(f'HELIX:PRESET:{p.upper()}')
+    arduino_send(f'HELIX:SUB:{helix_dsp["sub_level"]}')
+    arduino_send(f'HELIX:MID:{helix_dsp["mid_level"]}')
+    arduino_send(f'HELIX:HIGH:{helix_dsp["high_level"]}')
+    arduino_send(f'HELIX:FADER:{helix_dsp["fader_front"]},{helix_dsp["fader_rear"]}')
+    if band_str:
+        arduino_send(f'HELIX:EQ:{band_str}')
+
 def set_helix_preset(preset):
     if preset in HELIX_PRESETS:
         helix_dsp['preset'] = preset
+        if preset in HELIX_PRESET_BANDS:
+            helix_dsp['eq_bands'].update(HELIX_PRESET_BANDS[preset])
+        _helix_arduino_sync()
         save_state()
         return f'Helix preset: {HELIX_PRESETS[preset]}'
     return f'Presets: {", ".join(HELIX_PRESETS.keys())}.'
 
 def set_sub_level(pct):
     helix_dsp['sub_level'] = max(0, min(100, int(pct)))
+    arduino_send(f'HELIX:SUB:{helix_dsp["sub_level"]}')
     save_state()
     return f'Sub level at {helix_dsp["sub_level"]}%.'
 
@@ -3646,6 +3747,18 @@ ambient_lighting = {
     'master':   False,
 }
 
+def _ambient_arduino_sync():
+    """Push current ambient_lighting state to Arduino as AMBIENT:<zone>:<R>,<G>,<B>,<bri> commands."""
+    for zone_key, z in ambient_lighting['zones'].items():
+        col = z.get('color', '#000000').lstrip('#')
+        try:
+            r, g, b = int(col[0:2], 16), int(col[2:4], 16), int(col[4:6], 16)
+        except Exception:
+            r, g, b = 204, 0, 0
+        bri = z.get('brightness', 80)
+        state = 'ON' if z.get('on') else 'OFF'
+        arduino_send(f'AMBIENT:{zone_key.upper()}:{state}:{r},{g},{b},{bri}')
+
 def set_ambient(zone, on, color=None, brightness=None):
     if zone == 'all':
         for z in ambient_lighting['zones']:
@@ -3655,6 +3768,7 @@ def set_ambient(zone, on, color=None, brightness=None):
         ambient_lighting['zones'][zone]['on'] = on
         if color:      ambient_lighting['zones'][zone]['color']      = color
         if brightness: ambient_lighting['zones'][zone]['brightness'] = brightness
+    _ambient_arduino_sync()
     save_state()
     return f'Ambient {zone} {"on" if on else "off"}.'
 
@@ -3668,6 +3782,7 @@ def ambient_mode(mode):
         for z in ambient_lighting['zones']:
             ambient_lighting['zones'][z]['on'] = False
         ambient_lighting['master'] = False
+    _ambient_arduino_sync()
     save_state()
     return f'Ambient mode: {mode}.'
 
@@ -4435,6 +4550,17 @@ def check_crash():
         crash_detection['last_event'] = event
         speak(f'Impact detected. {round(g, 1)} G. Are you okay?')
         show_emergency_info()
+        lat  = location_data.get('lat', '')
+        lon  = location_data.get('lon', '')
+        loc  = location_data.get('location_name', '') or (f'{lat}, {lon}' if lat else 'unknown location')
+        discord_alert(
+            'crash',
+            f'⚠️ **Impact detected** — {round(g, 2)}G at {event["speed"]} mph\n'
+            f'Road: {event["road"]} | Location: {loc}\nTime: {event["time"]}',
+            title='CRASH ALERT',
+            channel='alerts',
+            color=0xFF0000,
+        )
 
 # ══════════════════════════════════════════
 # DROWSY DRIVING DETECTION
@@ -5340,6 +5466,161 @@ def set_drive_mode(mode):
     return m['desc']
 
 # ── CASUAL CONVERSATION ──────────────────
+# ══════════════════════════════════════════
+# GEOFENCE BACKGROUND MONITOR
+# ══════════════════════════════════════════
+_geofence_inside: set = set()   # names of fences currently inside
+
+def geofence_monitor():
+    """Check active geofences every 15 s and announce enter/exit events."""
+    global _geofence_inside
+    time.sleep(30)
+    while True:
+        time.sleep(15)
+        if not geofences:
+            continue
+        lat = location_data.get('lat')
+        lon = location_data.get('lon')
+        if lat is None or lon is None:
+            continue
+        import math
+        now_inside: set = set()
+        for fence in geofences:
+            if not fence.get('active'):
+                continue
+            dlat = abs(lat - fence['lat']) * 69
+            dlon = abs(lon - fence['lon']) * 69 * math.cos(math.radians(fence['lat']))
+            dist = math.sqrt(dlat**2 + dlon**2)
+            if dist < fence['radius_miles']:
+                now_inside.add(fence['name'])
+        entered = now_inside - _geofence_inside
+        exited  = _geofence_inside - now_inside
+        for name in entered:
+            speak(f'Entering {name}.')
+            discord_alert(f'geo_enter_{name}', f'📍 Entered geofence: **{name}**', title='GEOFENCE', channel='alerts', color=0x0088FF)
+        for name in exited:
+            speak(f'Leaving {name}.')
+            discord_alert(f'geo_exit_{name}', f'📍 Left geofence: **{name}**', title='GEOFENCE', channel='alerts', color=0x888888)
+        _geofence_inside = now_inside
+
+# ══════════════════════════════════════════
+# HEAT SOAK ENFORCEMENT MONITOR
+# ══════════════════════════════════════════
+_HEAT_SOAK_BOOST_CAP = 8.0   # PSI cap when heat soak is critical
+
+def heat_soak_monitor():
+    """Every 30 s, check heat soak and cap boost if critical."""
+    time.sleep(60)
+    while True:
+        time.sleep(30)
+        ambient = weather.get('temp', 75)
+        intake  = sensor_data.get('intake_temp', ambient)
+        delta   = intake - ambient
+        if delta > 80:
+            heat_soak['heat_soak_risk']   = 'critical'
+            heat_soak['cool_down_needed'] = True
+            if truck_state.get('boost', 0) > _HEAT_SOAK_BOOST_CAP:
+                truck_state['boost'] = _HEAT_SOAK_BOOST_CAP
+            awareness['warnings_active'] = list(set(awareness['warnings_active']) | {'heat_soak_critical'})
+            discord_alert('heat_soak', f'🌡️ Heat soak CRITICAL — intake Δ{delta}°F over ambient. Boost capped at {_HEAT_SOAK_BOOST_CAP} PSI.', title='HEAT SOAK', channel='alerts', color=0xFF6600)
+        elif delta > 50:
+            heat_soak['heat_soak_risk'] = 'high'
+        elif delta > 25:
+            heat_soak['heat_soak_risk'] = 'moderate'
+        else:
+            heat_soak['heat_soak_risk']   = 'low'
+            heat_soak['cool_down_needed'] = False
+            awareness['warnings_active'] = [w for w in awareness['warnings_active'] if w != 'heat_soak_critical']
+
+# ══════════════════════════════════════════
+# TRAILER SWAY MONITOR
+# ══════════════════════════════════════════
+def trailer_sway_monitor():
+    """While trailer connected, watch lateral G-forces for sway every 2 s."""
+    while True:
+        time.sleep(2)
+        if not trailer['connected']:
+            continue
+        lateral_g = abs(sensor_data.get('accel_x', 0))
+        if lateral_g > 0.4 and not trailer['sway_detected']:
+            trailer['sway_detected'] = True
+            speak('Trailer sway detected. Ease off the throttle and hold the wheel steady.')
+            discord_alert('trailer_sway', f'⚠️ Trailer sway detected — {lateral_g:.2f}G lateral at {truck_state.get("speed", 0)} mph.', title='TRAILER SWAY', channel='alerts', color=0xFF8800)
+        elif lateral_g <= 0.2:
+            trailer['sway_detected'] = False
+
+# ══════════════════════════════════════════
+# VOICE NAVIGATION — TURN-BY-TURN
+# ══════════════════════════════════════════
+nav_session = {
+    'active':      False,
+    'dest_name':   '',
+    'dest_lat':    None,
+    'dest_lon':    None,
+    'steps':       [],   # list of {instruction, lat, lon, distance_m}
+    'step_index':  0,
+    'started_at':  None,
+    'eta_mins':    None,
+}
+
+def _haversine_m(la1, lo1, la2, lo2):
+    import math
+    R = 6_371_000
+    φ1, φ2 = math.radians(la1), math.radians(la2)
+    dφ = math.radians(la2 - la1)
+    dλ = math.radians(lo2 - lo1)
+    a  = math.sin(dφ/2)**2 + math.cos(φ1)*math.cos(φ2)*math.sin(dλ/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+def start_navigation(dest_name, dest_lat, dest_lon, steps):
+    nav_session.update({
+        'active':     True,
+        'dest_name':  dest_name,
+        'dest_lat':   float(dest_lat),
+        'dest_lon':   float(dest_lon),
+        'steps':      steps,
+        'step_index': 0,
+        'started_at': datetime.now().strftime('%I:%M %p'),
+    })
+    if steps:
+        first = steps[0].get('instruction', 'Head toward destination')
+        speak(f'Navigation started to {dest_name}. {first}')
+    return f'Navigation to {dest_name} started. {len(steps)} steps.'
+
+def stop_navigation():
+    nav_session['active'] = False
+    nav_session['steps']  = []
+    speak('Navigation off.')
+    return 'Navigation stopped.'
+
+def nav_turn_monitor():
+    """Announce turns 200m ahead and advance steps as they are reached."""
+    _announced_step = [-1]
+    while True:
+        time.sleep(3)
+        if not nav_session['active'] or not nav_session['steps']:
+            continue
+        lat = location_data.get('lat')
+        lon = location_data.get('lon')
+        if lat is None or lon is None:
+            continue
+        idx   = nav_session['step_index']
+        steps = nav_session['steps']
+        if idx >= len(steps):
+            speak(f'You have arrived at {nav_session["dest_name"]}.')
+            nav_session['active'] = False
+            continue
+        step = steps[idx]
+        dist = _haversine_m(lat, lon, float(step['lat']), float(step['lon']))
+        # Announce upcoming turn at ~200 m
+        if dist < 200 and _announced_step[0] != idx:
+            _announced_step[0] = idx
+            instr = step.get('instruction', 'Continue')
+            speak(instr)
+        # Advance to next step when within 30 m of waypoint
+        if dist < 30:
+            nav_session['step_index'] += 1
+
 def casual_monitor():
     global last_casual
     time.sleep(90)
@@ -7875,15 +8156,23 @@ def navigate_endpoint():
                         })
         except Exception as e:
             print(f'[NAV] OSRM failed: {e}')
-    print(f'[NAV] Route to {dest_name}: {round(total_dist_m*0.000621371,1)} mi, {round(total_dur_s/60)} min, {len(steps)} steps')
+    total_mi  = round(total_dist_m * 0.000621371, 1)
+    total_min = round(total_dur_s / 60)
+    print(f'[NAV] Route to {dest_name}: {total_mi} mi, {total_min} min, {len(steps)} steps')
+
+    # Auto-start voice navigation if ?auto_nav=1 and steps are available
+    if _req.args.get('auto_nav') == '1' and steps and lat and lon:
+        nav_session['eta_mins'] = total_min
+        threading.Thread(target=start_navigation, args=(dest_name, dest_lat, dest_lon, steps), daemon=True).start()
+
     return jsonify({
         'ok':                True,
         'destination':       dest_name,
         'dest_lat':          dest_lat,
         'dest_lon':          dest_lon,
         'steps':             steps,
-        'total_distance_mi': round(total_dist_m * 0.000621371, 1),
-        'total_duration_min':round(total_dur_s / 60),
+        'total_distance_mi': total_mi,
+        'total_duration_min':total_min,
     })
 
 DANGEROUS_COMMANDS = ['engine off', 'shut down', 'tc off', 'tc lock', 'sys.exit',
@@ -10857,6 +11146,313 @@ def archer_os_status():
         'build_script':        '/archer-os/build.sh',
     })
 
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE ROUTES — GEOFENCE, REMOTE START, COMPUSTAR, AMBIENT, HELIX,
+#                  TRAILER, PARKING, CRASH, RIVAL, NAVIGATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── GEOFENCE ─────────────────────────────────────────────
+@display_app.route('/geofence/add', methods=['POST'])
+@csrf_required
+def geofence_add():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data   = request.get_json() or {}
+    name   = data.get('name', '').strip()
+    lat    = data.get('lat')
+    lon    = data.get('lon')
+    radius = float(data.get('radius_miles', 0.5))
+    if not name or lat is None or lon is None:
+        return jsonify({'error': 'name, lat, and lon required'}), 400
+    msg = add_geofence(name, float(lat), float(lon), radius)
+    return jsonify({'ok': True, 'msg': msg, 'count': len(geofences)})
+
+@display_app.route('/geofence/list')
+def geofence_list():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({'geofences': geofences, 'count': len(geofences), 'inside': list(_geofence_inside)})
+
+@display_app.route('/geofence/remove', methods=['POST'])
+@csrf_required
+def geofence_remove():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    name = (request.get_json() or {}).get('name', '')
+    before = len(geofences)
+    geofences[:] = [f for f in geofences if f['name'] != name]
+    save_state()
+    removed = before - len(geofences)
+    return jsonify({'ok': True, 'removed': removed, 'count': len(geofences)})
+
+# ── REMOTE START / STOP ───────────────────────────────────
+@display_app.route('/remote/start', methods=['POST'])
+@csrf_required
+def remote_start_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = remote_start_engine()
+    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg or 'Starting.'})
+
+@display_app.route('/remote/stop', methods=['POST'])
+@csrf_required
+def remote_stop_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = remote_stop_engine()
+    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg})
+
+@display_app.route('/remote/status')
+def remote_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({
+        'status':        remote_start['status'],
+        'runtime_mins':  round(remote_start['runtime_mins'], 1),
+        'auto_off_mins': remote_start['auto_off_mins'],
+        'started_at':    remote_start['started_at'],
+        'warm_temp':     remote_start['warm_temp'],
+        'oil_temp':      truck_state.get('oil_temp'),
+    })
+
+# ── COMPUSTAR ─────────────────────────────────────────────
+@display_app.route('/compustar/arm', methods=['POST'])
+@csrf_required
+def compustar_arm_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({'ok': True, 'msg': arm_compustar(), 'armed': compustar['armed']})
+
+@display_app.route('/compustar/disarm', methods=['POST'])
+@csrf_required
+def compustar_disarm_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({'ok': True, 'msg': disarm_compustar(), 'armed': compustar['armed']})
+
+@display_app.route('/compustar/trigger', methods=['POST'])
+@csrf_required
+def compustar_trigger_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    ttype = (request.get_json() or {}).get('type', 'unknown')
+    compustar_trigger(ttype)
+    return jsonify({'ok': True, 'triggered': ttype, 'log_count': len(compustar['trigger_log'])})
+
+@display_app.route('/compustar/status')
+def compustar_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({
+        'armed':        compustar['armed'],
+        'disarmed':     compustar['disarmed'],
+        'shock_sens':   compustar['shock_sens'],
+        'tilt_sens':    compustar['tilt_sens'],
+        'panic_active': compustar['panic_active'],
+        'last_trigger': compustar['last_trigger'],
+        'trigger_count': len(compustar['trigger_log']),
+    })
+
+# ── AMBIENT LIGHTING ──────────────────────────────────────
+@display_app.route('/ambient/set', methods=['POST'])
+@csrf_required
+def ambient_set_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data       = request.get_json() or {}
+    zone       = data.get('zone', 'all')
+    on         = bool(data.get('on', True))
+    color      = data.get('color')
+    brightness = data.get('brightness')
+    msg = set_ambient(zone, on, color, brightness)
+    return jsonify({'ok': True, 'msg': msg, 'state': ambient_lighting})
+
+@display_app.route('/ambient/mode', methods=['POST'])
+@csrf_required
+def ambient_mode_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    mode = (request.get_json() or {}).get('mode', 'off')
+    msg  = ambient_mode(mode)
+    return jsonify({'ok': True, 'msg': msg, 'mode': ambient_lighting['mode']})
+
+@display_app.route('/ambient/status')
+def ambient_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({'zones': ambient_lighting['zones'], 'mode': ambient_lighting['mode'], 'master': ambient_lighting['master']})
+
+# ── HELIX DSP ─────────────────────────────────────────────
+@display_app.route('/helix/preset', methods=['POST'])
+@csrf_required
+def helix_preset_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    preset = (request.get_json() or {}).get('preset', '')
+    msg    = set_helix_preset(preset)
+    return jsonify({'ok': True, 'msg': msg, 'preset': helix_dsp['preset']})
+
+@display_app.route('/helix/sub', methods=['POST'])
+@csrf_required
+def helix_sub_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    pct = (request.get_json() or {}).get('level', helix_dsp['sub_level'])
+    msg = set_sub_level(pct)
+    return jsonify({'ok': True, 'msg': msg, 'sub_level': helix_dsp['sub_level']})
+
+@display_app.route('/helix/status')
+def helix_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({**helix_dsp, 'presets': HELIX_PRESETS})
+
+# ── TRAILER ───────────────────────────────────────────────
+@display_app.route('/trailer/connect', methods=['POST'])
+@csrf_required
+def trailer_connect_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data   = request.get_json() or {}
+    ttype  = data.get('type', '')
+    weight = data.get('weight', 0)
+    msg    = connect_trailer(ttype, weight)
+    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
+
+@display_app.route('/trailer/disconnect', methods=['POST'])
+@csrf_required
+def trailer_disconnect_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = disconnect_trailer()
+    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
+
+@display_app.route('/trailer/status')
+def trailer_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify(trailer)
+
+# ── PARKING MODE ──────────────────────────────────────────
+@display_app.route('/parking/activate', methods=['POST'])
+@csrf_required
+def parking_activate_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    location = (request.get_json() or {}).get('location', '')
+    msg      = activate_parking_mode(location)
+    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
+
+@display_app.route('/parking/deactivate', methods=['POST'])
+@csrf_required
+def parking_deactivate_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    msg = deactivate_parking_mode()
+    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
+
+@display_app.route('/parking/status')
+def parking_status_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    return jsonify({**parking_mode, 'surveillance_armed': surveillance.get('armed', False)})
+
+# ── CRASH DETECTION ───────────────────────────────────────
+@display_app.route('/crash/events')
+def crash_events_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    return jsonify({
+        'enabled':    crash_detection['enabled'],
+        'threshold_g': crash_detection['threshold_g'],
+        'last_event': crash_detection['last_event'],
+        'events':     crash_detection['events'][-20:],
+        'count':      len(crash_detection['events']),
+    })
+
+@display_app.route('/crash/clear', methods=['POST'])
+@csrf_required
+def crash_clear_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    crash_detection['events']     = []
+    crash_detection['last_event'] = None
+    return jsonify({'ok': True})
+
+# ── RIVALRY ───────────────────────────────────────────────
+@display_app.route('/rival/set', methods=['POST'])
+@csrf_required
+def rival_set_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data = request.get_json() or {}
+    msg  = set_rival(data.get('name', ''), data.get('et'), data.get('mph'))
+    return jsonify({'ok': True, 'msg': msg, 'rivalry': rivalry})
+
+@display_app.route('/rival/status')
+def rival_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify(rivalry)
+
+@display_app.route('/rival/reset', methods=['POST'])
+@csrf_required
+def rival_reset_route():
+    if get_request_tier(request) > 1:
+        return jsonify({'error': 'Owner only'}), 403
+    rivalry.update({'rival': '', 'rival_et': None, 'rival_mph': None, 'active': False, 'wins': 0, 'losses': 0, 'sessions': []})
+    save_state()
+    return jsonify({'ok': True, 'rivalry': rivalry})
+
+# ── VOICE NAVIGATION ──────────────────────────────────────
+@display_app.route('/navigate/start', methods=['POST'])
+@csrf_required
+def navigate_start_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    data      = request.get_json() or {}
+    dest_name = data.get('dest_name', 'destination')
+    dest_lat  = data.get('dest_lat')
+    dest_lon  = data.get('dest_lon')
+    steps     = data.get('steps', [])
+    if dest_lat is None or dest_lon is None:
+        return jsonify({'error': 'dest_lat and dest_lon required'}), 400
+    msg = start_navigation(dest_name, dest_lat, dest_lon, steps)
+    return jsonify({'ok': True, 'msg': msg, 'steps': len(steps)})
+
+@display_app.route('/navigate/stop', methods=['POST'])
+@csrf_required
+def navigate_stop_route():
+    if get_request_tier(request) > 2:
+        return jsonify({'error': 'Tier 1-2 only'}), 403
+    msg = stop_navigation()
+    return jsonify({'ok': True, 'msg': msg})
+
+@display_app.route('/navigate/status')
+def navigate_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    idx   = nav_session['step_index']
+    steps = nav_session['steps']
+    return jsonify({
+        'active':       nav_session['active'],
+        'dest_name':    nav_session['dest_name'],
+        'dest_lat':     nav_session['dest_lat'],
+        'dest_lon':     nav_session['dest_lon'],
+        'step_index':   idx,
+        'total_steps':  len(steps),
+        'current_step': steps[idx] if idx < len(steps) else None,
+        'eta_mins':     nav_session['eta_mins'],
+        'started_at':   nav_session['started_at'],
+    })
+
+# ── HEAT SOAK ────────────────────────────────────────────
+@display_app.route('/heat_soak/status')
+def heat_soak_status_route():
+    if get_request_tier(request) > 3:
+        return jsonify({'error': 'Auth required'}), 403
+    return jsonify({**heat_soak, 'boost_cap_active': heat_soak['heat_soak_risk'] == 'critical', 'boost_cap_psi': _HEAT_SOAK_BOOST_CAP})
+
 # ── OBD AUTO-DETECT ──────────────────────────────────────
 def _obd_cmd(ser, cmd, timeout=2.0):
     """Send an ELM327 AT or OBD command; return the response string."""
@@ -11114,6 +11710,10 @@ def main():
         (weather_alert_monitor,   'weather_alert_monitor'),
         (live_data_loop,          'live_data_loop'),
         (client_timeout_monitor,  'client_timeout_monitor'),
+        (geofence_monitor,        'geofence_monitor'),
+        (heat_soak_monitor,       'heat_soak_monitor'),
+        (trailer_sway_monitor,    'trailer_sway_monitor'),
+        (nav_turn_monitor,        'nav_turn_monitor'),
     ]
     for fn, name in _guarded_threads:
         threading.Thread(target=_guarded(fn, name), daemon=True).start()
