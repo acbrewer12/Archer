@@ -352,34 +352,49 @@ class TestSmartFallback:
 # 6. save_state / load_state round-trip
 # ═══════════════════════════════════════════════════════════════
 class TestSaveLoadState:
-    def test_save_creates_file(self, tmp_path):
-        orig = archer.SAVE_FILE
-        archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
-        try:
+    def test_save_calls_db_save(self):
+        """save_state() must call db_save with a dict (SQLite-only persistence)."""
+        with patch('db.db_save') as mock_db_save:
             archer.save_state()
-            assert os.path.exists(archer.SAVE_FILE)
-        finally:
-            archer.SAVE_FILE = orig
+        mock_db_save.assert_called_once()
+        arg = mock_db_save.call_args[0][0]
+        assert isinstance(arg, dict)
 
-    def test_saved_json_is_valid(self, tmp_path):
+    def test_save_passes_valid_dict_to_db(self):
+        """The dict handed to db_save must contain expected state keys."""
+        with patch('db.db_save') as mock_db_save:
+            archer.save_state()
+        data = mock_db_save.call_args[0][0]
+        assert 'nav_places' in data
+        assert 'personal_bests' in data
+
+    def test_save_does_not_write_json_file(self, tmp_path):
+        """save_state() must NOT write a legacy JSON file anymore."""
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
-            archer.save_state()
-            with open(archer.SAVE_FILE, encoding='utf-8') as f:
-                data = json.load(f)
-            assert isinstance(data, dict)
+            with patch('db.db_save'):
+                archer.save_state()
+            assert not os.path.exists(archer.SAVE_FILE)
         finally:
             archer.SAVE_FILE = orig
 
     def test_nav_places_persisted(self, tmp_path):
+        import copy
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         archer.nav_places['home'] = {'lat': 37.64, 'lon': -91.54, 'address': 'Home'}
+        saved_data = {}
+        def _capture(d):
+            # Deep-copy so clearing nav_places later doesn't wipe our snapshot
+            saved_data.update(copy.deepcopy(d))
         try:
-            archer.save_state()
+            with patch('db.db_save', side_effect=_capture):
+                archer.save_state()
             archer.nav_places.clear()
-            archer.load_state()
+            with patch('db.db_load', return_value=saved_data), \
+                 patch('db.db_has_data', return_value=True):
+                archer.load_state()
             assert 'home' in archer.nav_places
             assert archer.nav_places['home']['lat'] == 37.64
         finally:
@@ -390,29 +405,29 @@ class TestSaveLoadState:
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'nonexistent.json')
         try:
-            archer.load_state()
+            with patch('db.db_load', return_value={}), \
+                 patch('db.db_has_data', return_value=False):
+                archer.load_state()
         finally:
             archer.SAVE_FILE = orig
 
-    def test_atomic_write_no_partial_file(self, tmp_path):
+    def test_no_tmp_file_left_after_save(self, tmp_path):
+        """No .tmp file should exist after save_state() (SQLite writes atomically)."""
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
-            archer.save_state()
+            with patch('db.db_save'):
+                archer.save_state()
             assert not os.path.exists(archer.SAVE_FILE + '.tmp')
         finally:
             archer.SAVE_FILE = orig
 
-    def test_truck_state_keys_saved(self, tmp_path):
-        orig = archer.SAVE_FILE
-        archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
-        try:
+    def test_truck_state_keys_saved(self):
+        """db_save must receive nav_places among the persisted keys."""
+        with patch('db.db_save') as mock_db_save:
             archer.save_state()
-            with open(archer.SAVE_FILE, encoding='utf-8') as f:
-                data = json.load(f)
-            assert 'truck_state' in data or 'nav_places' in data
-        finally:
-            archer.SAVE_FILE = orig
+        data = mock_db_save.call_args[0][0]
+        assert 'nav_places' in data
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1834,6 +1849,172 @@ class TestDisplayDataOBDFields:
         assert 'vehicle_model' in d
         assert 'vehicle_name' in d
         assert 'vehicle_name_header' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 40. JWT issuance and decoding
+# ═══════════════════════════════════════════════════════════════
+class TestJWT:
+    def test_make_auth_jwt_is_three_parts(self):
+        from archer_state import make_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        assert token.count('.') == 2
+
+    def test_decode_round_trip(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(2, 'Khloe')
+        payload = decode_auth_jwt(token)
+        assert payload['tier'] == 2
+        assert payload['name'] == 'Khloe'
+
+    def test_decode_includes_jti(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        payload = decode_auth_jwt(token)
+        assert 'jti' in payload and len(payload['jti']) > 0
+
+    def test_tampered_signature_raises(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        parts = token.split('.')
+        parts[2] = parts[2][:-4] + 'XXXX'
+        with pytest.raises(ValueError, match='signature'):
+            decode_auth_jwt('.'.join(parts))
+
+    def test_expired_token_raises(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden', days=-1)
+        with pytest.raises(ValueError, match='expired'):
+            decode_auth_jwt(token)
+
+    def test_non_jwt_string_raises(self):
+        from archer_state import decode_auth_jwt
+        with pytest.raises(ValueError):
+            decode_auth_jwt('1:Ayden:abc123')
+
+    def test_wrong_format_raises(self):
+        from archer_state import decode_auth_jwt
+        with pytest.raises(ValueError):
+            decode_auth_jwt('notajwt')
+
+
+# ═══════════════════════════════════════════════════════════════
+# 41. Logout — JWT jti revocation
+# ═══════════════════════════════════════════════════════════════
+class TestLogoutJWT:
+    def test_logout_revokes_jwt_jti(self):
+        """Logging out with a JWT cookie should add its jti to _revoked_tokens."""
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'JWTLogoutTest')
+        payload = decode_auth_jwt(token)
+        jti = payload['jti']
+
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', token)
+            c.get('/csrf_token')
+            csrf_token = json.loads(c.get('/csrf_token').data)['token']
+            c.post('/logout', headers={'X-CSRF-Token': csrf_token})
+
+        assert jti in archer._revoked_tokens
+
+    def test_jwt_rejected_after_logout(self):
+        """After logout a subsequent request with the same JWT must be denied."""
+        from archer_state import make_auth_jwt
+        token = make_auth_jwt(1, 'JWTLogoutReject')
+
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', token)
+            csrf_token = json.loads(c.get('/csrf_token').data)['token']
+            c.post('/logout', headers={'X-CSRF-Token': csrf_token})
+            # After logout, tier-1-only endpoint should deny
+            r = c.post('/terminal/exec',
+                       json={'cmd': 'ls'},
+                       headers={'X-CSRF-Token': csrf_token})
+        d = json.loads(r.data)
+        assert 'error' in d or r.status_code in (401, 403)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 42. Terminal exec — shell=False enforcement
+# ═══════════════════════════════════════════════════════════════
+class TestTerminalShellFalse:
+    def _post(self, cmd, tier=1):
+        c = _authed_client(tier)
+        return c.post('/terminal/exec', json={'cmd': cmd})
+
+    def test_subprocess_called_with_shell_false(self):
+        """Verify subprocess.run is always called with shell=False."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='ok', stderr='', returncode=0)
+            self._post('ls -la', tier=1)
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs.get('shell') is False
+
+    def test_pipe_without_bash_c_is_treated_literally(self):
+        """A bare pipe command runs shlex.split so | is just an arg, not a shell pipe."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='hello | cat', stderr='', returncode=0)
+            r = self._post('echo hello | cat', tier=1)
+        # Should have called subprocess.run with shell=False — the | is a literal arg
+        if mock_run.called:
+            args, kwargs = mock_run.call_args
+            assert kwargs.get('shell') is False
+            assert '|' in args[0]  # | appears as a list element, not a shell operator
+
+    def test_bash_c_pipe_is_allowed(self):
+        """bash -c 'cmd | pipe' is the sanctioned way to run piped commands."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='hello\n', stderr='', returncode=0)
+            r = self._post("bash -c 'echo hello | cat'", tier=1)
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 43. Pi tunnel — authentication on register and disconnect
+# ═══════════════════════════════════════════════════════════════
+class TestPiTunnel:
+    _token = 'test_pi_token_abc'
+
+    def setup_method(self):
+        import blueprints.terminal as _term
+        self._orig = _term._ARCHER_PI_TOKEN
+        _term._ARCHER_PI_TOKEN = self._token
+
+    def teardown_method(self):
+        import blueprints.terminal as _term
+        _term._ARCHER_PI_TOKEN = self._orig
+
+    def test_pi_register_valid_token(self):
+        r = client.post('/terminal/pi_register',
+                        json={'token': self._token, 'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d.get('status') == 'registered'
+
+    def test_pi_register_invalid_token_rejected(self):
+        r = client.post('/terminal/pi_register',
+                        json={'token': 'wrong', 'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_register_no_token_rejected(self):
+        r = client.post('/terminal/pi_register', json={'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_valid_token(self):
+        r = client.post('/terminal/pi_disconnect', json={'token': self._token})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d.get('status') == 'ok'
+
+    def test_pi_disconnect_no_token_rejected(self):
+        """pi_disconnect with no token must return 403 — not silently accept."""
+        r = client.post('/terminal/pi_disconnect', json={})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_wrong_token_rejected(self):
+        r = client.post('/terminal/pi_disconnect', json={'token': 'bad'})
+        assert r.status_code == 403
 
 
 if __name__ == '__main__':

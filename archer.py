@@ -623,14 +623,6 @@ def save_state():
         db_save(data)
     except Exception as _e:
         print(f'[ARCHER] db_save failed: {_e}')
-    with _memory_lock:
-        try:
-            tmp = SAVE_FILE + '.tmp'
-            with open(tmp, 'w') as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
-        except Exception as e:
-            print(f'[ARCHER] save_state JSON failed: {e}')
 
 def load_state():
     global current_road, current_profile
@@ -1530,40 +1522,42 @@ def update_awareness():
                 _ecu.rpm   = float(truck_state['rpm'])
                 _ecu.speed = float(truck_state['speed'])
                 st = _ecu.get_state()
-                truck_state['coolant_temp']   = st['coolant_temp']
-                truck_state['oil_temp']       = st['oil_temp']
-                truck_state['tft']            = st['tft']
-                truck_state['iat']            = st['iat']
-                truck_state['maf']            = st['maf']
-                truck_state['timing']         = st['timing']
-                truck_state['stft_b1']        = st['stft_b1']
-                truck_state['stft_b2']        = st['stft_b2']
-                truck_state['ltft_b1']        = st['ltft_b1']
-                truck_state['ltft_b2']        = st['ltft_b2']
-                truck_state['o2_b1s1']        = st['o2_b1s1']
-                truck_state['o2_b2s1']        = st['o2_b2s1']
-                truck_state['battery_main']   = st['battery_main']
-                truck_state['battery_aux']    = st['battery_aux']
-                truck_state['alt_output']     = st['alt_output']
-                truck_state['engine_load']    = st['engine_load']
-                truck_state['gear']           = st['gear']
-                truck_state['target_gear']    = st['target_gear']
-                truck_state['tcc_state']      = st['tcc_state']
-                truck_state['line_pressure']  = st['line_pressure']
-                truck_state['sol_a']          = st['sol_a']
-                truck_state['sol_b']          = st['sol_b']
-                truck_state['prndl']          = st['prndl']
-                truck_state['wheel_speed_fl'] = st['wheel_speed_fl']
-                truck_state['wheel_speed_fr'] = st['wheel_speed_fr']
-                truck_state['wheel_speed_rl'] = st['wheel_speed_rl']
-                truck_state['wheel_speed_rr'] = st['wheel_speed_rr']
-                truck_state['boost'] = max(0, (truck_state['rpm'] - 2000) // 250) if truck_state['rpm'] > 2000 else 0
+                with _memory_lock:
+                    truck_state['coolant_temp']   = st['coolant_temp']
+                    truck_state['oil_temp']       = st['oil_temp']
+                    truck_state['tft']            = st['tft']
+                    truck_state['iat']            = st['iat']
+                    truck_state['maf']            = st['maf']
+                    truck_state['timing']         = st['timing']
+                    truck_state['stft_b1']        = st['stft_b1']
+                    truck_state['stft_b2']        = st['stft_b2']
+                    truck_state['ltft_b1']        = st['ltft_b1']
+                    truck_state['ltft_b2']        = st['ltft_b2']
+                    truck_state['o2_b1s1']        = st['o2_b1s1']
+                    truck_state['o2_b2s1']        = st['o2_b2s1']
+                    truck_state['battery_main']   = st['battery_main']
+                    truck_state['battery_aux']    = st['battery_aux']
+                    truck_state['alt_output']     = st['alt_output']
+                    truck_state['engine_load']    = st['engine_load']
+                    truck_state['gear']           = st['gear']
+                    truck_state['target_gear']    = st['target_gear']
+                    truck_state['tcc_state']      = st['tcc_state']
+                    truck_state['line_pressure']  = st['line_pressure']
+                    truck_state['sol_a']          = st['sol_a']
+                    truck_state['sol_b']          = st['sol_b']
+                    truck_state['prndl']          = st['prndl']
+                    truck_state['wheel_speed_fl'] = st['wheel_speed_fl']
+                    truck_state['wheel_speed_fr'] = st['wheel_speed_fr']
+                    truck_state['wheel_speed_rl'] = st['wheel_speed_rl']
+                    truck_state['wheel_speed_rr'] = st['wheel_speed_rr']
+                    truck_state['boost'] = max(0, (truck_state['rpm'] - 2000) // 250) if truck_state['rpm'] > 2000 else 0
             else:
                 # Fallback when sierra_ecu_config is unavailable
-                truck_state['oil_temp']     = 195 + random.randint(-3, 5)
-                truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
-                truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
-                truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
+                with _memory_lock:
+                    truck_state['oil_temp']     = 195 + random.randint(-3, 5)
+                    truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
+                    truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
+                    truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
 
         time.sleep(2)
 
@@ -5589,8 +5583,9 @@ def start_navigation(dest_name, dest_lat, dest_lon, steps):
     return f'Navigation to {dest_name} started. {len(steps)} steps.'
 
 def stop_navigation():
-    nav_session['active'] = False
-    nav_session['steps']  = []
+    with _memory_lock:
+        nav_session['active'] = False
+        nav_session['steps']  = []
     speak('Navigation off.')
     return 'Navigation stopped.'
 
@@ -8607,13 +8602,14 @@ system_health = {
 }
 
 def log_system_failure(component, reason):
-    system_health['failures'].append({
-        'time':      time.strftime('%H:%M:%S'),
-        'component': component,
-        'reason':    reason,
-    })
-    if len(system_health['failures']) > 50:
-        system_health['failures'] = system_health['failures'][-50:]
+    with _memory_lock:
+        system_health['failures'].append({
+            'time':      time.strftime('%H:%M:%S'),
+            'component': component,
+            'reason':    reason,
+        })
+        if len(system_health['failures']) > 50:
+            system_health['failures'] = system_health['failures'][-50:]
 
 def get_system_status():
     """Return a list of active system issue codes (empty = all nominal).

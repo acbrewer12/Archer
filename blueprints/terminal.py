@@ -6,18 +6,21 @@ import os
 import re as _re
 import json
 import shlex
-import secrets as _secrets
 import subprocess
 import platform as _plt
 import time
 
-# Pi registration token — never fall back to a known hardcoded string
-_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
+# Pi registration token — must be set explicitly; no random fallback so the Pi
+# always knows the token and it doesn't silently change on server restart.
+_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN', '')
+if not _ARCHER_PI_TOKEN:
+    print('[SECURITY] WARNING: ARCHER_PI_TOKEN not set — Pi tunnel registration will be rejected. '
+          'Set ARCHER_PI_TOKEN in archer.env and export it in pi_connect.sh.')
 
 from datetime import datetime
 from flask import Blueprint, jsonify, Response, request
 
-from archer_state import _limiter
+from archer_state import _limiter, csrf_required
 
 if _plt.system() != 'Windows':
     try:
@@ -323,6 +326,7 @@ syncViewport();
 
 @bp.route('/terminal/exec', methods=['POST'])
 @_limiter.limit('15 per minute; 60 per hour')
+@csrf_required
 def terminal_exec():
     import archer as _a
     allowed, tier = _terminal_access_check(request)
@@ -449,6 +453,10 @@ def pi_register():
 
 @bp.route('/terminal/pi_disconnect', methods=['POST'])
 def pi_disconnect():
+    data  = request.get_json() or {}
+    token = data.get('token', '')
+    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
+        return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['online'] = False
     pi_tunnel_url['url']    = None
     print('[PI] Disconnected')

@@ -1,9 +1,22 @@
 #!/bin/bash
 # Run this on the Pi to connect it to Archer's terminal
 # Usage: bash pi_connect.sh
+#
+# Required environment variables (set in ~/.bashrc or ~/.profile on the Pi):
+#   ARCHER_URL       — e.g. https://aydencatman-archer.hf.space
+#   ARCHER_PI_TOKEN  — must match ARCHER_PI_TOKEN set on the server
 
-ARCHER_URL="https://aydencatman-archer.hf.space"
-TOKEN="archer2026"
+if [ -z "$ARCHER_URL" ]; then
+    echo "[PI] ERROR: ARCHER_URL is not set. Export it before running this script."
+    echo "       e.g.  export ARCHER_URL=https://aydencatman-archer.hf.space"
+    exit 1
+fi
+
+if [ -z "$ARCHER_PI_TOKEN" ]; then
+    echo "[PI] ERROR: ARCHER_PI_TOKEN is not set. Export it before running this script."
+    echo "       e.g.  export ARCHER_PI_TOKEN=<your-token>"
+    exit 1
+fi
 
 echo "[PI] Starting Archer Pi terminal connection..."
 
@@ -46,7 +59,7 @@ echo "[PI] Tunnel URL: $TUNNEL_URL"
 echo "[PI] Registering with Archer..."
 curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
     -H "Content-Type: application/json" \
-    -d "{\"token\":\"$TOKEN\",\"url\":\"$TUNNEL_URL\"}"
+    -d "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}"
 
 echo ""
 echo "[PI] Connected. Terminal available at $ARCHER_URL/terminal"
@@ -55,7 +68,9 @@ echo "[PI] Press Ctrl+C to disconnect"
 # Keep alive — re-register every 5 minutes in case tunnel URL changes
 cleanup() {
     echo "[PI] Disconnecting..."
-    curl -s -X POST "$ARCHER_URL/terminal/pi_disconnect" -H "Content-Type: application/json" -d "{}"
+    curl -s -X POST "$ARCHER_URL/terminal/pi_disconnect" \
+        -H "Content-Type: application/json" \
+        -d "{\"token\":\"$ARCHER_PI_TOKEN\"}"
     kill $TTYD_PID $NGROK_PID 2>/dev/null
     exit 0
 }
@@ -67,7 +82,7 @@ while true; do
     if [ -n "$TUNNEL_URL" ]; then
         curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
             -H "Content-Type: application/json" \
-            -d "{\"token\":\"$TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
+            -d "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
         echo "[PI] Re-registered tunnel: $TUNNEL_URL"
     fi
 done
