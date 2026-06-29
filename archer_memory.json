@@ -91,8 +91,8 @@
   "bluetooth_devices": {},
   "trip_log": [
     {
-      "date": "June 28 2026",
-      "time": "07:07 PM",
+      "date": "June 29 2026",
+      "time": "06:10 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -104,8 +104,8 @@
       "weather": "70F clear"
     },
     {
-      "date": "June 28 2026",
-      "time": "07:07 PM",
+      "date": "June 29 2026",
+      "time": "06:10 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -121,38 +121,38 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     },
     "test-fp-pass": {
       "name": "Passenger",
       "tier": 2,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     },
     "test-fp-name": {
       "name": "Alice",
       "tier": 3,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     },
     "known-fp-99": {
       "name": "Me",
       "tier": 2,
-      "registered_at": "June 28 2026 07:07 PM"
+      "registered_at": "June 29 2026 06:10 PM"
     }
   },
   "build_tracker": {
     "parts": [
       {
-        "id": "2bd77f2e",
+        "id": "18ab67c6",
         "name": "Cold Air Intake",
         "part_number": "",
         "category": "intake",
@@ -161,11 +161,11 @@
         "description": "",
         "status": "ordered",
         "cost": 299.99,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       },
       {
-        "id": "a0a93653",
+        "id": "308be3af",
         "name": "Test Part",
         "part_number": "",
         "category": "other",
@@ -174,11 +174,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       },
       {
-        "id": "c660139c",
+        "id": "072403dc",
         "name": "Headers",
         "part_number": "",
         "category": "other",
@@ -187,11 +187,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       },
       {
-        "id": "4eb31080",
+        "id": "4b4ff4d1",
         "name": "UpdateMe",
         "part_number": "",
         "category": "other",
@@ -200,11 +200,11 @@
         "description": "",
         "status": "installed",
         "cost": 0.0,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       },
       {
-        "id": "111ceba6",
+        "id": "d60a0feb",
         "name": "Dummy",
         "part_number": "",
         "category": "other",
@@ -213,11 +213,11 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       },
       {
-        "id": "5ba14ed3",
+        "id": "4df48a03",
         "name": "Tune",
         "part_number": "",
         "category": "other",
@@ -226,7 +226,7 @@
         "description": "",
         "status": "ordered",
         "cost": 0.0,
-        "date_added": "June 28 2026",
+        "date_added": "June 29 2026",
         "notes": ""
       }
     ],
@@ -594,7 +594,7 @@
     }
   },
   "vehicle_config": {
-    "make": null,
-    "model": null
+    "make": "GMC",
+    "model": "Sierra 2500HD"
   }
 }
