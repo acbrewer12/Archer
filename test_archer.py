@@ -1114,15 +1114,15 @@ class TestCookieTierBounds:
             result = archer.get_request_tier(request)
             assert isinstance(result, int)
 
-    def test_tier_99_accepted_by_current_code(self):
-        # Documents current behavior — tier is not bounds-checked
+    def test_tier_99_clamped_to_4(self):
+        # Tier is now clamped to [1, 4] — tier 99 in cookie returns 4
         cookie = self._make_signed_cookie(99)
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth={cookie}'}
         ):
             from flask import request
             result = archer.get_request_tier(request)
-            assert isinstance(result, int)
+            assert result == 4, f'Expected 4 (clamped), got {result}'
 
 
 # ═══════════════════════════════════════════════════════════════

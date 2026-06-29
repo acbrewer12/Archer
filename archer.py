@@ -8203,6 +8203,7 @@ def _check_driving_rate(ip: str) -> bool:
 
 @display_app.route('/voice_command', methods=['POST'])
 @_limiter.limit('40 per minute; 200 per hour')
+@csrf_required
 def voice_command_endpoint():
     """POST /voice_command — process a voice command from any UI tier.
 
@@ -8310,6 +8311,7 @@ def _resolve_location_from_nws(lat, lon):
         _save_location_cache(lat, lon, fallback)
 
 @display_app.route('/location/update', methods=['POST'])
+@csrf_required
 def location_update_route():
     global _nws_station_url, _nws_forecast_url
     data = request.get_json() or {}
@@ -8402,6 +8404,7 @@ def build_part_remove():
                     'parts': list(build_tracker['parts'])})
 
 @display_app.route('/register_device', methods=['POST'])
+@csrf_required
 def register_device_endpoint():
     from flask import request as flask_request
     data        = flask_request.get_json()
@@ -8509,6 +8512,7 @@ def get_request_tier(request):
     return get_device_tier(fp)
 
 @display_app.route('/logout', methods=['POST'])
+@csrf_required
 def logout():
     """Invalidate the current session cookie and redirect to the sign-in page.
 
@@ -8528,6 +8532,7 @@ def logout():
     return resp
 
 @display_app.route('/set_vehicle', methods=['POST'])
+@csrf_required
 def set_vehicle():
     """Record which truck was purchased (tier 1 only).
 
@@ -9600,6 +9605,7 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
 
 @display_app.route('/notify_tier1', methods=['POST'])
 @_limiter.limit('20 per minute')
+@csrf_required
 def notify_tier1():
     from flask import request as freq
     # Require at least tier 2 (passenger) — reject unauthenticated senders
@@ -9620,6 +9626,7 @@ def get_tier_notifications():
     return jsonify({'notifications': list(tier_notifications)})
 
 @display_app.route('/tier_cancel', methods=['POST'])
+@csrf_required
 def tier_cancel():
     """Tier 2 cancels a pending request — removes it from queue."""
     from flask import request as freq
@@ -9637,6 +9644,7 @@ def tier_cancel():
     return jsonify({'ok': True})
 
 @display_app.route('/tier_respond', methods=['POST'])
+@csrf_required
 def tier_respond():
     from flask import request as freq
     ok, tier = require_tier1(freq)
@@ -9847,6 +9855,7 @@ def spotify_api(method, endpoint, data=None):
         return None
 
 @display_app.route('/spotify/dj', methods=['POST'])
+@csrf_required
 def spotify_dj_toggle():
     dj_state['enabled'] = not dj_state['enabled']
     if dj_state['enabled']:
@@ -9955,30 +9964,35 @@ def spotify_status():
 
 @display_app.route('/spotify/play', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_play():
     spotify_api('PUT', 'me/player/play')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/pause', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_pause():
     spotify_api('PUT', 'me/player/pause')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/next', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_next():
     spotify_api('POST', 'me/player/next')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/prev', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_prev():
     spotify_api('POST', 'me/player/previous')
     return jsonify({'ok': True})
 
 @display_app.route('/spotify/volume', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_volume():
     from flask import request as freq
     vol = int((freq.json or {}).get('volume', 50))
@@ -9988,6 +10002,7 @@ def spotify_volume():
 
 @display_app.route('/spotify/seek', methods=['POST'])
 @_limiter.limit('60 per minute')
+@csrf_required
 def spotify_seek():
     """Seek to a position in the current track."""
     from flask import request as freq
@@ -10052,6 +10067,7 @@ def spotify_playlists():
 
 @display_app.route('/spotify/dj/intensity', methods=['POST'])
 @_limiter.limit('20 per minute')
+@csrf_required
 def spotify_dj_intensity():
     """Override DJ intensity mode: auto | calm | moderate | aggressive."""
     from flask import request as freq
@@ -10063,6 +10079,7 @@ def spotify_dj_intensity():
 
 @display_app.route('/spotify/play_playlist', methods=['POST'])
 @_limiter.limit('20 per minute')
+@csrf_required
 def spotify_play_playlist():
     from flask import request as freq
     playlist_id = (freq.json or {}).get('playlist_id', '')
@@ -10401,6 +10418,7 @@ def boot_page():
 
 
 @display_app.route('/tpms', methods=['GET', 'POST'])
+@csrf_required
 def tpms_endpoint():
     """GET  → return current TPMS data for all four wheels.
     POST → update one or more wheel pressures.

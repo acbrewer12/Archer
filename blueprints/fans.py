@@ -4,10 +4,15 @@ All routes here are public (no tier auth required).
 """
 import os
 import json
+import hashlib as _hl
+import secrets as _secrets
 
 from flask import Blueprint, jsonify, Response, request
 
 from archer_state import _limiter
+
+# Match the token length used by the main app
+_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
 
 bp = Blueprint('fans', __name__)
 
@@ -24,8 +29,8 @@ def fan_page():
             parts = cookie_val.split(':')
             if len(parts) == 3:
                 c_tier, c_name, c_token = parts
-                cookie_secret = os.environ.get('ARCHER_SECRET', 'archer2500hd')
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:16]
+                cookie_secret = _ARCHER_SECRET
+                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
                 if c_token == expected:
                     user_info = {'tier': int(c_tier), 'name': c_name}
         except Exception:

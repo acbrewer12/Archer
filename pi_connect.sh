@@ -1,9 +1,18 @@
 #!/bin/bash
-# Run this on the Pi to connect it to Archer's terminal
+# Run this on the Pi to connect it to Archer's terminal.
 # Usage: bash pi_connect.sh
+#
+# Required env vars (set in /etc/archer/archer.env or ~/.archer.env):
+#   ARCHER_URL        — full URL of the Archer server (e.g. https://aydencatman-archer.hf.space)
+#   ARCHER_PI_TOKEN   — must match ARCHER_PI_TOKEN on the server
 
-ARCHER_URL="https://aydencatman-archer.hf.space"
-TOKEN="archer2026"
+# Load env file if present (Pi local config)
+for envfile in /etc/archer/archer.env ~/.archer.env "$(dirname "$0")/archer.env"; do
+    [ -f "$envfile" ] && { set -a; . "$envfile"; set +a; break; }
+done
+
+ARCHER_URL="${ARCHER_URL:?ERROR: ARCHER_URL not set. Add it to /etc/archer/archer.env}"
+TOKEN="${ARCHER_PI_TOKEN:?ERROR: ARCHER_PI_TOKEN not set. Add it to /etc/archer/archer.env}"
 
 echo "[PI] Starting Archer Pi terminal connection..."
 
