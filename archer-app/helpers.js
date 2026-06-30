@@ -80,5 +80,6 @@ module.exports = {
   arcFill,
   DEFAULT_PORT,
   TRUCK_IP,
+  TRUCK_SSID,
   FAIL_THRESH,
 };

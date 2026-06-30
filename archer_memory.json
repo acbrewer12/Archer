@@ -92,7 +92,7 @@
   "trip_log": [
     {
       "date": "June 29 2026",
-      "time": "07:31 PM",
+      "time": "07:01 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -105,20 +105,7 @@
     },
     {
       "date": "June 29 2026",
-      "time": "07:31 PM",
-      "duration": 0,
-      "peak_rpm": 0,
-      "peak_boost": 0,
-      "best_060": null,
-      "hard_events": 0,
-      "quality": 100,
-      "road": "unknown",
-      "ethanol": 0,
-      "weather": "70F clear"
-    },
-    {
-      "date": "June 29 2026",
-      "time": "07:31 PM",
+      "time": "07:01 PM",
       "duration": 0,
       "peak_rpm": 0,
       "peak_boost": 0,
@@ -134,38 +121,38 @@
     "test-fp-001": {
       "name": "TestDevice",
       "tier": 2,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     },
     "test-fp-002": {
       "name": "Valet",
       "tier": 4,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     },
     "test-fp-003": {
       "name": "Hacker",
       "tier": 4,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     },
     "test-fp-pass": {
       "name": "Passenger",
       "tier": 2,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     },
     "test-fp-name": {
       "name": "Alice",
       "tier": 3,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     },
     "known-fp-99": {
       "name": "Me",
       "tier": 2,
-      "registered_at": "June 29 2026 07:31 PM"
+      "registered_at": "June 29 2026 07:01 PM"
     }
   },
   "build_tracker": {
     "parts": [
       {
-        "id": "216bcec4",
+        "id": "920ed93c",
         "name": "Cold Air Intake",
         "part_number": "",
         "category": "intake",
@@ -178,7 +165,7 @@
         "notes": ""
       },
       {
-        "id": "9bf025bb",
+        "id": "4b1f1620",
         "name": "Test Part",
         "part_number": "",
         "category": "other",
@@ -191,7 +178,7 @@
         "notes": ""
       },
       {
-        "id": "c6c01993",
+        "id": "4f221178",
         "name": "Headers",
         "part_number": "",
         "category": "other",
@@ -204,7 +191,7 @@
         "notes": ""
       },
       {
-        "id": "b4fca7a3",
+        "id": "97230bb0",
         "name": "UpdateMe",
         "part_number": "",
         "category": "other",
@@ -217,7 +204,7 @@
         "notes": ""
       },
       {
-        "id": "9ccf9cd8",
+        "id": "66d359ac",
         "name": "Dummy",
         "part_number": "",
         "category": "other",
@@ -230,7 +217,7 @@
         "notes": ""
       },
       {
-        "id": "196420f1",
+        "id": "2fba944e",
         "name": "Tune",
         "part_number": "",
         "category": "other",
@@ -580,11 +567,6 @@
   "gps_name": "Test City",
   "weather_alerts": [],
   "nav_places": {
-    "home": {
-      "lat": 37.64,
-      "lon": -91.54,
-      "address": "Home"
-    },
     "test_spot": {
       "lat": 37.64,
       "lon": -91.54,

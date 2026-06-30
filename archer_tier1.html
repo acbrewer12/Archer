@@ -1027,6 +1027,7 @@ body.day{background:#0d0d0d}
       <div class="health-item"><span class="health-name">ENGINE TEMP</span><span class="health-val hok" id="hl-oil-val">195°F ✓</span><span class="hdot dok" id="hl-oil-dot"></span></div>
       <div class="health-item"><span class="health-name">OIL PRESSURE</span><span class="health-val hok" id="hl-oilp-val">45 PSI ✓</span><span class="hdot dok" id="hl-oilp-dot"></span></div>
       <div class="health-item"><span class="health-name">BATTERY</span><span class="health-val hok" id="hl-bat-val">14.2V ✓</span><span class="hdot dok" id="hl-bat-dot"></span></div>
+      <div class="health-item" id="hl-aux-bat-row"><span class="health-name">AUX BATTERY</span><span class="health-val" id="hl-aux-bat-val" style="color:#444">-- PENDING MOD</span><span class="hdot" id="hl-aux-bat-dot" style="background:#111;border:1px solid #2a2a2a"></span></div>
       <div class="health-item"><span class="health-name">COOLANT</span><span class="health-val hok" id="hl-clt-val">190°F ✓</span><span class="hdot dok" id="hl-clt-dot"></span></div>
       <div class="health-item"><span class="health-name">TRANSMISSION</span><span class="health-val hwarn" id="hl-trans-val">162°F !</span><span class="hdot dwarn" id="hl-trans-dot"></span></div>
       <div class="health-item"><span class="health-name">FUEL LEVEL</span><span class="health-val hok" id="hl-fuel-val">-- GAL ✓</span><span class="hdot dok" id="hl-fuel-dot"></span></div>
@@ -2323,7 +2324,7 @@ function setArcherMsg(text) {
 // ─── LIVE DATA ───
 // liveData = what's currently displayed (animated)
 // targetData = last value received from the server
-let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:0, knock:0, coolant:190, transTemp:160, afr:14.7 };
+let liveData   = { rpm:750, boost:0, speed:0, gear:1, oilTemp:195, oilPsi:45, battery:13.8, ethanol:0, knock:0, coolant:190, transTemp:160, afr:14.7, batteryAux:null, batteryAuxLive:false };
 let targetData = Object.assign({}, liveData);
 targetData.radarActive = false;
 let isSupercharged = false;   // set by pollLive when build_caps arrives
@@ -2361,7 +2362,9 @@ async function pollLive() {
     if (d.speed    != null) targetData.speed    = d.speed;
     if (d.boost    != null) targetData.boost    = d.boost;
     if (d.oil_temp != null) targetData.oilTemp  = d.oil_temp;
-    if (d.battery  != null) targetData.battery  = d.battery;
+    if (d.battery      != null) targetData.battery      = d.battery;
+    targetData.batteryAuxLive = !!d.battery_aux_live;
+    if (d.battery_aux  != null) targetData.batteryAux   = d.battery_aux;
     if (d.ethanol  != null) targetData.ethanol  = d.ethanol;
     if (d.coolant  != null) targetData.coolant  = d.coolant;
     const sd = d.sensor_data || {};
@@ -2713,7 +2716,10 @@ function update() {
   liveData.boost    = lerp(liveData.boost,    targetData.boost,    0.12);
   liveData.oilTemp  = lerp(liveData.oilTemp,  targetData.oilTemp,  0.08);
   liveData.oilPsi   = lerp(liveData.oilPsi,   targetData.oilPsi,   0.08);
-  liveData.battery  = lerp(liveData.battery,  targetData.battery,  0.08);
+  liveData.battery      = lerp(liveData.battery,     targetData.battery,     0.08);
+  liveData.batteryAuxLive = targetData.batteryAuxLive;
+  if (liveData.batteryAuxLive && targetData.batteryAux != null)
+    liveData.batteryAux = lerp(liveData.batteryAux ?? targetData.batteryAux, targetData.batteryAux, 0.08);
   liveData.coolant  = lerp(liveData.coolant,  targetData.coolant,  0.08);
   liveData.transTemp= lerp(liveData.transTemp,targetData.transTemp,0.08);
   liveData.afr      = lerp(liveData.afr,      targetData.afr,      0.08);
@@ -2893,6 +2899,20 @@ function updateHealth() {
   const bv = liveData.battery;
   const bvs = bv < 11.5 ? 'hbad' : bv < 13.0 ? 'hwarn' : 'hok';
   hs('hl-bat-val',  'hl-bat-dot',  bv.toFixed(1) + 'V ' + lbl(bvs), bvs);
+  // AUX BATTERY — grayed out until dual-battery mod Arduino hardware is installed
+  const _abEl = document.getElementById('hl-aux-bat-val');
+  const _abDt = document.getElementById('hl-aux-bat-dot');
+  if (_abEl && _abDt) {
+    if (!liveData.batteryAuxLive) {
+      _abEl.textContent = '-- PENDING MOD'; _abEl.className = 'health-val'; _abEl.style.color = '#444';
+      _abDt.style.cssText = 'background:#111;border:1px solid #2a2a2a';
+    } else {
+      const av = liveData.batteryAux; const avs = av < 11.5 ? 'hbad' : av < 13.0 ? 'hwarn' : 'hok';
+      _abEl.style.color = ''; _abEl.className = 'health-val ' + avs;
+      _abEl.textContent = av.toFixed(1) + 'V ' + lbl(avs);
+      _abDt.style.cssText = ''; _abDt.className = 'hdot ' + (avs === 'hok' ? 'dok' : avs === 'hwarn' ? 'dwarn' : 'dbad');
+    }
+  }
   const cl = Math.round(liveData.coolant);
   const cls = cl > 220 ? 'hbad' : cl > 210 ? 'hwarn' : 'hok';
   hs('hl-clt-val',  'hl-clt-dot',  cl + '°F ' + lbl(cls), cls);
