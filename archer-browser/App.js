@@ -1,40 +1,63 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Modal, StyleSheet,
-  StatusBar, ScrollView, BackHandler, Keyboard, Dimensions, PanResponder,
+  StatusBar, ScrollView, BackHandler, Keyboard, PanResponder,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { activateKeepAwake } from 'expo-keep-awake';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useFonts, ShareTechMono_400Regular } from '@expo-google-fonts/share-tech-mono';
 
-const STORAGE_KEY = 'archer_browser_v1';
+const STORAGE_KEY = 'archer_browser_v2';
 const TAB_H       = 54;
 const ADDR_H      = 50;
+const SEC_LIMIT   = 1800; // stay under expo-secure-store's ~2 KB per-value limit
+
+// Single place to update when the Archer HuggingFace Space URL changes.
+const ARCHER_BASE = 'https://aydencatman-archer.hf.space';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
+// ── Secure storage with AsyncStorage fallback for large payloads ──────────────
+async function secureSet(key, value) {
+  if (value.length <= SEC_LIMIT) {
+    try { await SecureStore.setItemAsync(key, value); return; } catch (_) {}
+  }
+  await AsyncStorage.setItem(key, value);
+}
+
+async function secureGet(key) {
+  try {
+    const v = await SecureStore.getItemAsync(key);
+    if (v != null) return v;
+  } catch (_) {}
+  return AsyncStorage.getItem(key);
+}
+
 const DEFAULT_TABS = [
-  { id: uid(), name: 'ARCHER',    homeUrl: 'https://aydencatman-archer.hf.space/display' },
-  { id: uid(), name: 'KHLOE',     homeUrl: 'https://aydencatman-archer.hf.space/passenger' },
-  { id: uid(), name: 'SIMULATOR', homeUrl: 'https://aydencatman-archer.hf.space/simulator' },
-  { id: uid(), name: 'VALET',     homeUrl: 'https://aydencatman-archer.hf.space/valet' },
-  { id: uid(), name: 'FANS',      homeUrl: 'https://aydencatman-archer.hf.space/fans' },
+  { id: uid(), name: 'ARCHER',    homeUrl: `${ARCHER_BASE}/display`    },
+  { id: uid(), name: 'KHLOE',     homeUrl: `${ARCHER_BASE}/passenger`  },
+  { id: uid(), name: 'SIMULATOR', homeUrl: `${ARCHER_BASE}/simulator`  },
+  { id: uid(), name: 'VALET',     homeUrl: `${ARCHER_BASE}/valet`      },
+  { id: uid(), name: 'FANS',      homeUrl: `${ARCHER_BASE}/fans`       },
   { id: uid(), name: 'GITHUB',    homeUrl: 'https://github.com/acbrewer12/Archer' },
-  { id: uid(), name: 'CLAUDE',    homeUrl: 'https://claude.ai' },
+  { id: uid(), name: 'CLAUDE',    homeUrl: 'https://claude.ai'         },
 ];
 
 export default function App() {
   const [fontsLoaded] = useFonts({ ShareTechMono_400Regular });
 
-  const [tabs,    setTabs]    = useState(DEFAULT_TABS);
-  const [active,  setActive]  = useState(0);
-  const [showBar, setShowBar] = useState(false);
-  const [barText, setBarText] = useState('');
-  const [modal,   setModal]   = useState(null);
-  const [mText,   setMText]   = useState('');
-  const [ready,   setReady]   = useState(false);
+  const [tabs,       setTabs]       = useState(DEFAULT_TABS);
+  const [active,     setActive]     = useState(0);
+  // mountedIds tracks which tabs have ever been shown — unvisited tabs are not mounted at all.
+  const [mountedIds, setMountedIds] = useState(() => new Set([DEFAULT_TABS[0].id]));
+  const [showBar,    setShowBar]    = useState(false);
+  const [barText,    setBarText]    = useState('');
+  const [modal,      setModal]      = useState(null);
+  const [mText,      setMText]      = useState('');
+  const [ready,      setReady]      = useState(false);
 
   const wvRefs    = useRef({});
   const tabsRef   = useRef(tabs);
@@ -46,13 +69,16 @@ export default function App() {
     activateKeepAwake();
     NavigationBar.setVisibilityAsync('hidden').catch(() => {});
     NavigationBar.setBehaviorAsync('overlay-swipe').catch(() => {});
-    AsyncStorage.getItem(STORAGE_KEY).then(v => {
+    secureGet(STORAGE_KEY).then(v => {
       if (v) {
         try {
           const s = JSON.parse(v);
           if (Array.isArray(s.tabs) && s.tabs.length) {
             setTabs(s.tabs);
-            setActive(Math.min(s.active || 0, s.tabs.length - 1));
+            const activeIdx = Math.min(s.active || 0, s.tabs.length - 1);
+            setActive(activeIdx);
+            // Only mount the restored active tab — all others load on first visit.
+            setMountedIds(new Set([s.tabs[activeIdx]?.id].filter(Boolean)));
           }
         } catch (_) {}
       }
@@ -61,7 +87,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (ready) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs, active }));
+    if (ready) secureSet(STORAGE_KEY, JSON.stringify({ tabs, active }));
   }, [tabs, active, ready]);
 
   useEffect(() => {
@@ -76,6 +102,16 @@ export default function App() {
     tabBarRef.current?.scrollTo({ x: active * 84 - 20, animated: true });
   }, [active]);
 
+  // Activate a tab: switch display immediately and mount it if this is the first visit.
+  const activateTab = useCallback((idx) => {
+    setActive(idx);
+    setMountedIds(prev => {
+      const id = tabsRef.current[idx]?.id;
+      if (!id || prev.has(id)) return prev;
+      return new Set([...prev, id]);
+    });
+  }, []);
+
   const openBar = useCallback(() => {
     const cur = tabsRef.current[active];
     setBarText(cur?.currentUrl || cur?.homeUrl || '');
@@ -88,7 +124,7 @@ export default function App() {
     if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
     const id = tabsRef.current[active]?.id;
     wvRefs.current[id]?.injectJavaScript(
-      `window.location.href = "${url.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"; true;`
+      `window.location.href = ${JSON.stringify(url)}; true;`
     );
     setTabs(ts => ts.map((t, i) => i === active ? { ...t, currentUrl: url } : t));
     setShowBar(false);
@@ -96,15 +132,20 @@ export default function App() {
   }, [barText, active]);
 
   const addTab = useCallback(() => {
-    const t = { id: uid(), name: `TAB ${tabsRef.current.length + 1}`, homeUrl: 'https://google.com' };
+    // Snapshot length before any state update to avoid stale-ref race on rapid taps.
+    const newIdx = tabsRef.current.length;
+    const t = { id: uid(), name: `TAB ${newIdx + 1}`, homeUrl: 'https://google.com' };
     setTabs(ts => [...ts, t]);
-    setActive(tabsRef.current.length);
+    setActive(newIdx);
+    setMountedIds(prev => new Set([...prev, t.id]));
   }, []);
 
   const deleteTab = useCallback((idx) => {
     if (tabsRef.current.length <= 1) return;
+    const deletedId = tabsRef.current[idx]?.id;
     setTabs(ts => ts.filter((_, i) => i !== idx));
     setActive(a => (a >= idx && a > 0 ? a - 1 : a));
+    if (deletedId) setMountedIds(prev => { const s = new Set(prev); s.delete(deletedId); return s; });
     setModal(null);
   }, []);
 
@@ -122,28 +163,30 @@ export default function App() {
     if (!url.startsWith('http')) url = 'https://' + url;
     if (idx === active) {
       wvRefs.current[tabsRef.current[idx]?.id]?.injectJavaScript(
-        `window.location.href = "${url.replace(/"/g, '\\"')}"; true;`
+        `window.location.href = ${JSON.stringify(url)}; true;`
       );
     }
     setTabs(ts => ts.map((t, i) => i === idx ? { ...t, homeUrl: url, currentUrl: url } : t));
     setModal(null);
   }, [modal, mText, active]);
 
+  // Left edge zone: swipe RIGHT (positive dx) → go to previous tab.
   const leftEdgePan = useRef(PanResponder.create({
     onStartShouldSetPanResponder:       () => true,
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dy) < 35,
     onPanResponderRelease:       (_, g) => {
-      if (g.dx < -50) setActive(a => Math.min(a + 1, tabsRef.current.length - 1));
+      if (g.dx > 50) activateTab(Math.max(active - 1, 0));
     },
-  })).current;
+  }));
 
+  // Right edge zone: swipe LEFT (negative dx) → go to next tab.
   const rightEdgePan = useRef(PanResponder.create({
     onStartShouldSetPanResponder:       () => true,
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dy) < 35,
     onPanResponderRelease:       (_, g) => {
-      if (g.dx > 50) setActive(a => Math.max(a - 1, 0));
+      if (g.dx < -50) activateTab(Math.min(active + 1, tabsRef.current.length - 1));
     },
-  })).current;
+  }));
 
   const FONT = fontsLoaded ? 'ShareTechMono_400Regular' : 'monospace';
 
@@ -153,30 +196,32 @@ export default function App() {
     <View style={s.root}>
       <StatusBar hidden />
 
-      {tabs.map((tab, idx) => (
-        <View key={tab.id} style={[s.webWrap, idx !== active && s.hidden]}>
-          <WebView
-            ref={r => { wvRefs.current[tab.id] = r; }}
-            source={{ uri: tab.homeUrl }}
-            style={{ flex: 1, backgroundColor: '#000' }}
-            javaScriptEnabled
-            domStorageEnabled
-            allowsInlineMediaPlayback
-            mediaPlaybackRequiresUserAction={false}
-            allowsFullscreenVideo
-            mixedContentMode="always"
-            geolocationEnabled
-            allowFileAccess
-            onNavigationStateChange={state =>
-              setTabs(ts => ts.map((t, i) =>
-                i === idx ? { ...t, currentUrl: state.url } : t
-              ))
-            }
-          />
-          <View style={s.edgeL} {...rightEdgePan.panHandlers} />
-          <View style={s.edgeR} {...leftEdgePan.panHandlers}  />
-        </View>
-      ))}
+      {tabs.map((tab, idx) => {
+        if (!mountedIds.has(tab.id)) return null;  // unvisited tabs: don't mount at all
+        return (
+          <View key={tab.id} style={[s.webWrap, idx !== active && s.hidden]}>
+            <WebView
+              ref={r => { wvRefs.current[tab.id] = r; }}
+              source={{ uri: tab.homeUrl }}
+              style={{ flex: 1, backgroundColor: '#000' }}
+              javaScriptEnabled
+              domStorageEnabled
+              allowsInlineMediaPlayback
+              mediaPlaybackRequiresUserAction={false}
+              allowsFullscreenVideo
+              mixedContentMode="compatibility"
+              geolocationEnabled={false}
+              onNavigationStateChange={state =>
+                setTabs(ts => ts.map((t, i) =>
+                  i === idx ? { ...t, currentUrl: state.url } : t
+                ))
+              }
+            />
+            <View style={s.edgeL} {...leftEdgePan.current.panHandlers}  />
+            <View style={s.edgeR} {...rightEdgePan.current.panHandlers} />
+          </View>
+        );
+      })}
 
       <TouchableOpacity style={s.topHandle} onPress={openBar} activeOpacity={0.6}>
         <View style={s.handlePill} />
@@ -217,7 +262,7 @@ export default function App() {
             <TouchableOpacity
               key={tab.id}
               style={s.tabBtn}
-              onPress={() => setActive(idx)}
+              onPress={() => activateTab(idx)}
               onLongPress={() => { setModal({ type: 'menu', idx }); setMText(''); }}
               delayLongPress={380}
             >
@@ -264,7 +309,7 @@ export default function App() {
                 </TouchableOpacity>
                 {tabs.length > 1 && (
                   <TouchableOpacity style={[s.menuRow, { borderBottomWidth: 0 }]} onPress={() => deleteTab(modal.idx)}>
-                    <Text style={[s.menuTxt, { fontFamily: FONT, color: '#cc0000' }]}>DELETE TAB</Text>
+                    <Text style={[s.menuTxt, { fontFamily: FONT }, { color: '#cc0000' }]}>DELETE TAB</Text>
                   </TouchableOpacity>
                 )}
               </>

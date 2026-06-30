@@ -11,6 +11,7 @@
     "expo": "~52.0.0",
     "expo-font": "~13.0.4",
     "expo-keep-awake": "~14.0.3",
+    "expo-secure-store": "~14.0.1",
     "expo-navigation-bar": "~4.0.8",
     "expo-status-bar": "~2.0.1",
     "@expo-google-fonts/share-tech-mono": "^0.2.3",
