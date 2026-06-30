@@ -1,14 +1,17 @@
 /**
- * Pure helper functions extracted from App.js for unit testing.
- * No React Native imports — safe to run in a Node test environment.
+ * Shared helper functions for archer-app and archer-browser.
+ * Pure functions and constants are safe to import in a Node test environment.
+ * secureGet / secureSet lazy-require React Native modules at call time.
  */
 
-const DEFAULT_PORT   = '7860';
-const TRUCK_SSID     = 'ARCHER-2500HD';
-const TRUCK_IP       = '192.168.4.1';
-const FAIL_THRESH    = 3;
-// Cloud fallback: shown automatically when the local Pi is unreachable.
+const DEFAULT_PORT    = '7860';
+const TRUCK_SSID      = 'ARCHER-2500HD';
+const TRUCK_IP        = '192.168.4.1';
+const FAIL_THRESH     = 3;
 const HF_FALLBACK_URL = 'https://aydencatman-archer.hf.space';
+// Overridable at EAS build time via EXPO_PUBLIC_ARCHER_BASE env var.
+const ARCHER_BASE     = process.env.EXPO_PUBLIC_ARCHER_BASE || HF_FALLBACK_URL;
+const SEC_LIMIT       = 1800; // expo-secure-store ~2 KB per-value cap
 
 /**
  * Build a base URL from a stored IP string.
@@ -74,6 +77,28 @@ function arcFill(speed) {
   return (clampSpeed(speed, MAX) / MAX) * TRACK;
 }
 
+// ── React Native storage helpers ──────────────────────────────────────────────
+// Modules are lazy-required at call time so this file stays importable in Node.
+
+async function secureSet(key, value) {
+  const SecureStore  = require('expo-secure-store');
+  const AsyncStorage = require('@react-native-async-storage/async-storage');
+  if (value.length <= SEC_LIMIT) {
+    try { await SecureStore.setItemAsync(key, value); return; } catch (_) {}
+  }
+  await AsyncStorage.setItem(key, value);
+}
+
+async function secureGet(key) {
+  const SecureStore  = require('expo-secure-store');
+  const AsyncStorage = require('@react-native-async-storage/async-storage');
+  try {
+    const v = await SecureStore.getItemAsync(key);
+    if (v != null) return v;
+  } catch (_) {}
+  return AsyncStorage.getItem(key);
+}
+
 module.exports = {
   buildUrl,
   isTruckSsid,
@@ -82,9 +107,13 @@ module.exports = {
   formatOBDMode,
   clampSpeed,
   arcFill,
+  secureGet,
+  secureSet,
   DEFAULT_PORT,
   TRUCK_IP,
   TRUCK_SSID,
   FAIL_THRESH,
   HF_FALLBACK_URL,
+  ARCHER_BASE,
+  SEC_LIMIT,
 };

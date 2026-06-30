@@ -4,42 +4,16 @@ import {
   StatusBar, ScrollView, BackHandler, Keyboard, PanResponder,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store';
 import { activateKeepAwake } from 'expo-keep-awake';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useFonts, ShareTechMono_400Regular } from '@expo-google-fonts/share-tech-mono';
-import Constants from 'expo-constants';
+import { ARCHER_BASE, secureGet, secureSet } from '../helpers';
 
 const STORAGE_KEY = 'archer_browser_v2';
 const TAB_H       = 54;
 const ADDR_H      = 50;
-const SEC_LIMIT   = 1800; // stay under expo-secure-store's ~2 KB per-value limit
-
-// Reads from app.json extra.archerBase (override via EXPO_PUBLIC_ARCHER_BASE at build time).
-// This keeps the URL out of JS source and lets EAS builds override it without code changes.
-const ARCHER_BASE =
-  process.env.EXPO_PUBLIC_ARCHER_BASE ||
-  Constants.expoConfig?.extra?.archerBase ||
-  'https://aydencatman-archer.hf.space';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-
-// ── Secure storage with AsyncStorage fallback for large payloads ──────────────
-async function secureSet(key, value) {
-  if (value.length <= SEC_LIMIT) {
-    try { await SecureStore.setItemAsync(key, value); return; } catch (_) {}
-  }
-  await AsyncStorage.setItem(key, value);
-}
-
-async function secureGet(key) {
-  try {
-    const v = await SecureStore.getItemAsync(key);
-    if (v != null) return v;
-  } catch (_) {}
-  return AsyncStorage.getItem(key);
-}
 
 const DEFAULT_TABS = [
   { id: uid(), name: 'ARCHER',    homeUrl: `${ARCHER_BASE}/display`    },

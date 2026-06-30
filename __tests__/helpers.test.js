@@ -1,6 +1,6 @@
 /**
- * Archer App — unit tests for pure helper functions.
- * Run with: npx jest  (from archer-app/)
+ * Archer shared helpers — unit tests.
+ * Run from repo root: npm test
  */
 
 const {
@@ -14,6 +14,9 @@ const {
   DEFAULT_PORT,
   TRUCK_IP,
   FAIL_THRESH,
+  HF_FALLBACK_URL,
+  ARCHER_BASE,
+  SEC_LIMIT,
 } = require('../helpers');
 
 
@@ -44,8 +47,7 @@ describe('buildUrl', () => {
   });
 
   test('HuggingFace URL passes through', () => {
-    const hf = 'https://aydencatman-archer.hf.space';
-    expect(buildUrl(hf)).toBe(hf);
+    expect(buildUrl(HF_FALLBACK_URL)).toBe(HF_FALLBACK_URL);
   });
 
   test('TRUCK_IP builds expected URL', () => {
@@ -223,5 +225,22 @@ describe('arcFill', () => {
 
   test('result is proportional', () => {
     expect(arcFill(30)).toBeCloseTo(49.5, 1);
+  });
+});
+
+
+// ── constants ────────────────────────────────────────────────────
+describe('constants', () => {
+  test('HF_FALLBACK_URL is a valid https URL', () => {
+    expect(HF_FALLBACK_URL).toMatch(/^https:\/\/.+/);
+  });
+
+  test('ARCHER_BASE defaults to HF_FALLBACK_URL when env var unset', () => {
+    // EXPO_PUBLIC_ARCHER_BASE is not set in the test environment
+    expect(ARCHER_BASE).toBe(HF_FALLBACK_URL);
+  });
+
+  test('SEC_LIMIT is a positive integer', () => {
+    expect(Number.isInteger(SEC_LIMIT) && SEC_LIMIT > 0).toBe(true);
   });
 });
