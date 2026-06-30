@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Pre-commit hook — blocks accidental secret commits.
+#
+# Install once per clone:
+#   git config core.hooksPath .githooks
+#
+# Or copy to .git/hooks/ if you prefer the local path.
+
+set -euo pipefail
+
+FAIL=0
+
+# ── 1. Block secret file types ─────────────────────────────────────────────────
+FORBIDDEN_PATTERNS=(
+    "archer\.env"
+    "\.env$"
+    "google-services\.json"
+    "obd_auth\.key"
+    "archer_data\.db"
+    "\.keystore$"
+    "credentials\.json"
+    "service-account.*\.json"
+)
+
+while IFS= read -r file; do
+    for pat in "${FORBIDDEN_PATTERNS[@]}"; do
+        if echo "$file" | grep -qE "$pat"; then
+            echo "[PRE-COMMIT] BLOCKED: staging '$file' — matches secret file pattern '$pat'"
+            FAIL=1
+        fi
+    done
+done < <(git diff --cached --name-only)
+
+# ── 2. Scan staged content for high-entropy secret patterns ────────────────────
+SECRET_PATTERNS=(
+    'gsk_[A-Za-z0-9]{20,}'                  # Groq API key
+    'AIza[A-Za-z0-9_-]{35,}'                # Google API key
+    '"private_key"\s*:\s*"-----BEGIN'        # Firebase service account private key
+    'sk-[A-Za-z0-9]{32,}'                   # OpenAI-style secret key
+    'ARCHER_SECRET\s*=\s*[^$({<][^'"'"'"\s]{8,}'  # Real value (not placeholder/empty)
+    'ARCHER_OWNER_PIN\s*=\s*[0-9]{4,}'      # Actual PIN value
+    'ARCHER_PI_TOKEN\s*=\s*[^$({<][^'"'"'"\s]{6,}' # Real Pi token
+)
+
+while IFS= read -r file; do
+    # Only scan text-like files
+    mime=$(git show ":$file" 2>/dev/null | file --mime-type - 2>/dev/null || true)
+    if echo "$mime" | grep -qE "application/octet|image/|audio/|video/"; then
+        continue
+    fi
+    for pat in "${SECRET_PATTERNS[@]}"; do
+        if git show ":$file" 2>/dev/null | grep -qP "$pat" 2>/dev/null; then
+            echo "[PRE-COMMIT] BLOCKED: '$file' contains a pattern that looks like a secret: $pat"
+            echo "             If this is a false positive, use: git commit --no-verify"
+            FAIL=1
+        fi
+    done
+done < <(git diff --cached --name-only)
+
+if [ "$FAIL" -eq 1 ]; then
+    echo ""
+    echo "[PRE-COMMIT] Commit blocked. Fix the issues above or use --no-verify if intentional."
+    exit 1
+fi
+
+exit 0

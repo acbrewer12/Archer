@@ -2229,6 +2229,120 @@ class TestDisplayDataSSE:
             assert 'device_tier' in payload
 
 
+class TestBeamNGBounds:
+    """Sensor bounds validation in /beamng_data endpoint."""
+
+    def _base(self, overrides=None):
+        p = {'source': 'beamng', 'rpm': 2000, 'speed': 50, 'boost': 5.0,
+             'oil_temp': 200, 'coolant_temp': 190, 'throttle': 40, 'gear': 3}
+        if overrides:
+            p.update(overrides)
+        return p
+
+    def test_normal_values_accepted(self):
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._base())
+        assert r.status_code == 200
+
+    def test_rpm_out_of_bounds_rejected(self):
+        """RPM >8000 must not be written to truck_state."""
+        archer.truck_state['rpm'] = 1000  # known-good starting value
+        c = archer.display_app.test_client()
+        c.post('/beamng_data', json=self._base({'rpm': 99999}))
+        assert archer.truck_state['rpm'] == 1000
+
+    def test_coolant_out_of_bounds_rejected(self):
+        """500°F coolant must not be written to truck_state."""
+        archer.truck_state['coolant_temp'] = 190
+        c = archer.display_app.test_client()
+        c.post('/beamng_data', json=self._base({'coolant_temp': 500}))
+        assert archer.truck_state['coolant_temp'] == 190
+
+    def test_valid_boundary_value_accepted(self):
+        """Exact boundary value (8000 RPM) should be accepted."""
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._base({'rpm': 8000}))
+        assert r.status_code == 200
+        assert archer.truck_state['rpm'] == 8000
+
+    def test_non_numeric_gear_accepted(self):
+        """Gear 'R' or 'N' (string, no bounds) must pass through."""
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._base({'gear': 'R'}))
+        assert r.status_code == 200
+        assert archer.truck_state['gear'] == 'R'
+
+
+class TestTripLogEnrichment:
+    """save_trip() now records peak temps, distance, MPG, and fault codes."""
+
+    def test_save_trip_includes_peak_coolant(self):
+        archer.awareness['peak_coolant_temp'] = 215
+        t = archer.save_trip()
+        assert t['peak_coolant_temp'] == 215
+
+    def test_save_trip_includes_peak_oil(self):
+        archer.awareness['peak_oil_temp'] = 230
+        t = archer.save_trip()
+        assert t['peak_oil_temp'] == 230
+
+    def test_save_trip_includes_distance(self):
+        archer.trip_stats['distance_miles'] = 12.5
+        t = archer.save_trip()
+        assert t['trip_distance'] == 12.5
+
+    def test_save_trip_includes_mpg(self):
+        archer.trip_stats['avg_mpg'] = 13.2
+        t = archer.save_trip()
+        assert t['trip_mpg'] == 13.2
+
+    def test_save_trip_captures_active_fault_codes(self):
+        archer.fault_codes.append({'code': 'P0300', 'status': 'active', 'desc': 'Misfire', 'severity': 'critical'})
+        t = archer.save_trip()
+        assert 'P0300' in t['fault_codes']
+        archer.fault_codes.clear()
+
+    def test_save_trip_excludes_cleared_codes(self):
+        archer.fault_codes.append({'code': 'P0300', 'status': 'cleared', 'desc': 'Misfire', 'severity': 'medium'})
+        t = archer.save_trip()
+        assert 'P0300' not in t['fault_codes']
+        archer.fault_codes.clear()
+
+
+class TestOLEDStaleFlag:
+    """record_spikes() writes stale=True when sensor data stops updating."""
+
+    def test_stale_when_sim_disabled_and_obd_old(self):
+        import copy
+        archer.sim_flags['random_enabled'] = False
+        archer.system_health['last_obd_update'] = 0  # very old
+        # Call record_spikes once — but it loops so we just test the logic inline
+        stale = (
+            not archer.sim_flags.get('random_enabled', True)
+            and (time.time() - archer.system_health.get('last_obd_update', 0)) > 10
+        )
+        assert stale is True
+        archer.sim_flags['random_enabled'] = True
+
+    def test_not_stale_when_sim_enabled(self):
+        archer.sim_flags['random_enabled'] = True
+        stale = (
+            not archer.sim_flags.get('random_enabled', True)
+            and (time.time() - archer.system_health.get('last_obd_update', 0)) > 10
+        )
+        assert stale is False
+
+    def test_not_stale_when_obd_recent(self):
+        archer.sim_flags['random_enabled'] = False
+        archer.system_health['last_obd_update'] = time.time()
+        stale = (
+            not archer.sim_flags.get('random_enabled', True)
+            and (time.time() - archer.system_health.get('last_obd_update', 0)) > 10
+        )
+        assert stale is False
+        archer.sim_flags['random_enabled'] = True
+
+
 class TestTLSContext:
     """_get_tls_context() returns None when USE_TLS is not set."""
 

@@ -1450,7 +1450,7 @@ Rules you never break:
 awareness = {
     'drive_session_start': time.time(), 'total_distance': 0,
     'hard_accel_count': 0, 'hard_brake_count': 0, 'idle_time': 0,
-    'peak_rpm': 0, 'peak_boost': 0, 'peak_oil_temp': 0,
+    'peak_rpm': 0, 'peak_boost': 0, 'peak_oil_temp': 0, 'peak_coolant_temp': 0,
     'last_rpm': 750, 'rpm_trend': 'stable', 'oil_trend': 'stable',
     'throttle_state': 'idle', 'drive_quality': 100,
     'warnings_active': [], 'last_warning_check': 0,
@@ -1481,6 +1481,8 @@ def update_awareness():
         if rpm   > awareness['peak_rpm']:      awareness['peak_rpm']      = rpm
         if boost > awareness['peak_boost']:    awareness['peak_boost']    = boost
         if oil   > awareness['peak_oil_temp']: awareness['peak_oil_temp'] = oil
+        coolant = truck_state['coolant_temp']
+        if coolant > awareness['peak_coolant_temp']: awareness['peak_coolant_temp'] = coolant
 
         if oil > 215:   awareness['oil_trend'] = 'high'
         elif oil > 205: awareness['oil_trend'] = 'warm'
@@ -1630,6 +1632,10 @@ def record_spikes():
                 spike_history[key] = spike_history[key][-MAX_SPIKE:]
         # Write compact snapshot for the OLED fallback display
         try:
+            _oled_stale = (
+                not sim_flags.get('random_enabled', True)
+                and (time.time() - system_health.get('last_obd_update', 0)) > 10
+            )
             with open(_OLED_STATE_FILE, 'w') as _f:
                 json.dump({
                     'ts':           time.time(),
@@ -1638,6 +1644,7 @@ def record_spikes():
                     'coolant_temp': truck_state['coolant_temp'],
                     'warning':      len(awareness['warnings_active']) > 0,
                     'obd_mode':     'EMULATED' if USE_EMULATOR else 'LIVE',
+                    'stale':        _oled_stale,
                 }, _f)
         except OSError:
             pass
@@ -1986,11 +1993,13 @@ def end_session_summary():
     elif awareness['drive_quality'] >= 70: lines.append("Decent session. A few hard events but nothing concerning.")
     else:                              lines.append("Rough on the drivetrain tonight. Take it easier next time.")
     if awareness['hard_accel_count'] > 10: lines.append(f"{awareness['hard_accel_count']} hard acceleration events logged.")
-    awareness['drive_session_start'] = time.time()
-    awareness['hard_accel_count']    = 0
-    awareness['peak_rpm']            = 0
-    awareness['peak_boost']          = 0
-    awareness['drive_quality']       = 100
+    awareness['drive_session_start']  = time.time()
+    awareness['hard_accel_count']     = 0
+    awareness['peak_rpm']             = 0
+    awareness['peak_boost']           = 0
+    awareness['peak_oil_temp']        = 0
+    awareness['peak_coolant_temp']    = 0
+    awareness['drive_quality']        = 100
     return ' '.join(lines)
 
 # ── DYNO MODE ────────────────────────────
@@ -2071,18 +2080,25 @@ trip_log = []
 
 def save_trip():
     session_mins = round((time.time() - awareness['drive_session_start']) / 60)
+    active_codes = [f['code'] for f in fault_codes if f.get('status', 'active') == 'active']
     trip = {
-        'date':        datetime.now().strftime('%B %d %Y'),
-        'time':        datetime.now().strftime('%I:%M %p'),
-        'duration':    session_mins,
-        'peak_rpm':    awareness['peak_rpm'],
-        'peak_boost':  awareness['peak_boost'],
-        'best_060':    personal_bests['best_0_60'],
-        'hard_events': awareness['hard_accel_count'],
-        'quality':     awareness['drive_quality'],
-        'road':        road_memory[current_road]['name'] if current_road else 'unknown',
-        'ethanol':     truck_state['ethanol'],
-        'weather':     f"{weather['temp']}F {weather['condition']}",
+        'date':              datetime.now().strftime('%B %d %Y'),
+        'time':              datetime.now().strftime('%I:%M %p'),
+        'duration':          session_mins,
+        'peak_rpm':          awareness['peak_rpm'],
+        'peak_boost':        awareness['peak_boost'],
+        'peak_oil_temp':     awareness['peak_oil_temp'],
+        'peak_coolant_temp': awareness['peak_coolant_temp'],
+        'trip_distance':     round(trip_stats['distance_miles'], 2),
+        'trip_mpg':          round(trip_stats['avg_mpg'], 1) if trip_stats['avg_mpg'] else None,
+        'fuel_used_gal':     round(trip_stats['fuel_used_gal'], 3),
+        'best_060':          personal_bests['best_0_60'],
+        'hard_events':       awareness['hard_accel_count'],
+        'quality':           awareness['drive_quality'],
+        'road':              road_memory[current_road]['name'] if current_road else 'unknown',
+        'ethanol':           truck_state['ethanol'],
+        'weather':           f"{weather['temp']}F {weather['condition']}",
+        'fault_codes':       active_codes,
     }
     trip_log.append(trip)
     if len(trip_log) > 100:
@@ -10873,6 +10889,18 @@ def arduino_status():
     })
 
 # ── BEAMNG TELEMETRY ─────────────────────────────────────
+# Hard limits for sensor values coming from BeamNG (matches OBD PID_TABLE bounds).
+_BEAMNG_BOUNDS = {
+    'rpm':          (0,    8000),
+    'speed':        (0,    200),
+    'boost':        (-15,  30),
+    'oil_temp':     (-40,  350),
+    'coolant_temp': (-40,  300),
+    'throttle':     (0,    100),
+    'brake':        (0,    100),
+    'fuel':         (0,    100),
+}
+
 @display_app.route('/beamng_data', methods=['POST'])
 def beamng_data():
     import time as _time
@@ -10887,7 +10915,7 @@ def beamng_data():
     if not data or data.get('source') != 'beamng':
         return jsonify({'ok': False, 'error': 'invalid payload'}), 400
 
-    # Map BeamNG fields → truck_state
+    # Map BeamNG fields → truck_state with bounds validation
     FIELD_MAP = {
         'rpm':         'rpm',
         'speed':       'speed',
@@ -10898,8 +10926,15 @@ def beamng_data():
         'gear':        'gear',
     }
     for src, dst in FIELD_MAP.items():
-        if src in data:
-            truck_state[dst] = data[src]
+        if src not in data:
+            continue
+        val = data[src]
+        if src in _BEAMNG_BOUNDS and isinstance(val, (int, float)):
+            lo, hi = _BEAMNG_BOUNDS[src]
+            if not (lo <= val <= hi):
+                print(f'[BEAMNG] Sensor error: {src}={val} out of bounds [{lo},{hi}] — rejected')
+                continue
+        truck_state[dst] = val
 
     beamng_state['connected'] = True
     beamng_state['last_rx']   = _time.time()
