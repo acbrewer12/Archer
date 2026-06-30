@@ -98,6 +98,13 @@ def _draw_offline(draw, width: int, height: int):
     draw.text((10, 34), "OFFLINE", fill="white")
 
 
+def _draw_stale(draw, width: int, height: int):
+    """Shown when archer.py is running but sensor data has stopped updating."""
+    draw.rectangle([(0, 0), (width, height)], outline="white")
+    draw.text((4, 14), "! NO DATA !", fill="white")
+    draw.text((4, 34), "SENSOR LOST", fill="white")
+
+
 def _draw_boot(draw, width: int, height: int, dots: int):
     draw.text((6, 20), "ARCHER BOOTING" + "." * (dots % 4), fill="white")
 
@@ -159,6 +166,8 @@ def main():
                 with canvas(device) as draw:
                     if age > OFFLINE_AFTER:
                         _draw_offline(draw, device.width, device.height)
+                    elif state.get("stale", False):
+                        _draw_stale(draw, device.width, device.height)
                     else:
                         _draw_normal(draw, state, device.width, device.height)
 

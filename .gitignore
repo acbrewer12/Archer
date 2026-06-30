@@ -12,3 +12,5 @@ archer.env
 archer_data.db
 archer_data.db-wal
 archer_data.db-shm
+google-services.json
+*.keystore
