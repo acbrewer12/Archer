@@ -18,6 +18,33 @@ if [ -z "$ARCHER_PI_TOKEN" ]; then
     exit 1
 fi
 
+# Temp cookie jar — holds archer_sid so CSRF tokens remain valid
+COOKIE_JAR="$(mktemp /tmp/archer_pi_cookies.XXXXXX)"
+trap 'rm -f "$COOKIE_JAR"' EXIT
+
+# Fetch a CSRF token from the server and store the session cookie
+pi_csrf_token() {
+    curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+        "$ARCHER_URL/csrf_token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null
+}
+
+# POST to an Archer endpoint with CSRF + token auth
+pi_post() {
+    local endpoint="$1"
+    local body="$2"
+    local csrf
+    csrf=$(pi_csrf_token)
+    if [ -z "$csrf" ]; then
+        echo "[PI] WARNING: Could not fetch CSRF token — server may be unreachable"
+        return 1
+    fi
+    curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+        -X POST "$ARCHER_URL$endpoint" \
+        -H "Content-Type: application/json" \
+        -H "X-CSRF-Token: $csrf" \
+        -d "$body"
+}
+
 echo "[PI] Starting Archer Pi terminal connection..."
 
 # Install ttyd if not present
@@ -55,11 +82,9 @@ fi
 
 echo "[PI] Tunnel URL: $TUNNEL_URL"
 
-# Register with Archer
+# Register with Archer (CSRF + token auth)
 echo "[PI] Registering with Archer..."
-curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
-    -H "Content-Type: application/json" \
-    -d "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}"
+pi_post "/terminal/pi_register" "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}"
 
 echo ""
 echo "[PI] Connected. Terminal available at $ARCHER_URL/terminal"
@@ -68,9 +93,7 @@ echo "[PI] Press Ctrl+C to disconnect"
 # Keep alive — re-register every 5 minutes in case tunnel URL changes
 cleanup() {
     echo "[PI] Disconnecting..."
-    curl -s -X POST "$ARCHER_URL/terminal/pi_disconnect" \
-        -H "Content-Type: application/json" \
-        -d "{\"token\":\"$ARCHER_PI_TOKEN\"}"
+    pi_post "/terminal/pi_disconnect" "{\"token\":\"$ARCHER_PI_TOKEN\"}"
     kill $TTYD_PID $NGROK_PID 2>/dev/null
     exit 0
 }
@@ -80,9 +103,7 @@ while true; do
     sleep 300
     TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
     if [ -n "$TUNNEL_URL" ]; then
-        curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
-            -H "Content-Type: application/json" \
-            -d "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
+        pi_post "/terminal/pi_register" "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
         echo "[PI] Re-registered tunnel: $TUNNEL_URL"
     fi
 done

@@ -2031,6 +2031,19 @@ class TestPiTunnel:
         r = client.post('/terminal/pi_disconnect', json={'token': 'bad'})
         assert r.status_code == 403
 
+    def test_pi_register_requires_csrf(self):
+        """Calling pi_register without a CSRF token must return 403."""
+        with archer.display_app.test_client() as c:
+            r = c.post('/terminal/pi_register',
+                       json={'token': self._token, 'url': 'https://x.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_requires_csrf(self):
+        """Calling pi_disconnect without a CSRF token must return 403."""
+        with archer.display_app.test_client() as c:
+            r = c.post('/terminal/pi_disconnect', json={'token': self._token})
+        assert r.status_code == 403
+
 
 # ═══════════════════════════════════════════════════════════════
 # 44. Fail-closed secret — archer_state refuses to start without a secret

@@ -158,6 +158,16 @@ let currentTab = 'server';
 let cmdHistory = [];
 let histIdx = -1;
 
+// ── CSRF token (fetched once at page load; reused for all POSTs) ──────────────
+let _csrfToken = '';
+(async () => {
+    try {
+        const r = await fetch('/csrf_token');
+        const d = await r.json();
+        _csrfToken = d.token || '';
+    } catch(_) {}
+})();
+
 function append(text, cls) {
     const s = document.createElement('div');
     s.className = 'line-' + (cls || 'out');
@@ -231,9 +241,18 @@ function filterLogs() {
 
 function clearLogs() { _logLines = []; document.getElementById('log-output').innerHTML = ''; }
 
-function startLogStream() {
+async function startLogStream() {
     if (_logEs) return;
-    _logEs = new EventSource('/terminal/log_stream');
+    try {
+        // Get a one-time key via CSRF-protected POST, then open SSE with that key
+        const kr = await fetch('/terminal/log_stream_key', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken}
+        });
+        if (!kr.ok) { setTimeout(startLogStream, 3000); return; }
+        const {key} = await kr.json();
+        _logEs = new EventSource('/terminal/log_stream?key=' + encodeURIComponent(key));
+    } catch(_) { setTimeout(startLogStream, 3000); return; }
     _logEs.onmessage = e => {
         const d = JSON.parse(e.data);
         if (d.snapshot) { _logLines = d.snapshot; renderLogs(); }
@@ -267,7 +286,7 @@ function sendCmd() {
     inp.value = '';
     fetch('/terminal/exec', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken},
         body: JSON.stringify({cmd: cmd})
     })
     .then(r=>r.json())
@@ -492,11 +511,16 @@ def pi_status():
 
 
 @bp.route('/terminal/pi_register', methods=['POST'])
+@csrf_required
 def pi_register():
-    """Pi calls this on connect to register its tunnel URL."""
+    """Pi calls this on connect to register its tunnel URL.
+
+    Pi must first GET /csrf_token (saving the archer_sid cookie), then POST
+    here with X-CSRF-Token header and the PI token in the body.
+    """
     data  = request.get_json() or {}
     token = data.get('token', '')
-    if token != _ARCHER_PI_TOKEN:
+    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True
@@ -506,6 +530,7 @@ def pi_register():
 
 
 @bp.route('/terminal/pi_disconnect', methods=['POST'])
+@csrf_required
 def pi_disconnect():
     data  = request.get_json() or {}
     token = data.get('token', '')
