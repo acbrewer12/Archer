@@ -17,6 +17,7 @@ import hmac as _hmac
 import hashlib as _hashlib
 import os as _os
 import secrets as _secrets
+from collections import deque as _deque
 
 # ── Key derivation ────────────────────────────────────────────────────────────
 def _get_serial_secret() -> bytes:
@@ -39,12 +40,18 @@ def _get_serial_secret() -> bytes:
             )
         return _hmac.new(raw.encode(), b'serial-arduino', _hashlib.sha256).digest()
 
-_SERIAL_SECRET: bytes = _get_serial_secret()
+_SERIAL_SECRET: bytes | None = None
+
+def _get_or_init_serial_secret() -> bytes:
+    global _SERIAL_SECRET
+    if _SERIAL_SECRET is None:
+        _SERIAL_SECRET = _get_serial_secret()
+    return _SERIAL_SECRET
 
 # ── Tag computation ───────────────────────────────────────────────────────────
 def _compute_tag(payload: str, nonce: str) -> str:
     msg = f'{payload}|{nonce}'.encode()
-    return _hmac.new(_SERIAL_SECRET, msg, _hashlib.sha256).hexdigest()[:16]
+    return _hmac.new(_get_or_init_serial_secret(), msg, _hashlib.sha256).hexdigest()[:16]
 
 # ── Encoder ───────────────────────────────────────────────────────────────────
 def encode_message(payload: str, nonce: str | None = None) -> str:
@@ -65,7 +72,7 @@ class ReplayGuard:
     """Reject messages whose nonce was already seen (simple sliding-window cache)."""
     def __init__(self, window: int = 256):
         self._seen: set = set()
-        self._order: list = []
+        self._order: _deque = _deque()
         self._window = window
 
     def check_and_record(self, nonce: str) -> bool:
@@ -75,7 +82,7 @@ class ReplayGuard:
         self._seen.add(nonce)
         self._order.append(nonce)
         if len(self._order) > self._window:
-            evicted = self._order.pop(0)
+            evicted = self._order.popleft()
             self._seen.discard(evicted)
         return True
 

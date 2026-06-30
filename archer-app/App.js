@@ -17,7 +17,7 @@ import * as Notifications    from 'expo-notifications';
 import * as Haptics          from 'expo-haptics';
 import NetInfo               from '@react-native-community/netinfo';
 
-const { buildUrl: _buildUrl, DEFAULT_PORT, TRUCK_IP, FAIL_THRESH, TRUCK_SSID } = require('./helpers');
+const { buildUrl: _buildUrl, DEFAULT_PORT, TRUCK_IP, FAIL_THRESH, TRUCK_SSID, HF_FALLBACK_URL } = require('./helpers');
 const STORE_KEY   = 'archer_server_ip';
 const POLL_MS     = 5000;
 const SPEAKING_MS = 4000;
@@ -133,11 +133,19 @@ function useConnectionMonitor(serverUrl) {
   const [tier, setTier]                    = useState(null);
   const [consecutiveFails, setConsecFails] = useState(0);
   const [isSpeaking, setIsSpeaking]        = useState(false);
+  // effectiveUrl: normally equals serverUrl; automatically switches to HF_FALLBACK_URL
+  // when the Pi is unreachable, then back to serverUrl when it recovers.
+  const [effectiveUrl, setEffectiveUrl]    = useState(serverUrl);
   const failsRef    = useRef(0);
   const lastMsgRef  = useRef('');
   const speakTimer  = useRef(null);
   const appState    = useRef(AppState.currentState);
   const lastWarn    = useRef(false);
+
+  useEffect(() => {
+    setEffectiveUrl(serverUrl);
+    failsRef.current = 0;
+  }, [serverUrl]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', s => { appState.current = s; });
@@ -157,27 +165,22 @@ function useConnectionMonitor(serverUrl) {
         failsRef.current = 0;
         setConsecFails(0);
         setIsConnected(true);
+        setEffectiveUrl(serverUrl); // primary recovered — stop using fallback
         if (t !== null) setTier(t);
 
         const d = await fetchDisplayData(serverUrl);
         if (d) {
-          // Warning haptics
           if (d.warning && !lastWarn.current) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
           }
           lastWarn.current = !!d.warning;
 
-          // Archer message — notification + SPEAKING label
           const msg = d.archer_msg || null;
           if (msg && msg !== lastMsgRef.current) {
             lastMsgRef.current = msg;
-
-            // Show ARCHER SPEAKING label
             setIsSpeaking(true);
             clearTimeout(speakTimer.current);
             speakTimer.current = setTimeout(() => setIsSpeaking(false), SPEAKING_MS);
-
-            // Background notification
             if (appState.current !== 'active') {
               Notifications.scheduleNotificationAsync({
                 content: { title: 'ARCHER', body: msg },
@@ -189,7 +192,17 @@ function useConnectionMonitor(serverUrl) {
       } else {
         failsRef.current += 1;
         setConsecFails(failsRef.current);
-        if (failsRef.current >= FAIL_THRESH) setIsConnected(false);
+        if (failsRef.current >= FAIL_THRESH) {
+          setIsConnected(false);
+          // Auto-failover: if the current target is already the fallback don't re-try it.
+          if (serverUrl !== HF_FALLBACK_URL) {
+            const { ok: fbOk, tier: fbTier } = await pingServer(HF_FALLBACK_URL);
+            if (fbOk && active) {
+              setEffectiveUrl(HF_FALLBACK_URL);
+              if (fbTier !== null) setTier(fbTier);
+            }
+          }
+        }
       }
     }
 
@@ -198,7 +211,7 @@ function useConnectionMonitor(serverUrl) {
     return () => { active = false; clearInterval(id); clearTimeout(speakTimer.current); };
   }, [serverUrl]);
 
-  return { isConnected, tier, consecutiveFails, isSpeaking };
+  return { isConnected, tier, consecutiveFails, isSpeaking, effectiveUrl };
 }
 
 // ── Connection Bar ────────────────────────────────────────
@@ -226,8 +239,9 @@ function ConnectionBar({ isConnected, tier, isSpeaking }) {
 }
 
 // ── Offline Overlay ───────────────────────────────────────
-function OfflineOverlay({ serverUrl, onRetry }) {
+function OfflineOverlay({ serverUrl, effectiveUrl, onRetry }) {
   const [retrying, setRetrying] = useState(false);
+  const usingFallback = effectiveUrl && effectiveUrl !== serverUrl;
   async function retry() {
     setRetrying(true);
     const { ok } = await pingServer(serverUrl);
@@ -237,13 +251,21 @@ function OfflineOverlay({ serverUrl, onRetry }) {
   return (
     <View style={s.offlineWrap}>
       <View style={s.offlineBox}>
-        <Text style={s.offlineTitleTxt}>ARCHER OFFLINE</Text>
-        <Text style={s.offlineBodyTxt}>Can't reach {serverUrl}</Text>
-        <Text style={s.offlineBodyTxt}>Make sure you're on the same WiFi.</Text>
+        <Text style={s.offlineTitleTxt}>
+          {usingFallback ? 'ARCHER — CLOUD MODE' : 'ARCHER OFFLINE'}
+        </Text>
+        <Text style={s.offlineBodyTxt}>
+          {usingFallback
+            ? `Pi unreachable — using cloud fallback`
+            : `Can't reach ${serverUrl}`}
+        </Text>
+        {usingFallback
+          ? <Text style={s.offlineBodyTxt}>{effectiveUrl}</Text>
+          : <Text style={s.offlineBodyTxt}>Make sure you're on the same WiFi.</Text>}
         <TouchableOpacity style={s.retryBtn} onPress={retry} disabled={retrying}>
           {retrying
             ? <ActivityIndicator color="#cc0000" />
-            : <Text style={s.retryBtnTxt}>RETRY</Text>}
+            : <Text style={s.retryBtnTxt}>RETRY Pi</Text>}
         </TouchableOpacity>
       </View>
     </View>
@@ -321,7 +343,7 @@ export default function App() {
   const webRef    = useRef(null);
   const [canGoBack, setCanGoBack]     = useState(false);
 
-  const { isConnected, tier, consecutiveFails, isSpeaking } = useConnectionMonitor(serverUrl);
+  const { isConnected, tier, consecutiveFails, isSpeaking, effectiveUrl } = useConnectionMonitor(serverUrl);
   const showOffline = serverUrl && consecutiveFails >= FAIL_THRESH;
 
   useEffect(() => { requestNotifPermission(); }, []);
@@ -386,7 +408,7 @@ export default function App() {
       <View style={s.webWrap}>
         <WebView
           ref={webRef}
-          source={{ uri: serverUrl }}
+          source={{ uri: effectiveUrl || serverUrl }}
           style={s.web}
           injectedJavaScriptBeforeContentLoaded={injected}
           javaScriptEnabled
@@ -404,7 +426,7 @@ export default function App() {
           )}
           startInLoadingState
         />
-        {showOffline && <OfflineOverlay serverUrl={serverUrl} onRetry={handleRetry} />}
+        {showOffline && <OfflineOverlay serverUrl={serverUrl} effectiveUrl={effectiveUrl} onRetry={handleRetry} />}
       </View>
     </View>
   );

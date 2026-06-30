@@ -2370,5 +2370,86 @@ class TestTLSContext:
         os.environ.pop('ARCHER_TLS_KEY', None)
 
 
+class TestSerialAuth:
+    """Tests for serial_auth.py — lazy init, encode/decode round-trip, ReplayGuard."""
+
+    def _fresh_module(self, env_secret='test-secret-32byteslong12345678'):
+        """Import a fresh copy of serial_auth with the given ARCHER_SECRET."""
+        import importlib, sys
+        os.environ['ARCHER_SECRET'] = env_secret
+        # Remove cached module so _SERIAL_SECRET is re-initialized
+        sys.modules.pop('serial_auth', None)
+        with patch('hsm.get_or_create_secret', side_effect=RuntimeError('no HSM')):
+            import serial_auth as sa
+        return sa
+
+    def test_secret_not_initialized_at_import(self):
+        """_SERIAL_SECRET stays None until first use — no HSM crash at import time."""
+        import importlib, sys
+        os.environ['ARCHER_SECRET'] = 'lazy-init-test-secret-32bytes!!'
+        sys.modules.pop('serial_auth', None)
+        with patch('hsm.get_or_create_secret', side_effect=RuntimeError('no HSM')):
+            import serial_auth as sa
+        assert sa._SERIAL_SECRET is None
+
+    def test_secret_initialized_on_first_encode(self):
+        """_SERIAL_SECRET is populated once encode_message() is called."""
+        sa = self._fresh_module()
+        assert sa._SERIAL_SECRET is None
+        sa.encode_message('cmd=TEST')
+        assert sa._SERIAL_SECRET is not None
+
+    def test_round_trip(self):
+        """encode then decode succeeds and returns the original payload."""
+        sa = self._fresh_module()
+        guard = sa.ReplayGuard()
+        line = sa.encode_message('cmd=HELIX,preset=2')
+        result = sa.decode_message(line, guard=guard)
+        assert result['payload'] == 'cmd=HELIX,preset=2'
+
+    def test_tampered_tag_rejected(self):
+        """A message with a corrupted tag raises ValueError."""
+        sa = self._fresh_module()
+        guard = sa.ReplayGuard()
+        line = sa.encode_message('cmd=HELIX')
+        # Flip the last char of the tag
+        parts = line.split(':')
+        parts[-1] = parts[-1][:-1] + ('0' if parts[-1][-1] != '0' else '1')
+        bad = ':'.join(parts)
+        with pytest.raises(ValueError, match='Bad HMAC'):
+            sa.decode_message(bad, guard=guard)
+
+    def test_replay_rejected(self):
+        """Sending the same message twice raises ValueError on the second attempt."""
+        sa = self._fresh_module()
+        guard = sa.ReplayGuard()
+        line = sa.encode_message('cmd=TEST', nonce='aabbccdd')
+        sa.decode_message(line, guard=guard)
+        with pytest.raises(ValueError, match='Replay'):
+            sa.decode_message(line, guard=guard)
+
+    def test_replay_guard_eviction_deque(self):
+        """After window+1 unique nonces, the oldest is evicted and can be re-used."""
+        import serial_auth as sa
+        guard = sa.ReplayGuard(window=4)
+        for i in range(4):
+            guard.check_and_record(f'n{i:04x}')
+        # Window full: n0000..n0003.  n0001 is NOT the oldest — still in window.
+        assert guard.check_and_record('n0001') is False
+        # Adding n0004 evicts n0000 (oldest).
+        guard.check_and_record('n0004')
+        # n0000 was evicted — it should be accepted again
+        assert guard.check_and_record('n0000') is True
+        # n0004 is still in the window — replay rejected
+        assert guard.check_and_record('n0004') is False
+
+    def test_replay_guard_order_is_deque(self):
+        """ReplayGuard._order is a collections.deque, not a list."""
+        from collections import deque
+        import serial_auth as sa
+        guard = sa.ReplayGuard()
+        assert isinstance(guard._order, deque)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
