@@ -7608,37 +7608,42 @@ function updateDisplay(d) {
     if (d.archer_msg && d.display_mode === 'show') { const sm = document.getElementById('show-msg'); if (sm) sm.textContent = d.archer_msg; }
 }
 
-// ── POLL DATA ─────────────────────────────
-function poll() {
-    fetch('/display_data?sid=' + SID + '&fp=' + FP)
-        .then(r => r.json())
-        .then(d => updateDisplay(d))
-        .catch(() => {});
+// ── DATA STREAM (SSE) ─────────────────────
+let _displayEs = null;
+function startDisplayStream() {
+    if (_displayEs) return;
+    _displayEs = new EventSource('/display_data/stream?sid=' + SID + '&fp=' + FP);
+    _displayEs.onmessage = function(e) {
+        try {
+            const d = JSON.parse(e.data);
+            updateDisplay(d);
+            _handleAudioMsg(d);
+        } catch(_) {}
+    };
+    _displayEs.onerror = function() {
+        _displayEs.close(); _displayEs = null;
+        setTimeout(startDisplayStream, 3000);
+    };
 }
-setInterval(poll, 500);
-poll();
+startDisplayStream();
 
 // ── AUDIO ─────────────────────────────────
 let lastMsg = '', audioReady = false;
-function checkAudio() {
-    fetch('/display_data?sid=' + SID)
-        .then(r => r.json())
-        .then(d => {
-            if (d.archer_msg && d.archer_msg !== lastMsg && audioReady) {
-                lastMsg = d.archer_msg;
-                const u = new SpeechSynthesisUtterance(d.archer_msg);
-                u.rate = 0.95; u.pitch = 0.8; u.volume = 1.0;
-                const voices   = window.speechSynthesis.getVoices();
-                const priority = ['Google UK English Male','Google US English Male','Microsoft David - English (United States)','Daniel','Aaron'];
-                let picked = null;
-                for (const name of priority) { picked = voices.find(v => v.name === name); if (picked) break; }
-                if (!picked) picked = voices.find(v => v.lang.startsWith('en') && (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david')));
-                if (picked) u.voice = picked;
-                window.speechSynthesis.speak(u);
-                const btn = document.getElementById('audio-btn');
-                if (btn) { btn.textContent = '&#128266; SPEAKING'; setTimeout(() => { btn.textContent = '&#128266; AUDIO ON'; btn.style.color = '#00cc44'; }, 2000); }
-            }
-        }).catch(() => {});
+function _handleAudioMsg(d) {
+    if (!audioReady) return;
+    if (!d.archer_msg || d.archer_msg === lastMsg) return;
+    lastMsg = d.archer_msg;
+    const u = new SpeechSynthesisUtterance(d.archer_msg);
+    u.rate = 0.95; u.pitch = 0.8; u.volume = 1.0;
+    const voices   = window.speechSynthesis.getVoices();
+    const priority = ['Google UK English Male','Google US English Male','Microsoft David - English (United States)','Daniel','Aaron'];
+    let picked = null;
+    for (const name of priority) { picked = voices.find(v => v.name === name); if (picked) break; }
+    if (!picked) picked = voices.find(v => v.lang.startsWith('en') && (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david')));
+    if (picked) u.voice = picked;
+    window.speechSynthesis.speak(u);
+    const btn = document.getElementById('audio-btn');
+    if (btn) { btn.textContent = '&#128266; SPEAKING'; setTimeout(() => { btn.textContent = '&#128266; AUDIO ON'; btn.style.color = '#00cc44'; }, 2000); }
 }
 function connectAudio() {
     if (audioReady) return;
@@ -7650,7 +7655,6 @@ function connectAudio() {
     if (btn) { btn.textContent = '&#128266; AUDIO ON'; btn.style.color = '#00cc44'; }
 }
 window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-setInterval(checkAudio, 500);
 document.addEventListener('click', function initAudio() { connectAudio(); document.removeEventListener('click', initAudio); }, { once: true });
 
 // ── MICROPHONE ────────────────────────────
@@ -9909,12 +9913,44 @@ def display_data_endpoint():
     d = get_display_data()
     d['spike_history']     = spike_history
     d['connected_clients'] = len(connected_clients)
-    # Override tier with device fingerprint tier
     device_tier = get_device_tier(fingerprint)
     d['device_tier']       = device_tier
     d['device_registered'] = fingerprint in trusted_devices
     d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
     return jsonify(d)
+
+
+@display_app.route('/display_data/stream')
+def display_data_stream():
+    """SSE push endpoint — replaces /display_data polling in the UI."""
+    from flask import request as flask_request
+    session_id  = flask_request.args.get('sid', 'unknown')
+    fingerprint = flask_request.args.get('fp', 'unknown')
+    ip          = flask_request.remote_addr or 'unknown'
+    agent       = flask_request.headers.get('User-Agent', '')[:50]
+    if session_id not in connected_clients:
+        log_client_connect(session_id, ip, agent)
+    def _generate():
+        import time as _t
+        while True:
+            try:
+                connected_clients.get(session_id, {})['last_seen'] = _t.time()
+                d = get_display_data()
+                d['spike_history']     = spike_history
+                d['connected_clients'] = len(connected_clients)
+                device_tier = get_device_tier(fingerprint)
+                d['device_tier']       = device_tier
+                d['device_registered'] = fingerprint in trusted_devices
+                d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
+                yield f'data: {json.dumps(d)}\n\n'
+            except Exception:
+                break
+            _t.sleep(0.5)
+    return Response(
+        stream_with_context(_generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
 
 @display_app.route('/audio_stream')
 def audio_stream():
@@ -10841,6 +10877,12 @@ def arduino_status():
 def beamng_data():
     import time as _time
     from flask import request as req
+    _bt = os.environ.get('BEAMNG_TOKEN', '')
+    if _bt:
+        import hmac as _hm
+        provided = req.headers.get('X-BeamNG-Token', '')
+        if not _hm.compare_digest(provided, _bt):
+            return jsonify({'ok': False, 'error': 'unauthorized'}), 403
     data = req.get_json(silent=True) or {}
     if not data or data.get('source') != 'beamng':
         return jsonify({'ok': False, 'error': 'invalid payload'}), 400
@@ -11462,11 +11504,42 @@ def obd_autodetect():
 
         time.sleep(5)
 
+def _get_tls_context():
+    """Return an ssl.SSLContext for the Flask server, or None if TLS is disabled."""
+    import ssl as _ssl
+    use_tls = os.environ.get('USE_TLS', 'false').lower() == 'true'
+    if not use_tls:
+        return None
+    cert_path = os.environ.get('ARCHER_TLS_CERT', '/etc/archer/archer.crt')
+    key_path  = os.environ.get('ARCHER_TLS_KEY',  '/etc/archer/archer.key')
+    if not (os.path.exists(cert_path) and os.path.exists(key_path)):
+        try:
+            import subprocess as _sp
+            os.makedirs(os.path.dirname(cert_path), exist_ok=True)
+            _sp.run([
+                'openssl', 'req', '-x509', '-nodes', '-newkey', 'rsa:2048',
+                '-keyout', key_path, '-out', cert_path, '-days', '3650',
+                '-subj', '/CN=archer.local/O=Archer/C=US',
+                '-addext', 'subjectAltName=IP:127.0.0.1,DNS:archer.local',
+            ], check=True, capture_output=True)
+            os.chmod(key_path, 0o600)
+            print(f'[TLS] Self-signed cert generated: {cert_path}')
+        except Exception as _e:
+            print(f'[TLS] WARNING: Could not generate self-signed cert: {_e}. Falling back to HTTP.')
+            return None
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert_path, key_path)
+    print(f'[TLS] HTTPS enabled — cert: {cert_path}')
+    return ctx
+
+
 def run_display_server():
     import logging as _log
     _log.getLogger('werkzeug').setLevel(_log.ERROR)
-    port = int(os.environ.get('PORT', 7860))
-    display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+    port    = int(os.environ.get('PORT', 7860))
+    ssl_ctx = _get_tls_context()
+    display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False,
+                    threaded=True, ssl_context=ssl_ctx)
 
 def run_tier_server(tier, port):
     pass  # Tier servers disabled on HuggingFace

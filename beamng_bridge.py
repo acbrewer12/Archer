@@ -9,16 +9,18 @@ Run alongside archer.py:
   python beamng_bridge.py
 """
 
+import os
 import socket
 import struct
 import time
 import threading
 import requests
 
-LISTEN_HOST   = '0.0.0.0'
+LISTEN_HOST   = '127.0.0.1'   # loopback only — BeamNG and bridge run on same host
 LISTEN_PORT   = 4444
 ARCHER_URL    = 'http://127.0.0.1:7860/beamng_data'
 STATUS_URL    = 'http://127.0.0.1:7860/beamng_status'
+BEAMNG_TOKEN  = os.environ.get('BEAMNG_TOKEN', '')
 POST_INTERVAL = 0.1    # seconds between POSTs
 TIMEOUT_SEC   = 3.0    # seconds before marking disconnected
 
@@ -187,6 +189,7 @@ def udp_listener():
 
 def post_worker():
     session = requests.Session()
+    headers = {'X-BeamNG-Token': BEAMNG_TOKEN} if BEAMNG_TOKEN else {}
     while True:
         time.sleep(POST_INTERVAL)
         if not state['connected']:
@@ -196,7 +199,7 @@ def post_worker():
         if not payload:
             continue
         try:
-            session.post(ARCHER_URL, json=payload, timeout=0.5)
+            session.post(ARCHER_URL, json=payload, headers=headers, timeout=0.5)
         except Exception:
             pass
 
