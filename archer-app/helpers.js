@@ -3,10 +3,12 @@
  * No React Native imports — safe to run in a Node test environment.
  */
 
-const DEFAULT_PORT = '7860';
-const TRUCK_SSID   = 'ARCHER-2500HD';
-const TRUCK_IP     = '192.168.4.1';
-const FAIL_THRESH  = 3;
+const DEFAULT_PORT   = '7860';
+const TRUCK_SSID     = 'ARCHER-2500HD';
+const TRUCK_IP       = '192.168.4.1';
+const FAIL_THRESH    = 3;
+// Cloud fallback: shown automatically when the local Pi is unreachable.
+const HF_FALLBACK_URL = 'https://aydencatman-archer.hf.space';
 
 /**
  * Build a base URL from a stored IP string.
@@ -84,4 +86,5 @@ module.exports = {
   TRUCK_IP,
   TRUCK_SSID,
   FAIL_THRESH,
+  HF_FALLBACK_URL,
 };

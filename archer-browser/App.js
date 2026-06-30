@@ -9,14 +9,19 @@ import * as SecureStore from 'expo-secure-store';
 import { activateKeepAwake } from 'expo-keep-awake';
 import * as NavigationBar from 'expo-navigation-bar';
 import { useFonts, ShareTechMono_400Regular } from '@expo-google-fonts/share-tech-mono';
+import Constants from 'expo-constants';
 
 const STORAGE_KEY = 'archer_browser_v2';
 const TAB_H       = 54;
 const ADDR_H      = 50;
 const SEC_LIMIT   = 1800; // stay under expo-secure-store's ~2 KB per-value limit
 
-// Single place to update when the Archer HuggingFace Space URL changes.
-const ARCHER_BASE = 'https://aydencatman-archer.hf.space';
+// Reads from app.json extra.archerBase (override via EXPO_PUBLIC_ARCHER_BASE at build time).
+// This keeps the URL out of JS source and lets EAS builds override it without code changes.
+const ARCHER_BASE =
+  process.env.EXPO_PUBLIC_ARCHER_BASE ||
+  Constants.expoConfig?.extra?.archerBase ||
+  'https://aydencatman-archer.hf.space';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
