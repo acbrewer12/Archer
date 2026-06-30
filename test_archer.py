@@ -2153,5 +2153,108 @@ class TestRotateSecrets:
         assert 'session' in d.get('stdout', '').lower()
 
 
+class TestBeamNGToken:
+    """BEAMNG_TOKEN auth on /beamng_data."""
+
+    def _payload(self):
+        return {'source': 'beamng', 'rpm': 3000, 'speed': 60, 'boost': 5.0,
+                'gear': 3, 'throttle': 50, 'oil_temp': 200, 'coolant_temp': 195}
+
+    def test_no_token_env_allows_any_request(self):
+        """If BEAMNG_TOKEN is not set, endpoint accepts without a token header."""
+        os.environ.pop('BEAMNG_TOKEN', None)
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._payload())
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+    def test_correct_token_accepted(self):
+        os.environ['BEAMNG_TOKEN'] = 'test-bridge-token'
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._payload(),
+                   headers={'X-BeamNG-Token': 'test-bridge-token'})
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+        del os.environ['BEAMNG_TOKEN']
+
+    def test_wrong_token_rejected(self):
+        os.environ['BEAMNG_TOKEN'] = 'test-bridge-token'
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._payload(),
+                   headers={'X-BeamNG-Token': 'wrong-token'})
+        assert r.status_code == 403
+        del os.environ['BEAMNG_TOKEN']
+
+    def test_missing_token_header_rejected(self):
+        os.environ['BEAMNG_TOKEN'] = 'test-bridge-token'
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json=self._payload())
+        assert r.status_code == 403
+        del os.environ['BEAMNG_TOKEN']
+
+    def test_invalid_payload_rejected(self):
+        os.environ.pop('BEAMNG_TOKEN', None)
+        c = archer.display_app.test_client()
+        r = c.post('/beamng_data', json={'source': 'not_beamng', 'rpm': 1000})
+        assert r.status_code == 400
+
+
+class TestDisplayDataSSE:
+    """SSE push endpoint /display_data/stream."""
+
+    def test_stream_returns_event_stream_content_type(self):
+        c = archer.display_app.test_client()
+        with c.get('/display_data/stream?sid=test-sse&fp=fp1',
+                   headers={'Accept': 'text/event-stream'}) as r:
+            assert 'text/event-stream' in r.content_type
+
+    def test_stream_yields_data_line(self):
+        c = archer.display_app.test_client()
+        with c.get('/display_data/stream?sid=test-sse2&fp=fp1',
+                   headers={'Accept': 'text/event-stream'}) as r:
+            chunk = next(r.iter_encoded(), b'')
+            text = chunk.decode('utf-8', errors='replace')
+            assert text.startswith('data:')
+            payload = json.loads(text[len('data:'):].strip())
+            assert 'rpm' in payload
+            assert 'speed' in payload
+
+    def test_stream_includes_device_tier(self):
+        c = archer.display_app.test_client()
+        with c.get('/display_data/stream?sid=test-sse3&fp=fp_unregistered',
+                   headers={'Accept': 'text/event-stream'}) as r:
+            chunk = next(r.iter_encoded(), b'')
+            payload = json.loads(chunk.decode().split('data:')[1].strip())
+            assert 'device_tier' in payload
+
+
+class TestTLSContext:
+    """_get_tls_context() returns None when USE_TLS is not set."""
+
+    def test_no_tls_by_default(self):
+        os.environ.pop('USE_TLS', None)
+        ctx = archer._get_tls_context()
+        assert ctx is None
+
+    def test_tls_false_explicit(self):
+        os.environ['USE_TLS'] = 'false'
+        ctx = archer._get_tls_context()
+        assert ctx is None
+        del os.environ['USE_TLS']
+
+    def test_tls_true_missing_openssl_returns_none(self):
+        """When USE_TLS=true but openssl is unavailable, falls back gracefully."""
+        os.environ['USE_TLS'] = 'true'
+        os.environ['ARCHER_TLS_CERT'] = '/nonexistent/cert.crt'
+        os.environ['ARCHER_TLS_KEY']  = '/nonexistent/cert.key'
+        with patch('subprocess.run', side_effect=FileNotFoundError('openssl not found')):
+            ctx = archer._get_tls_context()
+        assert ctx is None
+        del os.environ['USE_TLS']
+        os.environ.pop('ARCHER_TLS_CERT', None)
+        os.environ.pop('ARCHER_TLS_KEY', None)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

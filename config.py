@@ -28,6 +28,11 @@ ARCHER_MASTER_CODE = os.environ.get('ARCHER_MASTER_CODE', '')
 # Server rejects all Pi registrations if this is not set.
 ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN', '')  # empty = Pi registration disabled
 
+# Shared secret between beamng_bridge.py and the /beamng_data endpoint.
+# beamng_bridge.py sends this in X-BeamNG-Token; server rejects requests without it
+# if this variable is set. Both must be set to the same value.
+BEAMNG_TOKEN = os.environ.get('BEAMNG_TOKEN', '')  # empty = token check disabled
+
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 
 # Groq API key for fast Llama inference (voice command AI responses).
@@ -74,6 +79,15 @@ USE_EMULATOR = os.environ.get('USE_EMULATOR', 'true').lower() == 'true'
 
 # Set to 'true' to enable BeamNG telemetry bridge.
 USE_BEAMNG = os.environ.get('USE_BEAMNG', 'false').lower() == 'true'
+
+# Set to 'true' to enable HTTPS on the Flask server (local Pi/hotspot deployment).
+# On first boot with USE_TLS=true, a self-signed cert is auto-generated at
+# /etc/archer/archer.crt + archer.key (override with ARCHER_TLS_CERT/ARCHER_TLS_KEY).
+USE_TLS = os.environ.get('USE_TLS', 'false').lower() == 'true'
+
+# Override default cert/key paths (only used when USE_TLS=true).
+ARCHER_TLS_CERT = os.environ.get('ARCHER_TLS_CERT', '/etc/archer/archer.crt')
+ARCHER_TLS_KEY  = os.environ.get('ARCHER_TLS_KEY',  '/etc/archer/archer.key')
 
 # ── QUICK REFERENCE ───────────────────────────────────────────────────────────
 #
