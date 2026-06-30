@@ -252,7 +252,11 @@ obd2_display = {
     'mode':      'default',
 }
 
-arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None}
+arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None,
+                 'last_heartbeat': 0.0}
+
+# ── HARDWARE HEARTBEAT ────────────────────────────────────────────────────────
+_HW_HEARTBEAT_TIMEOUT = 30  # seconds before a voice alert fires
 
 beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
 
@@ -632,17 +636,10 @@ def load_state():
         if db_has_data():
             data = db_load()
     except Exception as _e:
-        print(f'[ARCHER] SQLite load failed, falling back to JSON: {_e}')
+        print(f'[ARCHER] SQLite load failed: {_e}')
     if data is None:
-        if not os.path.exists(SAVE_FILE):
-            return
-        with _memory_lock:
-            try:
-                with open(SAVE_FILE, 'r') as f:
-                    data = json.load(f)
-            except Exception:
-                print("[ARCHER] Starting fresh.")
-                return
+        print('[ARCHER] No saved state found — starting fresh.')
+        return
     personal_bests.update(data.get('personal_bests', {}))
     music_state['song_memories'] = data.get('music_memories', {})
     music_state['song_lighting'] = data.get('song_lighting', {})
@@ -8479,23 +8476,20 @@ def _revoke_by_name(name: str, tier: int):
     _revoked_names[f'{name}:{tier}'] = time.time()
 
 def get_request_tier(request):
-    """Resolve the tier for any request using MAC auth cookie, fingerprint, or both.
+    """Resolve the tier for any request using HS256 JWT cookie or device fingerprint.
 
     Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
-    Accepts both HS256 JWT and legacy tier:name:hmac cookies for backward compat.
-    Checks revoked tokens/names so logout and MAC deregistration take effect immediately.
+    Only accepts signed JWTs — the old tier:name:hmac cookie format is disabled
+    to prevent downgrade attacks.  Revoked tokens/names are checked immediately.
     """
-    import hashlib as _hl
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
-        # 1a. Try JWT (HS256) format first
         try:
             payload = decode_auth_jwt(cookie_val)
             tier = int(payload['tier'])
             jti  = payload.get('jti', '')
             name = payload.get('name', '')
             now  = time.time()
-            # Prune expired revocations
             for t in list(_revoked_tokens):
                 if _revoked_tokens[t] < now:
                     del _revoked_tokens[t]
@@ -8506,24 +8500,8 @@ def get_request_tier(request):
                 return 5
             return max(1, min(4, tier))
         except ValueError:
-            pass
-        # 1b. Legacy tier:name:hmac format (backward compat)
-        try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                expected = _hl.sha256(f'{c_name}{c_tier}{_ARCHER_SECRET}'.encode()).hexdigest()[:32]
-                if hmac.compare_digest(c_token, expected):
-                    now = time.time()
-                    for t in list(_revoked_tokens):
-                        if _revoked_tokens[t] < now:
-                            del _revoked_tokens[t]
-                    if c_token in _revoked_tokens:
-                        return 5
-                    return max(1, min(4, int(c_tier)))
-        except Exception:
-            pass
-    # 2. Fingerprint system (legacy / in-cabin devices)
+            return 5
+    # Fingerprint system (in-cabin devices with no cookie)
     fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
@@ -9031,20 +9009,22 @@ def index():
     mac = get_client_mac(freq)
     tier_info = get_tier_for_mac(mac)
 
-    # 2. Cookie fallback if MAC not found
+    # 2. JWT cookie fallback if MAC not found
     if not tier_info:
         cookie_val = freq.cookies.get('archer_auth', '')
         if cookie_val:
             try:
-                parts = cookie_val.split(':')
-                if len(parts) == 3:
-                    c_tier, c_name, c_token = parts
-                    cookie_secret = _ARCHER_SECRET
-                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
-                    if c_token == expected:
-                        tier_info = {'tier': int(c_tier), 'name': c_name}
-                        print(f'[AUTH] Cookie auth: {c_name} Tier {c_tier}')
-            except Exception:
+                payload = decode_auth_jwt(cookie_val)
+                # Check revocation before granting access
+                jti = payload.get('jti', '')
+                name_tier_key = f'{payload.get("name","")}:{payload.get("tier",0)}'
+                now = time.time()
+                if not (jti and jti in _revoked_tokens) and not (
+                    _revoked_names.get(name_tier_key, 0) > payload.get('iat', now)
+                ):
+                    tier_info = {'tier': int(payload['tier']), 'name': payload.get('name', '')}
+                    print(f'[AUTH] JWT auth: {tier_info["name"]} Tier {tier_info["tier"]}')
+            except ValueError:
                 pass
 
     # 3. Route to correct tier
@@ -10753,6 +10733,9 @@ def _arduino_reader(conn):
             if not line:
                 continue
 
+            # Record heartbeat on every valid line from Arduino
+            arduino_state['last_heartbeat'] = time.time()
+
             if line.startswith('AUX_BATT:'):
                 try:
                     v = float(line[len('AUX_BATT:'):])
@@ -10827,11 +10810,30 @@ def arduino_autodetect():
             print(f'[ARDUINO] autodetect error: {e}')
         time.sleep(5)
 
+def _arduino_heartbeat_watchdog():
+    """Fire a voice alert if the Arduino stops sending data for >30 seconds."""
+    _alerted = False
+    while True:
+        time.sleep(10)
+        if not arduino_state['connected']:
+            _alerted = False
+            continue
+        last = arduino_state['last_heartbeat']
+        if last and (time.time() - last) > _HW_HEARTBEAT_TIMEOUT:
+            if not _alerted:
+                speak('Arduino heartbeat timeout — hardware offline.')
+                print('[ARDUINO] WARNING: No heartbeat in >30s — hardware may be offline.')
+                _alerted = True
+        else:
+            _alerted = False
+
+
 @display_app.route('/arduino/status')
 def arduino_status():
     return jsonify({
-        'connected': arduino_state['connected'],
-        'port':      arduino_state['port'],
+        'connected':      arduino_state['connected'],
+        'port':           arduino_state['port'],
+        'last_heartbeat': arduino_state['last_heartbeat'],
     })
 
 # ── BEAMNG TELEMETRY ─────────────────────────────────────
@@ -11510,7 +11512,8 @@ def main():
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
-    threading.Thread(target=arduino_autodetect,  daemon=True).start()
+    threading.Thread(target=arduino_autodetect,         daemon=True).start()
+    threading.Thread(target=_arduino_heartbeat_watchdog, daemon=True).start()
 
     with _memory_lock:
         archer_memory['total_sessions'] += 1

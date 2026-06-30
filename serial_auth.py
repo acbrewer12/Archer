@@ -20,12 +20,23 @@ import secrets as _secrets
 
 # ── Key derivation ────────────────────────────────────────────────────────────
 def _get_serial_secret() -> bytes:
-    """Return the 32-byte HMAC key for serial authentication."""
+    """Return the 32-byte HMAC key for serial authentication.
+
+    Derived from the HSM master key (or ARCHER_SECRET env var) so the key is
+    stable across restarts.  Never falls back to a random per-process value —
+    that would break Pi/Arduino comms silently after a server restart.
+    """
     try:
-        from hsm import _derive_secret
-        return _derive_secret(None, 'serial-arduino').encode()
-    except Exception:
-        raw = _os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
+        from hsm import get_or_create_secret
+        base = get_or_create_secret()  # stable machine-bound secret
+        return _hmac.new(base.encode(), b'serial-arduino', _hashlib.sha256).digest()
+    except Exception as _e:
+        print(f'[SERIAL_AUTH] WARNING: HSM unavailable ({_e}), falling back to ARCHER_SECRET')
+        raw = _os.environ.get('ARCHER_SECRET', '')
+        if not raw:
+            raise RuntimeError(
+                'Cannot derive serial auth secret: ARCHER_SECRET not set and HSM unavailable.'
+            )
         return _hmac.new(raw.encode(), b'serial-arduino', _hashlib.sha256).digest()
 
 _SERIAL_SECRET: bytes = _get_serial_secret()

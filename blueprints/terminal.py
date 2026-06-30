@@ -361,6 +361,8 @@ def terminal_exec():
             "  (Logs tab above streams live server output)\n"
             "\nGPS / Location  (single-line, paste as-is)\n"
             "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
+            "\nSecurity\n"
+            "  rotate-secrets           — rotate HSM master key, invalidate all sessions\n"
             "\nType any shell command to run it on the server.\n"
             "For pipes or redirects, use: bash -c 'cmd | pipe'\n"
         )
@@ -376,6 +378,20 @@ def terminal_exec():
     if cmd_lower in ('maintenance status', 'maint status', 'maintenance'):
         state = 'ON' if _a.system_health['maintenance'] else 'OFF'
         return jsonify({'stdout': f'Maintenance mode: {state}', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('rotate-secrets', 'nuke-sessions', 'rotate secrets'):
+        try:
+            from hsm import rotate_master_key
+            new_secret = rotate_master_key()
+            import archer_state as _as
+            import os as _os
+            _os.environ['ARCHER_SECRET'] = new_secret
+            _as._ARCHER_SECRET  = new_secret
+            _as._csrf_secret    = new_secret.encode()
+            _a._revoked_tokens.clear()
+            _a._revoked_names.clear()
+            return jsonify({'stdout': '[HSM] Master key rotated — all active sessions invalidated. Users must sign in again.', 'stderr': '', 'returncode': 0})
+        except Exception as _e:
+            return jsonify({'stdout': '', 'stderr': f'rotate-secrets failed: {_e}', 'returncode': 1})
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
@@ -397,11 +413,49 @@ def terminal_exec():
         return jsonify({'error': str(e)})
 
 
+# ── LOG STREAM — one-time key gate ───────────────────────────────────────────
+# EventSource (SSE) is a GET request in browsers; browsers cannot send custom
+# headers on EventSource, so CSRF headers can't protect it.  Instead, the
+# client first POSTs (with CSRF) to get a short-lived one-time stream key,
+# then opens the SSE connection with ?key=<key>.  Keys expire in 30 seconds.
+
+import threading as _threading
+
+_stream_keys: dict = {}   # key → expiry timestamp
+_stream_keys_lock = _threading.Lock()
+
+
+@bp.route('/terminal/log_stream_key', methods=['POST'])
+@csrf_required
+def log_stream_key():
+    """Issue a 30-second one-time key for opening the SSE log stream."""
+    import archer as _a
+    allowed, _ = _terminal_access_check(request)
+    if not allowed:
+        return jsonify({'error': 'Access denied'}), 403
+    import secrets as _s
+    key = _s.token_hex(24)
+    with _stream_keys_lock:
+        _stream_keys[key] = time.time() + 30
+    return jsonify({'key': key})
+
+
 # ── LOG STREAM (SSE) ──────────────────────────────────────────────────────────
 
 @bp.route('/terminal/log_stream')
 def terminal_log_stream():
     import archer as _a
+    # Validate one-time stream key (replaces CSRF — EventSource can't send headers)
+    key = request.args.get('key', '')
+    now = time.time()
+    with _stream_keys_lock:
+        # Prune expired keys
+        for k in [k for k, exp in list(_stream_keys.items()) if exp < now]:
+            del _stream_keys[k]
+        if key not in _stream_keys:
+            return Response('', status=403)
+        del _stream_keys[key]  # one-time use
+
     allowed, _ = _terminal_access_check(request)
     if not allowed:
         return Response('', status=403)

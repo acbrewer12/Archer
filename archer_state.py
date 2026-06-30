@@ -35,10 +35,21 @@ except ImportError:
 
 # ── SHARED SECRET ─────────────────────────────────────────────────────────────
 # Single authoritative source so archer.py and all blueprints use the same value.
-_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
-if not os.environ.get('ARCHER_SECRET'):
-    print('[SECURITY] WARNING: ARCHER_SECRET not set — using ephemeral random secret. '
-          'Sessions will not survive restarts. Set ARCHER_SECRET in archer.env before driving.')
+# Priority: ARCHER_SECRET env var → HSM master.key → fatal error (no random fallback).
+_ARCHER_SECRET: str = os.environ.get('ARCHER_SECRET', '')
+if not _ARCHER_SECRET:
+    try:
+        from hsm import get_or_create_secret as _hsm_secret
+        _ARCHER_SECRET = _hsm_secret()
+        os.environ['ARCHER_SECRET'] = _ARCHER_SECRET
+    except Exception as _hsm_err:
+        pass
+if not _ARCHER_SECRET:
+    import sys as _sys
+    print('[SECURITY] FATAL: ARCHER_SECRET is not set and the HSM key could not be read or created. '
+          'Set ARCHER_SECRET in archer.env or ensure /etc/archer/ is writable. '
+          'Refusing to start with an unknown secret.')
+    _sys.exit(1)
 
 # ── CSRF (double-submit cookie) ───────────────────────────────────────────────
 _csrf_secret = _ARCHER_SECRET.encode()

@@ -11,9 +11,11 @@ import os
 
 # ── CORE SECURITY ─────────────────────────────────────────────────────────────
 
-# Used for: CSRF tokens, cookie signing, session validation.
-# CHANGE THIS in production — any random 32+ char string.
-ARCHER_SECRET = os.environ.get('ARCHER_SECRET', 'archer2500hd')
+# HMAC-SHA256 key for JWT session tokens and CSRF double-submit cookies.
+# Derived automatically from /etc/archer/master.key (HSM) on first boot if not set.
+# Override by setting this env var explicitly in archer.env or GitHub Secrets.
+# The server REFUSES to start if this cannot be derived — no insecure fallbacks.
+ARCHER_SECRET = os.environ.get('ARCHER_SECRET', '')  # empty = use HSM auto-derive
 
 # Master owner PIN for Tier 1 sign-in (numeric, min 4 digits).
 ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
@@ -21,9 +23,10 @@ ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
 # Master invite code (used when no PIN/MAC auth is set up yet).
 ARCHER_MASTER_CODE = os.environ.get('ARCHER_MASTER_CODE', '')
 
-# Token the Raspberry Pi uses to register its tunnel URL.
-# Set to a random string on both the Pi and here.
-ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN', 'archer2026')
+# Token the Raspberry Pi uses to register its tunnel URL with /terminal/pi_register.
+# Must match on both the Pi (export ARCHER_PI_TOKEN=...) and the server.
+# Server rejects all Pi registrations if this is not set.
+ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN', '')  # empty = Pi registration disabled
 
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 
