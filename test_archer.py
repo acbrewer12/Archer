@@ -635,9 +635,15 @@ class TestTerminalExec:
 
     def test_safe_command_runs(self):
         with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(stdout='hello\n', stderr='', returncode=0)
-            r = self._post('echo hello', tier=1)
+            mock_run.return_value = MagicMock(stdout='up 3 days\n', stderr='', returncode=0)
+            r = self._post('uptime', tier=1)
         assert r.status_code == 200
+
+    def test_unlisted_command_blocked(self):
+        """Commands not on the allowlist are rejected with 403."""
+        r = self._post('echo hello', tier=1)
+        d = json.loads(r.data)
+        assert r.status_code == 403 or 'error' in d
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1961,28 +1967,24 @@ class TestTerminalShellFalse:
         """Verify subprocess.run is always called with shell=False."""
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(stdout='ok', stderr='', returncode=0)
-            self._post('ls -la', tier=1)
+            self._post('ps aux', tier=1)
         mock_run.assert_called_once()
         _, kwargs = mock_run.call_args
         assert kwargs.get('shell') is False
 
-    def test_pipe_without_bash_c_is_treated_literally(self):
-        """A bare pipe command runs shlex.split so | is just an arg, not a shell pipe."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(stdout='hello | cat', stderr='', returncode=0)
-            r = self._post('echo hello | cat', tier=1)
-        # Should have called subprocess.run with shell=False — the | is a literal arg
-        if mock_run.called:
-            args, kwargs = mock_run.call_args
-            assert kwargs.get('shell') is False
-            assert '|' in args[0]  # | appears as a list element, not a shell operator
+    def test_pipe_without_bash_c_rejected(self):
+        """Commands not in the allowlist (echo, etc.) are rejected even with a pipe suffix."""
+        r = self._post('echo hello | cat', tier=1)
+        d = json.loads(r.data)
+        assert r.status_code == 403 or 'error' in d
 
-    def test_bash_c_pipe_is_allowed(self):
-        """bash -c 'cmd | pipe' is the sanctioned way to run piped commands."""
+    def test_bash_c_pipe_is_blocked(self):
+        """bash -c '...' is blocked by the allowlist (bash is not a permitted executable)."""
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(stdout='hello\n', stderr='', returncode=0)
             r = self._post("bash -c 'echo hello | cat'", tier=1)
-        assert r.status_code == 200
+        assert r.status_code == 403 or 'error' in json.loads(r.data)
+        mock_run.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════
