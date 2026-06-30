@@ -17,7 +17,7 @@ import * as Notifications    from 'expo-notifications';
 import * as Haptics          from 'expo-haptics';
 import NetInfo               from '@react-native-community/netinfo';
 
-const { buildUrl: _buildUrl, DEFAULT_PORT, TRUCK_IP, FAIL_THRESH, TRUCK_SSID, HF_FALLBACK_URL } = require('./helpers');
+const { buildUrl: _buildUrl, DEFAULT_PORT, TRUCK_IP, FAIL_THRESH, TRUCK_SSID, HF_FALLBACK_URL, getTruckUrlFromNetInfo } = require('./helpers');
 const STORE_KEY   = 'archer_server_ip';
 const POLL_MS     = 5000;
 const SPEAKING_MS = 4000;
@@ -64,8 +64,8 @@ async function requestNotifPermission() {
 async function detectTruckHotspot() {
   try {
     const state = await NetInfo.fetch();
-    if (state.type === 'wifi' && state.details?.ssid?.includes('ARCHER')) {
-      const url = buildUrl(TRUCK_IP);
+    const url = getTruckUrlFromNetInfo(state);
+    if (url) {
       const { ok } = await pingServer(url);
       if (ok) return url;
     }
