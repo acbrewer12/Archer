@@ -26,6 +26,10 @@ jobs:
           cp $GITHUB_WORKSPACE/archer.py .
           cp $GITHUB_WORKSPACE/archer.py app.py
           cp $GITHUB_WORKSPACE/archer_state.py .
+          cp $GITHUB_WORKSPACE/hsm.py .
+          cp $GITHUB_WORKSPACE/db.py .
+          cp $GITHUB_WORKSPACE/serial_auth.py .
+          cp $GITHUB_WORKSPACE/config.py .
           cp $GITHUB_WORKSPACE/Dockerfile .
           cp $GITHUB_WORKSPACE/requirements.txt .
           cp $GITHUB_WORKSPACE/archer_*.html . 2>/dev/null || true
