@@ -6,17 +6,27 @@ All endpoints are served by the Flask server running on the Raspberry Pi at port
 
 ## Authentication
 
-Every request is authenticated via the `archer_auth` cookie, which encodes `tier:name:token`.
+Every request is authenticated via the `archer_auth` cookie, which contains a **signed HS256 JWT** issued by the server on login.
 
-| Cookie value | Tier | Access |
+```
+archer_auth = <header>.<payload>.<signature>   (standard JWT, HS256)
+```
+
+Payload fields: `tier` (int), `name` (str), `jti` (UUID), `iat`, `exp` (Unix timestamps).
+
+| `tier` | Role | Access |
 |---|---|---|
-| Not set | Guest / Tier 5 | Read-only fan access |
-| `4:Name:token` | Tier 4 — Valet | Dashboard read-only, speed limit enforced |
-| `3:Name:token` | Tier 3 — Family | Dashboard, weather, Spotify |
-| `2:Name:token` | Tier 2 — Passenger | Dashboard, Spotify, voice, drag |
-| `1:Name:token` | Tier 1 — Owner | Full control (Ayden) |
+| Not set / 5 | Guest | Read-only fan access |
+| 4 | Valet | Dashboard read-only, speed limit enforced |
+| 3 | Family | Dashboard, weather, Spotify |
+| 2 | Passenger | Dashboard, Spotify, voice, drag |
+| 1 | Owner | Full control (Ayden) |
+
+The old `tier:name:hmac` cookie format is **disabled** — the server rejects it to prevent downgrade attacks. All sessions are issued as JWTs.
 
 **CSRF protection** — all state-changing `POST` requests require an `X-CSRF-Token` header obtained from `GET /csrf_token`. Exemptions: `/voice_command`, `/boot`, `/init`, and a few low-risk read routes.
+
+**Log stream** — `/terminal/log_stream` is an SSE endpoint. Because browsers cannot send custom headers on `EventSource`, CSRF cannot protect it directly. Instead, call `POST /terminal/log_stream_key` (CSRF-protected) to obtain a 30-second one-time key, then open the SSE URL as `/terminal/log_stream?key=<key>`.
 
 ---
 

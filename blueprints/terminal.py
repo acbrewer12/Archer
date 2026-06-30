@@ -6,18 +6,21 @@ import os
 import re as _re
 import json
 import shlex
-import secrets as _secrets
 import subprocess
 import platform as _plt
 import time
 
-# Pi registration token — never fall back to a known hardcoded string
-_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
+# Pi registration token — must be set explicitly; no random fallback so the Pi
+# always knows the token and it doesn't silently change on server restart.
+_ARCHER_PI_TOKEN: str = os.environ.get('ARCHER_PI_TOKEN', '')
+if not _ARCHER_PI_TOKEN:
+    print('[SECURITY] WARNING: ARCHER_PI_TOKEN not set — Pi tunnel registration will be rejected. '
+          'Set ARCHER_PI_TOKEN in archer.env and export it in pi_connect.sh.')
 
 from datetime import datetime
 from flask import Blueprint, jsonify, Response, request
 
-from archer_state import _limiter
+from archer_state import _limiter, csrf_required
 
 if _plt.system() != 'Windows':
     try:
@@ -37,23 +40,9 @@ TERMINAL_ALLOWED_TIERS = [1]
 
 
 def _get_request_tier(req):
-    """Resolve tier from auth cookie or fingerprint."""
-    import hashlib as _hl
+    """Delegate to archer.get_request_tier (supports JWT and legacy hmac format)."""
     import archer as _a
-    cookie_val = req.cookies.get('archer_auth', '')
-    if cookie_val:
-        try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = _a._ARCHER_SECRET
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
-                if c_token == expected:
-                    return int(c_tier)
-        except Exception:
-            pass
-    fp = req.args.get('fp') or req.cookies.get('archer_fp', 'unknown')
-    return _a.get_device_tier(fp)
+    return _a.get_request_tier(req)
 
 
 def _terminal_access_check(req):
@@ -169,6 +158,16 @@ let currentTab = 'server';
 let cmdHistory = [];
 let histIdx = -1;
 
+// ── CSRF token (fetched once at page load; reused for all POSTs) ──────────────
+let _csrfToken = '';
+(async () => {
+    try {
+        const r = await fetch('/csrf_token');
+        const d = await r.json();
+        _csrfToken = d.token || '';
+    } catch(_) {}
+})();
+
 function append(text, cls) {
     const s = document.createElement('div');
     s.className = 'line-' + (cls || 'out');
@@ -242,9 +241,18 @@ function filterLogs() {
 
 function clearLogs() { _logLines = []; document.getElementById('log-output').innerHTML = ''; }
 
-function startLogStream() {
+async function startLogStream() {
     if (_logEs) return;
-    _logEs = new EventSource('/terminal/log_stream');
+    try {
+        // Get a one-time key via CSRF-protected POST, then open SSE with that key
+        const kr = await fetch('/terminal/log_stream_key', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken}
+        });
+        if (!kr.ok) { setTimeout(startLogStream, 3000); return; }
+        const {key} = await kr.json();
+        _logEs = new EventSource('/terminal/log_stream?key=' + encodeURIComponent(key));
+    } catch(_) { setTimeout(startLogStream, 3000); return; }
     _logEs.onmessage = e => {
         const d = JSON.parse(e.data);
         if (d.snapshot) { _logLines = d.snapshot; renderLogs(); }
@@ -278,7 +286,7 @@ function sendCmd() {
     inp.value = '';
     fetch('/terminal/exec', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken},
         body: JSON.stringify({cmd: cmd})
     })
     .then(r=>r.json())
@@ -337,6 +345,7 @@ syncViewport();
 
 @bp.route('/terminal/exec', methods=['POST'])
 @_limiter.limit('15 per minute; 60 per hour')
+@csrf_required
 def terminal_exec():
     import archer as _a
     allowed, tier = _terminal_access_check(request)
@@ -371,6 +380,8 @@ def terminal_exec():
             "  (Logs tab above streams live server output)\n"
             "\nGPS / Location  (single-line, paste as-is)\n"
             "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
+            "\nSecurity\n"
+            "  rotate-secrets           — rotate HSM master key, invalidate all sessions\n"
             "\nType any shell command to run it on the server.\n"
             "For pipes or redirects, use: bash -c 'cmd | pipe'\n"
         )
@@ -386,6 +397,20 @@ def terminal_exec():
     if cmd_lower in ('maintenance status', 'maint status', 'maintenance'):
         state = 'ON' if _a.system_health['maintenance'] else 'OFF'
         return jsonify({'stdout': f'Maintenance mode: {state}', 'stderr': '', 'returncode': 0})
+    if cmd_lower in ('rotate-secrets', 'nuke-sessions', 'rotate secrets'):
+        try:
+            from hsm import rotate_master_key
+            new_secret = rotate_master_key()
+            import archer_state as _as
+            import os as _os
+            _os.environ['ARCHER_SECRET'] = new_secret
+            _as._ARCHER_SECRET  = new_secret
+            _as._csrf_secret    = new_secret.encode()
+            _a._revoked_tokens.clear()
+            _a._revoked_names.clear()
+            return jsonify({'stdout': '[HSM] Master key rotated — all active sessions invalidated. Users must sign in again.', 'stderr': '', 'returncode': 0})
+        except Exception as _e:
+            return jsonify({'stdout': '', 'stderr': f'rotate-secrets failed: {_e}', 'returncode': 1})
     if _DANGEROUS.search(cmd):
         return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
@@ -407,11 +432,49 @@ def terminal_exec():
         return jsonify({'error': str(e)})
 
 
+# ── LOG STREAM — one-time key gate ───────────────────────────────────────────
+# EventSource (SSE) is a GET request in browsers; browsers cannot send custom
+# headers on EventSource, so CSRF headers can't protect it.  Instead, the
+# client first POSTs (with CSRF) to get a short-lived one-time stream key,
+# then opens the SSE connection with ?key=<key>.  Keys expire in 30 seconds.
+
+import threading as _threading
+
+_stream_keys: dict = {}   # key → expiry timestamp
+_stream_keys_lock = _threading.Lock()
+
+
+@bp.route('/terminal/log_stream_key', methods=['POST'])
+@csrf_required
+def log_stream_key():
+    """Issue a 30-second one-time key for opening the SSE log stream."""
+    import archer as _a
+    allowed, _ = _terminal_access_check(request)
+    if not allowed:
+        return jsonify({'error': 'Access denied'}), 403
+    import secrets as _s
+    key = _s.token_hex(24)
+    with _stream_keys_lock:
+        _stream_keys[key] = time.time() + 30
+    return jsonify({'key': key})
+
+
 # ── LOG STREAM (SSE) ──────────────────────────────────────────────────────────
 
 @bp.route('/terminal/log_stream')
 def terminal_log_stream():
     import archer as _a
+    # Validate one-time stream key (replaces CSRF — EventSource can't send headers)
+    key = request.args.get('key', '')
+    now = time.time()
+    with _stream_keys_lock:
+        # Prune expired keys
+        for k in [k for k, exp in list(_stream_keys.items()) if exp < now]:
+            del _stream_keys[k]
+        if key not in _stream_keys:
+            return Response('', status=403)
+        del _stream_keys[key]  # one-time use
+
     allowed, _ = _terminal_access_check(request)
     if not allowed:
         return Response('', status=403)
@@ -448,11 +511,16 @@ def pi_status():
 
 
 @bp.route('/terminal/pi_register', methods=['POST'])
+@csrf_required
 def pi_register():
-    """Pi calls this on connect to register its tunnel URL."""
+    """Pi calls this on connect to register its tunnel URL.
+
+    Pi must first GET /csrf_token (saving the archer_sid cookie), then POST
+    here with X-CSRF-Token header and the PI token in the body.
+    """
     data  = request.get_json() or {}
     token = data.get('token', '')
-    if token != _ARCHER_PI_TOKEN:
+    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True
@@ -462,7 +530,12 @@ def pi_register():
 
 
 @bp.route('/terminal/pi_disconnect', methods=['POST'])
+@csrf_required
 def pi_disconnect():
+    data  = request.get_json() or {}
+    token = data.get('token', '')
+    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
+        return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['online'] = False
     pi_tunnel_url['url']    = None
     print('[PI] Disconnected')

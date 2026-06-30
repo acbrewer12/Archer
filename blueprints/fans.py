@@ -4,11 +4,10 @@ All routes here are public (no tier auth required).
 """
 import os
 import json
-import hashlib as _hl
 
 from flask import Blueprint, jsonify, Response, request
 
-from archer_state import _limiter, _ARCHER_SECRET
+from archer_state import _limiter, decode_auth_jwt
 
 bp = Blueprint('fans', __name__)
 
@@ -17,19 +16,13 @@ bp = Blueprint('fans', __name__)
 @bp.route('/fan')
 def fan_page():
     """Public fan page — injects auth context so JS knows if user is signed in."""
-    import hashlib as _hl
     user_info = None
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
         try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = _ARCHER_SECRET
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
-                if c_token == expected:
-                    user_info = {'tier': int(c_tier), 'name': c_name}
-        except Exception:
+            payload = decode_auth_jwt(cookie_val)
+            user_info = {'tier': int(payload['tier']), 'name': payload.get('name', '')}
+        except ValueError:
             pass
     user_json = json.dumps(user_info) if user_info else 'null'
     if os.path.exists('archer_fan.html'):

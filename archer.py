@@ -103,9 +103,19 @@ def get_build_phase():
         return 2
     return 1
 
-# ── SECRETS — sourced from archer_state (single authoritative location) ───────
-from archer_state import _ARCHER_SECRET, _csrf_token_for, _validate_csrf, csrf_required as _csrf_required_imported
-# Re-export so the rest of this module can use the same names unchanged.
+# ── SECRETS — machine-bound via HSM, then archer_state ───────────────────────
+# HSM derives a stable secret from /etc/archer/master.key (or env var).
+# archer_state reads os.environ['ARCHER_SECRET']; set it before archer_state loads.
+from hsm import get_or_create_secret as _hsm_get_secret
+import os as _os_hsm
+if not _os_hsm.environ.get('ARCHER_SECRET'):
+    _os_hsm.environ['ARCHER_SECRET'] = _hsm_get_secret()
+
+from archer_state import (
+    _ARCHER_SECRET, _csrf_token_for, _validate_csrf,
+    csrf_required as _csrf_required_imported,
+    make_auth_jwt, decode_auth_jwt,
+)
 csrf_required = _csrf_required_imported
 
 if _IS_PI:
@@ -159,10 +169,18 @@ from blueprints.fans     import bp as _fans_bp
 from blueprints.modules  import bp as _modules_bp
 from blueprints.terminal import bp as _terminal_bp
 from blueprints.spotify  import bp as _spotify_bp
+from blueprints.auth     import bp as _auth_bp
+from blueprints.vehicle  import bp as _vehicle_bp
+from blueprints.build    import bp as _build_bp
+from blueprints.nav      import bp as _nav_bp
 display_app.register_blueprint(_fans_bp)
 display_app.register_blueprint(_modules_bp)
 display_app.register_blueprint(_terminal_bp)
 display_app.register_blueprint(_spotify_bp)
+display_app.register_blueprint(_auth_bp)
+display_app.register_blueprint(_vehicle_bp)
+display_app.register_blueprint(_build_bp)
+display_app.register_blueprint(_nav_bp)
 
 @display_app.route('/csrf_token')
 def csrf_token_endpoint():
@@ -234,7 +252,11 @@ obd2_display = {
     'mode':      'default',
 }
 
-arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None}
+arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None,
+                 'last_heartbeat': 0.0}
+
+# ── HARDWARE HEARTBEAT ────────────────────────────────────────────────────────
+_HW_HEARTBEAT_TIMEOUT = 30  # seconds before a voice alert fires
 
 beamng_state  = {'connected': False, 'last_rx': 0.0, 'car': '', 'packets': 0}
 
@@ -600,26 +622,24 @@ def save_state():
         'crash_events_full': crash_detection['events'][-50:],
         'compustar_log':     compustar['trigger_log'][-50:],
     }
-    with _memory_lock:
-        try:
-            tmp = SAVE_FILE + '.tmp'
-            with open(tmp, 'w') as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, SAVE_FILE)  # atomic — no corrupt saves on crash
-        except Exception as e:
-            print(f'[ARCHER] save_state failed: {e}')
+    try:
+        from db import db_save
+        db_save(data)
+    except Exception as _e:
+        print(f'[ARCHER] db_save failed: {_e}')
 
 def load_state():
     global current_road, current_profile
-    if not os.path.exists(SAVE_FILE):
+    data = None
+    try:
+        from db import db_load, db_has_data
+        if db_has_data():
+            data = db_load()
+    except Exception as _e:
+        print(f'[ARCHER] SQLite load failed: {_e}')
+    if data is None:
+        print('[ARCHER] No saved state found — starting fresh.')
         return
-    with _memory_lock:
-        try:
-            with open(SAVE_FILE, 'r') as f:
-                data = json.load(f)
-        except Exception:
-            print("[ARCHER] Starting fresh.")
-            return
     personal_bests.update(data.get('personal_bests', {}))
     music_state['song_memories'] = data.get('music_memories', {})
     music_state['song_lighting'] = data.get('song_lighting', {})
@@ -1499,40 +1519,42 @@ def update_awareness():
                 _ecu.rpm   = float(truck_state['rpm'])
                 _ecu.speed = float(truck_state['speed'])
                 st = _ecu.get_state()
-                truck_state['coolant_temp']   = st['coolant_temp']
-                truck_state['oil_temp']       = st['oil_temp']
-                truck_state['tft']            = st['tft']
-                truck_state['iat']            = st['iat']
-                truck_state['maf']            = st['maf']
-                truck_state['timing']         = st['timing']
-                truck_state['stft_b1']        = st['stft_b1']
-                truck_state['stft_b2']        = st['stft_b2']
-                truck_state['ltft_b1']        = st['ltft_b1']
-                truck_state['ltft_b2']        = st['ltft_b2']
-                truck_state['o2_b1s1']        = st['o2_b1s1']
-                truck_state['o2_b2s1']        = st['o2_b2s1']
-                truck_state['battery_main']   = st['battery_main']
-                truck_state['battery_aux']    = st['battery_aux']
-                truck_state['alt_output']     = st['alt_output']
-                truck_state['engine_load']    = st['engine_load']
-                truck_state['gear']           = st['gear']
-                truck_state['target_gear']    = st['target_gear']
-                truck_state['tcc_state']      = st['tcc_state']
-                truck_state['line_pressure']  = st['line_pressure']
-                truck_state['sol_a']          = st['sol_a']
-                truck_state['sol_b']          = st['sol_b']
-                truck_state['prndl']          = st['prndl']
-                truck_state['wheel_speed_fl'] = st['wheel_speed_fl']
-                truck_state['wheel_speed_fr'] = st['wheel_speed_fr']
-                truck_state['wheel_speed_rl'] = st['wheel_speed_rl']
-                truck_state['wheel_speed_rr'] = st['wheel_speed_rr']
-                truck_state['boost'] = max(0, (truck_state['rpm'] - 2000) // 250) if truck_state['rpm'] > 2000 else 0
+                with _memory_lock:
+                    truck_state['coolant_temp']   = st['coolant_temp']
+                    truck_state['oil_temp']       = st['oil_temp']
+                    truck_state['tft']            = st['tft']
+                    truck_state['iat']            = st['iat']
+                    truck_state['maf']            = st['maf']
+                    truck_state['timing']         = st['timing']
+                    truck_state['stft_b1']        = st['stft_b1']
+                    truck_state['stft_b2']        = st['stft_b2']
+                    truck_state['ltft_b1']        = st['ltft_b1']
+                    truck_state['ltft_b2']        = st['ltft_b2']
+                    truck_state['o2_b1s1']        = st['o2_b1s1']
+                    truck_state['o2_b2s1']        = st['o2_b2s1']
+                    truck_state['battery_main']   = st['battery_main']
+                    truck_state['battery_aux']    = st['battery_aux']
+                    truck_state['alt_output']     = st['alt_output']
+                    truck_state['engine_load']    = st['engine_load']
+                    truck_state['gear']           = st['gear']
+                    truck_state['target_gear']    = st['target_gear']
+                    truck_state['tcc_state']      = st['tcc_state']
+                    truck_state['line_pressure']  = st['line_pressure']
+                    truck_state['sol_a']          = st['sol_a']
+                    truck_state['sol_b']          = st['sol_b']
+                    truck_state['prndl']          = st['prndl']
+                    truck_state['wheel_speed_fl'] = st['wheel_speed_fl']
+                    truck_state['wheel_speed_fr'] = st['wheel_speed_fr']
+                    truck_state['wheel_speed_rl'] = st['wheel_speed_rl']
+                    truck_state['wheel_speed_rr'] = st['wheel_speed_rr']
+                    truck_state['boost'] = max(0, (truck_state['rpm'] - 2000) // 250) if truck_state['rpm'] > 2000 else 0
             else:
                 # Fallback when sierra_ecu_config is unavailable
-                truck_state['oil_temp']     = 195 + random.randint(-3, 5)
-                truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
-                truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
-                truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
+                with _memory_lock:
+                    truck_state['oil_temp']     = 195 + random.randint(-3, 5)
+                    truck_state['coolant_temp'] = 190 + random.randint(-2, 3)
+                    truck_state['battery_main'] = round(13.8 + random.uniform(-0.2, 0.2), 1)
+                    truck_state['boost']        = max(0, (rpm - 2000) // 250) if rpm > 2000 else 0
 
         time.sleep(2)
 
@@ -5558,8 +5580,9 @@ def start_navigation(dest_name, dest_lat, dest_lon, steps):
     return f'Navigation to {dest_name} started. {len(steps)} steps.'
 
 def stop_navigation():
-    nav_session['active'] = False
-    nav_session['steps']  = []
+    with _memory_lock:
+        nav_session['active'] = False
+        nav_session['steps']  = []
     speak('Navigation off.')
     return 'Navigation stopped.'
 
@@ -8432,6 +8455,9 @@ TERMINAL_ALLOWED_TIERS = [1]  # only Tier 1 by default — add 2,3,4 to unlock
 # Oldest entries are evicted when the cap is reached; expired entries pruned on lookup.
 _MAX_REVOKED = 10_000
 _revoked_tokens: collections.OrderedDict = collections.OrderedDict()
+# Revoked name+tier combinations: {'Name:tier': revoked_at_unix_time}
+# JWT tokens issued BEFORE this time for that name/tier are rejected.
+_revoked_names: dict = {}
 
 def _revoke_token(token: str):
     """Mark a session token as revoked for 30 days."""
@@ -8442,59 +8468,65 @@ def _revoke_token(token: str):
         _revoked_tokens.popitem(last=False)  # evict oldest
 
 def _revoke_by_name(name: str, tier: int):
-    """Revoke the deterministic token for a given name+tier combination."""
+    """Revoke all sessions for a given name+tier combination."""
     import hashlib as _hl2
-    secret = _ARCHER_SECRET
-    token = _hl2.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
+    token = _hl2.sha256(f'{name}{tier}{_ARCHER_SECRET}'.encode()).hexdigest()[:32]
     _revoke_token(token)
+    # Revoke all JWT sessions for this name+tier issued before now
+    _revoked_names[f'{name}:{tier}'] = time.time()
 
 def get_request_tier(request):
-    """Resolve the tier for any request using MAC auth cookie, fingerprint, or both.
+    """Resolve the tier for any request using HS256 JWT cookie or device fingerprint.
 
     Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
-    Checks revoked tokens so logout and MAC deregistration take effect immediately.
+    Only accepts signed JWTs — the old tier:name:hmac cookie format is disabled
+    to prevent downgrade attacks.  Revoked tokens/names are checked immediately.
     """
-    import hashlib as _hl
-    # 1. MAC auth cookie (primary system)
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
         try:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                c_tier, c_name, c_token = parts
-                cookie_secret = _ARCHER_SECRET
-                expected = _hl.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
-                if c_token == expected:
-                    # Prune expired revocations, then check
-                    now = time.time()
-                    for t in list(_revoked_tokens):
-                        if _revoked_tokens[t] < now:
-                            del _revoked_tokens[t]
-                    if c_token in _revoked_tokens:
-                        return 5  # treat revoked session as unauthenticated
-                    return max(1, min(4, int(c_tier)))
-        except Exception:
-            pass
-    # 2. Fingerprint system (legacy / in-cabin devices)
+            payload = decode_auth_jwt(cookie_val)
+            tier = int(payload['tier'])
+            jti  = payload.get('jti', '')
+            name = payload.get('name', '')
+            now  = time.time()
+            for t in list(_revoked_tokens):
+                if _revoked_tokens[t] < now:
+                    del _revoked_tokens[t]
+            if jti and jti in _revoked_tokens:
+                return 5
+            revoked_at = _revoked_names.get(f'{name}:{tier}', 0)
+            if revoked_at and payload.get('iat', now) < revoked_at:
+                return 5
+            return max(1, min(4, tier))
+        except ValueError:
+            return 5
+    # Fingerprint system (in-cabin devices with no cookie)
     fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
 @display_app.route('/logout', methods=['POST'])
 @csrf_required
 def logout():
-    """Invalidate the current session cookie and redirect to the sign-in page.
+    """Invalidate the current session cookie.
 
-    The token is added to _revoked_tokens so it is rejected immediately even if
-    the client still holds the cookie (e.g. if the 30-day max_age hasn't elapsed).
-    Safe to call without a valid session — always returns 200.
+    The token/jti is added to _revoked_tokens so it is rejected immediately even
+    if the client still holds the cookie. Safe to call without a valid session.
     """
     from flask import request as _lr, make_response as _mk
     cookie_val = _lr.cookies.get('archer_auth', '')
     if cookie_val:
-        parts = cookie_val.split(':')
-        if len(parts) == 3:
-            _revoke_token(parts[2])    # revoke the token portion
-            log_security('LOGOUT', name=parts[1] if len(parts) > 1 else '?')
+        try:
+            payload = decode_auth_jwt(cookie_val)
+            jti = payload.get('jti', '')
+            if jti:
+                _revoke_token(jti)
+            log_security('LOGOUT', name=payload.get('name', '?'))
+        except ValueError:
+            parts = cookie_val.split(':')
+            if len(parts) == 3:
+                _revoke_token(parts[2])
+                log_security('LOGOUT', name=parts[1])
     resp = _mk(jsonify({'ok': True}))
     resp.delete_cookie('archer_auth')
     return resp
@@ -8548,13 +8580,14 @@ system_health = {
 }
 
 def log_system_failure(component, reason):
-    system_health['failures'].append({
-        'time':      time.strftime('%H:%M:%S'),
-        'component': component,
-        'reason':    reason,
-    })
-    if len(system_health['failures']) > 50:
-        system_health['failures'] = system_health['failures'][-50:]
+    with _memory_lock:
+        system_health['failures'].append({
+            'time':      time.strftime('%H:%M:%S'),
+            'component': component,
+            'reason':    reason,
+        })
+        if len(system_health['failures']) > 50:
+            system_health['failures'] = system_health['failures'][-50:]
 
 def get_system_status():
     """Return a list of active system issue codes (empty = all nominal).
@@ -8965,35 +8998,33 @@ def index():
     # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
     owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
     if owner_pin and freq.args.get('pin') == owner_pin:
-        cookie_secret = _ARCHER_SECRET
-        import hashlib as _hl2
-        token = _hl2.sha256(f'Ayden1{cookie_secret}'.encode()).hexdigest()[:32]
-        resp = make_response()
-        resp.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
+        jwt_val = make_auth_jwt(1, 'Ayden')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
         r2.headers['Cache-Control'] = 'no-store'
-        r2.set_cookie('archer_auth', f'1:Ayden:{token}', max_age=86400*30, httponly=True, samesite='Lax')
+        r2.set_cookie('archer_auth', jwt_val, max_age=86400*30, httponly=True, samesite='Lax')
         return r2
 
     # 1. Try MAC detection
     mac = get_client_mac(freq)
     tier_info = get_tier_for_mac(mac)
 
-    # 2. Cookie fallback if MAC not found
+    # 2. JWT cookie fallback if MAC not found
     if not tier_info:
         cookie_val = freq.cookies.get('archer_auth', '')
         if cookie_val:
             try:
-                parts = cookie_val.split(':')
-                if len(parts) == 3:
-                    c_tier, c_name, c_token = parts
-                    cookie_secret = _ARCHER_SECRET
-                    expected = _hashlib.sha256(f'{c_name}{c_tier}{cookie_secret}'.encode()).hexdigest()[:32]
-                    if c_token == expected:
-                        tier_info = {'tier': int(c_tier), 'name': c_name}
-                        print(f'[AUTH] Cookie auth: {c_name} Tier {c_tier}')
-            except Exception:
+                payload = decode_auth_jwt(cookie_val)
+                # Check revocation before granting access
+                jti = payload.get('jti', '')
+                name_tier_key = f'{payload.get("name","")}:{payload.get("tier",0)}'
+                now = time.time()
+                if not (jti and jti in _revoked_tokens) and not (
+                    _revoked_names.get(name_tier_key, 0) > payload.get('iat', now)
+                ):
+                    tier_info = {'tier': int(payload['tier']), 'name': payload.get('name', '')}
+                    print(f'[AUTH] JWT auth: {tier_info["name"]} Tier {tier_info["tier"]}')
+            except ValueError:
                 pass
 
     # 3. Route to correct tier
@@ -9237,7 +9268,6 @@ async function submitCode() {{
 def register_mac():
     """Register a new device using a one-time code."""
     from flask import request as freq, make_response
-    import hashlib as _hashlib
     data = freq.json or {}
     code = data.get('code', '').strip()
     mac  = data.get('mac', '').upper()
@@ -9271,14 +9301,10 @@ def register_mac():
         save_mac_whitelist(whitelist)
         print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
 
-    # Set auth cookie regardless
-    cookie_secret = _ARCHER_SECRET
-    token = _hashlib.sha256(f'{name}{tier}{cookie_secret}'.encode()).hexdigest()[:32]
-    cookie_val = f'{tier}:{name}:{token}'
-
+    # Set auth cookie (HS256 JWT)
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
     resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', cookie_val, max_age=86400*30, httponly=True, samesite='Lax')
+    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax')
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
@@ -9477,9 +9503,7 @@ def revoke_code():
 def sign_in_code_status():
     """Return master code status and registered devices — Tier 1 only."""
     _check_master_auto_enable()
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     try:
         wl = load_mac_whitelist()
@@ -9528,9 +9552,7 @@ def sign_in_code_status():
 def sign_in_code_toggle():
     """Toggle master sign-in code on or off — Tier 1 only."""
     global _master_code_enabled
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     _master_code_enabled = not _master_code_enabled
     return jsonify({'success': True, 'enabled': _master_code_enabled})
@@ -9541,9 +9563,7 @@ def sign_in_code_toggle():
 def sign_in_code_refresh():
     """Generate a new master sign-in code — Tier 1 only."""
     global _master_code
-    auth = request.cookies.get('archer_auth', '')
-    parts = auth.split(':')
-    if len(parts) < 3 or parts[0] != '1':
+    if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     import random as _r
     _master_code = str(_r.randint(100000, 999999))
@@ -10713,6 +10733,9 @@ def _arduino_reader(conn):
             if not line:
                 continue
 
+            # Record heartbeat on every valid line from Arduino
+            arduino_state['last_heartbeat'] = time.time()
+
             if line.startswith('AUX_BATT:'):
                 try:
                     v = float(line[len('AUX_BATT:'):])
@@ -10787,11 +10810,30 @@ def arduino_autodetect():
             print(f'[ARDUINO] autodetect error: {e}')
         time.sleep(5)
 
+def _arduino_heartbeat_watchdog():
+    """Fire a voice alert if the Arduino stops sending data for >30 seconds."""
+    _alerted = False
+    while True:
+        time.sleep(10)
+        if not arduino_state['connected']:
+            _alerted = False
+            continue
+        last = arduino_state['last_heartbeat']
+        if last and (time.time() - last) > _HW_HEARTBEAT_TIMEOUT:
+            if not _alerted:
+                speak('Arduino heartbeat timeout — hardware offline.')
+                print('[ARDUINO] WARNING: No heartbeat in >30s — hardware may be offline.')
+                _alerted = True
+        else:
+            _alerted = False
+
+
 @display_app.route('/arduino/status')
 def arduino_status():
     return jsonify({
-        'connected': arduino_state['connected'],
-        'port':      arduino_state['port'],
+        'connected':      arduino_state['connected'],
+        'port':           arduino_state['port'],
+        'last_heartbeat': arduino_state['last_heartbeat'],
     })
 
 # ── BEAMNG TELEMETRY ─────────────────────────────────────
@@ -11470,7 +11512,8 @@ def main():
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
-    threading.Thread(target=arduino_autodetect,  daemon=True).start()
+    threading.Thread(target=arduino_autodetect,         daemon=True).start()
+    threading.Thread(target=_arduino_heartbeat_watchdog, daemon=True).start()
 
     with _memory_lock:
         archer_memory['total_sessions'] += 1

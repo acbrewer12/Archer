@@ -10,12 +10,12 @@ NEVER hard-code secrets here. Set them in archer.env or GitHub Secrets.
 import os
 
 # ── CORE SECURITY ─────────────────────────────────────────────────────────────
-import secrets as _secrets
 
-# Used for: CSRF tokens, cookie signing, session validation.
-# If not set, a random ephemeral value is used — safe but sessions won't survive restarts.
-# Set ARCHER_SECRET in archer.env (local) or GitHub Secrets (HuggingFace).
-ARCHER_SECRET = os.environ.get('ARCHER_SECRET') or _secrets.token_hex(32)
+# HMAC-SHA256 key for JWT session tokens and CSRF double-submit cookies.
+# Derived automatically from /etc/archer/master.key (HSM) on first boot if not set.
+# Override by setting this env var explicitly in archer.env or GitHub Secrets.
+# The server REFUSES to start if this cannot be derived — no insecure fallbacks.
+ARCHER_SECRET = os.environ.get('ARCHER_SECRET', '')  # empty = use HSM auto-derive
 
 # Master owner PIN for Tier 1 sign-in (numeric, min 4 digits).
 ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
@@ -23,10 +23,10 @@ ARCHER_OWNER_PIN = os.environ.get('ARCHER_OWNER_PIN', '')
 # Master invite code (used when no PIN/MAC auth is set up yet).
 ARCHER_MASTER_CODE = os.environ.get('ARCHER_MASTER_CODE', '')
 
-# Token the Raspberry Pi uses to register its tunnel URL.
-# Set ARCHER_PI_TOKEN in archer.env on both the Pi and the server — must match.
-# If not set, a random ephemeral value is used (Pi registration won't work across restarts).
-ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN') or _secrets.token_hex(16)
+# Token the Raspberry Pi uses to register its tunnel URL with /terminal/pi_register.
+# Must match on both the Pi (export ARCHER_PI_TOKEN=...) and the server.
+# Server rejects all Pi registrations if this is not set.
+ARCHER_PI_TOKEN = os.environ.get('ARCHER_PI_TOKEN', '')  # empty = Pi registration disabled
 
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 

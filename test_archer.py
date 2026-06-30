@@ -32,9 +32,9 @@ archer.display_app.config['TESTING'] = True
 
 # ── Helpers ──────────────────────────────────────────────────────
 def _make_cookie(tier: int, name: str = 'Tester') -> str:
-    secret = os.environ['ARCHER_SECRET']
-    token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
-    return f'{tier}:{name}:{token}'
+    """Return a signed JWT archer_auth cookie (JWT-only mode — legacy hmac disabled)."""
+    from archer_state import make_auth_jwt
+    return make_auth_jwt(tier, name)
 
 
 class _CsrfClient:
@@ -85,24 +85,27 @@ class TestGetRequestTier:
             from flask import request
             assert archer.get_request_tier(request) == 2
 
-    def test_invalid_cookie_falls_back_to_fp(self):
+    def test_invalid_cookie_returns_5_or_fp(self):
+        # A non-JWT cookie is rejected; tier falls back to fingerprint (≥1)
         with archer.display_app.test_request_context(
-            '/', headers={'Cookie': 'archer_auth=bad:data:xxxxxxxxxxxxxxxx'}
+            '/', headers={'Cookie': 'archer_auth=notajwtatall'}
         ):
             from flask import request
             tier = archer.get_request_tier(request)
-            assert tier >= 1
+            assert isinstance(tier, int) and tier >= 1
 
-    def test_tampered_token_rejected(self):
-        parts = _make_cookie(1).split(':')
-        parts[2] = 'A' * 32  # wrong token (32 hex chars to match expected length)
-        bad_cookie = ':'.join(parts)
+    def test_tampered_jwt_rejected(self):
+        # Tamper with the JWT signature — must not grant tier 1
+        jwt = _make_cookie(1)
+        parts = jwt.split('.')
+        parts[2] = 'A' * len(parts[2])  # corrupt the signature
+        bad_cookie = '.'.join(parts)
         with archer.display_app.test_request_context(
             '/', headers={'Cookie': f'archer_auth={bad_cookie}'}
         ):
             from flask import request
             tier = archer.get_request_tier(request)
-            assert tier != 1, f"Tampered cookie should not grant tier 1, got {tier}"
+            assert tier != 1, f"Tampered JWT should not grant tier 1, got {tier}"
 
     def test_no_cookie_returns_int(self):
         with archer.display_app.test_request_context('/'):
@@ -124,11 +127,16 @@ class TestGetRequestTier:
             from flask import request
             assert archer.get_request_tier(request) == 4
 
-    def test_wrong_secret_rejected(self):
-        # Cookie signed with a different secret
-        bad_token = hashlib.sha256(b'wrong_secret').hexdigest()[:32]
+    def test_wrong_secret_jwt_rejected(self):
+        # A JWT signed with a different secret must not grant tier 1
+        import base64, json as _json
+        def _b64(d): return base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+        header  = _b64(b'{"alg":"HS256","typ":"JWT"}')
+        payload = _b64(_json.dumps({'tier':1,'name':'Ayden','jti':'x','iat':1,'exp':9999999999}).encode())
+        sig     = _b64(b'\x00' * 32)  # bogus signature
+        bad_jwt = f'{header}.{payload}.{sig}'
         with archer.display_app.test_request_context(
-            '/', headers={'Cookie': f'archer_auth=1:Ayden:{bad_token}'}
+            '/', headers={'Cookie': f'archer_auth={bad_jwt}'}
         ):
             from flask import request
             tier = archer.get_request_tier(request)
@@ -352,34 +360,49 @@ class TestSmartFallback:
 # 6. save_state / load_state round-trip
 # ═══════════════════════════════════════════════════════════════
 class TestSaveLoadState:
-    def test_save_creates_file(self, tmp_path):
-        orig = archer.SAVE_FILE
-        archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
-        try:
+    def test_save_calls_db_save(self):
+        """save_state() must call db_save with a dict (SQLite-only persistence)."""
+        with patch('db.db_save') as mock_db_save:
             archer.save_state()
-            assert os.path.exists(archer.SAVE_FILE)
-        finally:
-            archer.SAVE_FILE = orig
+        mock_db_save.assert_called_once()
+        arg = mock_db_save.call_args[0][0]
+        assert isinstance(arg, dict)
 
-    def test_saved_json_is_valid(self, tmp_path):
+    def test_save_passes_valid_dict_to_db(self):
+        """The dict handed to db_save must contain expected state keys."""
+        with patch('db.db_save') as mock_db_save:
+            archer.save_state()
+        data = mock_db_save.call_args[0][0]
+        assert 'nav_places' in data
+        assert 'personal_bests' in data
+
+    def test_save_does_not_write_json_file(self, tmp_path):
+        """save_state() must NOT write a legacy JSON file anymore."""
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
-            archer.save_state()
-            with open(archer.SAVE_FILE, encoding='utf-8') as f:
-                data = json.load(f)
-            assert isinstance(data, dict)
+            with patch('db.db_save'):
+                archer.save_state()
+            assert not os.path.exists(archer.SAVE_FILE)
         finally:
             archer.SAVE_FILE = orig
 
     def test_nav_places_persisted(self, tmp_path):
+        import copy
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         archer.nav_places['home'] = {'lat': 37.64, 'lon': -91.54, 'address': 'Home'}
+        saved_data = {}
+        def _capture(d):
+            # Deep-copy so clearing nav_places later doesn't wipe our snapshot
+            saved_data.update(copy.deepcopy(d))
         try:
-            archer.save_state()
+            with patch('db.db_save', side_effect=_capture):
+                archer.save_state()
             archer.nav_places.clear()
-            archer.load_state()
+            with patch('db.db_load', return_value=saved_data), \
+                 patch('db.db_has_data', return_value=True):
+                archer.load_state()
             assert 'home' in archer.nav_places
             assert archer.nav_places['home']['lat'] == 37.64
         finally:
@@ -390,29 +413,29 @@ class TestSaveLoadState:
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'nonexistent.json')
         try:
-            archer.load_state()
+            with patch('db.db_load', return_value={}), \
+                 patch('db.db_has_data', return_value=False):
+                archer.load_state()
         finally:
             archer.SAVE_FILE = orig
 
-    def test_atomic_write_no_partial_file(self, tmp_path):
+    def test_no_tmp_file_left_after_save(self, tmp_path):
+        """No .tmp file should exist after save_state() (SQLite writes atomically)."""
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
         try:
-            archer.save_state()
+            with patch('db.db_save'):
+                archer.save_state()
             assert not os.path.exists(archer.SAVE_FILE + '.tmp')
         finally:
             archer.SAVE_FILE = orig
 
-    def test_truck_state_keys_saved(self, tmp_path):
-        orig = archer.SAVE_FILE
-        archer.SAVE_FILE = str(tmp_path / 'archer_test.json')
-        try:
+    def test_truck_state_keys_saved(self):
+        """db_save must receive nav_places among the persisted keys."""
+        with patch('db.db_save') as mock_db_save:
             archer.save_state()
-            with open(archer.SAVE_FILE, encoding='utf-8') as f:
-                data = json.load(f)
-            assert 'truck_state' in data or 'nav_places' in data
-        finally:
-            archer.SAVE_FILE = orig
+        data = mock_db_save.call_args[0][0]
+        assert 'nav_places' in data
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -545,28 +568,35 @@ class TestTierPages:
 # 10. Cookie format validation
 # ═══════════════════════════════════════════════════════════════
 class TestCookieFormat:
-    def test_cookie_hash_deterministic(self):
-        c1 = _make_cookie(1, 'Ayden')
-        c2 = _make_cookie(1, 'Ayden')
-        assert c1 == c2
+    """Verify that _make_cookie() returns a valid HS256 JWT."""
 
-    def test_different_tiers_different_cookies(self):
-        assert _make_cookie(1, 'X') != _make_cookie(2, 'X')
+    def test_jwt_has_three_dot_parts(self):
+        jwt = _make_cookie(1, 'Ayden')
+        assert jwt.count('.') == 2
 
-    def test_different_names_different_cookies(self):
-        assert _make_cookie(1, 'Alice') != _make_cookie(1, 'Bob')
+    def test_jwt_is_unique_each_call(self):
+        # JWTs include a random jti, so two calls never produce identical tokens
+        assert _make_cookie(1, 'Ayden') != _make_cookie(1, 'Ayden')
 
-    def test_cookie_has_three_parts(self):
-        parts = _make_cookie(2, 'Khloe').split(':')
-        assert len(parts) == 3
-        assert parts[0] == '2'
-        assert parts[1] == 'Khloe'
-        assert len(parts[2]) == 32
+    def test_jwt_decodes_correct_tier(self):
+        from archer_state import decode_auth_jwt
+        for tier in (1, 2, 3, 4):
+            payload = decode_auth_jwt(_make_cookie(tier, 'Test'))
+            assert payload['tier'] == tier
 
-    def test_token_is_hex(self):
-        parts = _make_cookie(1, 'Ayden').split(':')
-        token = parts[2]
-        assert all(c in '0123456789abcdef' for c in token)
+    def test_jwt_decodes_correct_name(self):
+        from archer_state import decode_auth_jwt
+        payload = decode_auth_jwt(_make_cookie(2, 'Khloe'))
+        assert payload['name'] == 'Khloe'
+
+    def test_jwt_signature_verified(self):
+        from archer_state import decode_auth_jwt
+        jwt = _make_cookie(1, 'Ayden')
+        parts = jwt.split('.')
+        parts[2] = 'A' * len(parts[2])
+        import pytest as _pt
+        with _pt.raises(ValueError):
+            decode_auth_jwt('.'.join(parts))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1113,9 +1143,8 @@ class TestIndexRoute:
 # ═══════════════════════════════════════════════════════════════
 class TestCookieTierBounds:
     def _make_signed_cookie(self, tier, name='Tester'):
-        secret = os.environ['ARCHER_SECRET']
-        token  = hashlib.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
-        return f'{tier}:{name}:{token}'
+        from archer_state import make_auth_jwt
+        return make_auth_jwt(tier, name)
 
     def test_tier_zero_returns_int(self):
         cookie = self._make_signed_cookie(0)
@@ -1306,14 +1335,15 @@ class TestLogout:
         assert 'archer_auth' in set_cookie
 
     def test_logout_revokes_session(self):
-        # After logout the token should appear in _revoked_tokens
-        import hashlib as hl
-        secret = os.environ['ARCHER_SECRET']
-        name, tier = 'LogoutTest', 2
-        token = hl.sha256(f'{name}{tier}{secret}'.encode()).hexdigest()[:32]
-        c = _authed_client(tier, name)
-        c.post('/logout')
-        assert token in archer._revoked_tokens
+        # After logout the JWT jti should appear in _revoked_tokens
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(2, 'LogoutTest')
+        jti = decode_auth_jwt(token)['jti']
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', token)
+            csrf = json.loads(c.get('/csrf_token').data)['token']
+            c.post('/logout', headers={'X-CSRF-Token': csrf})
+        assert jti in archer._revoked_tokens
 
     def test_no_session_logout_is_safe(self):
         r = client.post('/logout')
@@ -1834,6 +1864,293 @@ class TestDisplayDataOBDFields:
         assert 'vehicle_model' in d
         assert 'vehicle_name' in d
         assert 'vehicle_name_header' in d
+
+
+# ═══════════════════════════════════════════════════════════════
+# 40. JWT issuance and decoding
+# ═══════════════════════════════════════════════════════════════
+class TestJWT:
+    def test_make_auth_jwt_is_three_parts(self):
+        from archer_state import make_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        assert token.count('.') == 2
+
+    def test_decode_round_trip(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(2, 'Khloe')
+        payload = decode_auth_jwt(token)
+        assert payload['tier'] == 2
+        assert payload['name'] == 'Khloe'
+
+    def test_decode_includes_jti(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        payload = decode_auth_jwt(token)
+        assert 'jti' in payload and len(payload['jti']) > 0
+
+    def test_tampered_signature_raises(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden')
+        parts = token.split('.')
+        parts[2] = parts[2][:-4] + 'XXXX'
+        with pytest.raises(ValueError, match='signature'):
+            decode_auth_jwt('.'.join(parts))
+
+    def test_expired_token_raises(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'Ayden', days=-1)
+        with pytest.raises(ValueError, match='expired'):
+            decode_auth_jwt(token)
+
+    def test_non_jwt_string_raises(self):
+        from archer_state import decode_auth_jwt
+        with pytest.raises(ValueError):
+            decode_auth_jwt('1:Ayden:abc123')
+
+    def test_wrong_format_raises(self):
+        from archer_state import decode_auth_jwt
+        with pytest.raises(ValueError):
+            decode_auth_jwt('notajwt')
+
+
+# ═══════════════════════════════════════════════════════════════
+# 41. Logout — JWT jti revocation
+# ═══════════════════════════════════════════════════════════════
+class TestLogoutJWT:
+    def test_logout_revokes_jwt_jti(self):
+        """Logging out with a JWT cookie should add its jti to _revoked_tokens."""
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        token = make_auth_jwt(1, 'JWTLogoutTest')
+        payload = decode_auth_jwt(token)
+        jti = payload['jti']
+
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', token)
+            c.get('/csrf_token')
+            csrf_token = json.loads(c.get('/csrf_token').data)['token']
+            c.post('/logout', headers={'X-CSRF-Token': csrf_token})
+
+        assert jti in archer._revoked_tokens
+
+    def test_jwt_rejected_after_logout(self):
+        """After logout a subsequent request with the same JWT must be denied."""
+        from archer_state import make_auth_jwt
+        token = make_auth_jwt(1, 'JWTLogoutReject')
+
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', token)
+            csrf_token = json.loads(c.get('/csrf_token').data)['token']
+            c.post('/logout', headers={'X-CSRF-Token': csrf_token})
+            # After logout, tier-1-only endpoint should deny
+            r = c.post('/terminal/exec',
+                       json={'cmd': 'ls'},
+                       headers={'X-CSRF-Token': csrf_token})
+        d = json.loads(r.data)
+        assert 'error' in d or r.status_code in (401, 403)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 42. Terminal exec — shell=False enforcement
+# ═══════════════════════════════════════════════════════════════
+class TestTerminalShellFalse:
+    def _post(self, cmd, tier=1):
+        c = _authed_client(tier)
+        return c.post('/terminal/exec', json={'cmd': cmd})
+
+    def test_subprocess_called_with_shell_false(self):
+        """Verify subprocess.run is always called with shell=False."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='ok', stderr='', returncode=0)
+            self._post('ls -la', tier=1)
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs.get('shell') is False
+
+    def test_pipe_without_bash_c_is_treated_literally(self):
+        """A bare pipe command runs shlex.split so | is just an arg, not a shell pipe."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='hello | cat', stderr='', returncode=0)
+            r = self._post('echo hello | cat', tier=1)
+        # Should have called subprocess.run with shell=False — the | is a literal arg
+        if mock_run.called:
+            args, kwargs = mock_run.call_args
+            assert kwargs.get('shell') is False
+            assert '|' in args[0]  # | appears as a list element, not a shell operator
+
+    def test_bash_c_pipe_is_allowed(self):
+        """bash -c 'cmd | pipe' is the sanctioned way to run piped commands."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout='hello\n', stderr='', returncode=0)
+            r = self._post("bash -c 'echo hello | cat'", tier=1)
+        assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════
+# 43. Pi tunnel — authentication on register and disconnect
+# ═══════════════════════════════════════════════════════════════
+class TestPiTunnel:
+    _token = 'test_pi_token_abc'
+
+    def setup_method(self):
+        import blueprints.terminal as _term
+        self._orig = _term._ARCHER_PI_TOKEN
+        _term._ARCHER_PI_TOKEN = self._token
+
+    def teardown_method(self):
+        import blueprints.terminal as _term
+        _term._ARCHER_PI_TOKEN = self._orig
+
+    def test_pi_register_valid_token(self):
+        r = client.post('/terminal/pi_register',
+                        json={'token': self._token, 'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d.get('status') == 'registered'
+
+    def test_pi_register_invalid_token_rejected(self):
+        r = client.post('/terminal/pi_register',
+                        json={'token': 'wrong', 'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_register_no_token_rejected(self):
+        r = client.post('/terminal/pi_register', json={'url': 'https://abc.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_valid_token(self):
+        r = client.post('/terminal/pi_disconnect', json={'token': self._token})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d.get('status') == 'ok'
+
+    def test_pi_disconnect_no_token_rejected(self):
+        """pi_disconnect with no token must return 403 — not silently accept."""
+        r = client.post('/terminal/pi_disconnect', json={})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_wrong_token_rejected(self):
+        r = client.post('/terminal/pi_disconnect', json={'token': 'bad'})
+        assert r.status_code == 403
+
+    def test_pi_register_requires_csrf(self):
+        """Calling pi_register without a CSRF token must return 403."""
+        with archer.display_app.test_client() as c:
+            r = c.post('/terminal/pi_register',
+                       json={'token': self._token, 'url': 'https://x.ngrok.io'})
+        assert r.status_code == 403
+
+    def test_pi_disconnect_requires_csrf(self):
+        """Calling pi_disconnect without a CSRF token must return 403."""
+        with archer.display_app.test_client() as c:
+            r = c.post('/terminal/pi_disconnect', json={'token': self._token})
+        assert r.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════
+# 44. Fail-closed secret — archer_state refuses to start without a secret
+# ═══════════════════════════════════════════════════════════════
+class TestFailClosedSecret:
+    def test_archer_state_has_non_empty_secret(self):
+        from archer_state import _ARCHER_SECRET
+        assert _ARCHER_SECRET and len(_ARCHER_SECRET) >= 8
+
+    def test_secret_matches_env(self):
+        from archer_state import _ARCHER_SECRET
+        assert _ARCHER_SECRET == os.environ.get('ARCHER_SECRET', _ARCHER_SECRET)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 45. JWT-only mode — legacy cookie rejected
+# ═══════════════════════════════════════════════════════════════
+class TestJWTOnlyMode:
+    def test_legacy_cookie_rejected(self):
+        """Old tier:name:hmac cookies must not grant access (downgrade attack)."""
+        import hashlib as hl
+        secret = os.environ['ARCHER_SECRET']
+        token = hl.sha256(f'Ayden1{secret}'.encode()).hexdigest()[:32]
+        legacy_cookie = f'1:Ayden:{token}'
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={legacy_cookie}'}
+        ):
+            from flask import request
+            # Should fall back to fingerprint (not tier 1 from cookie)
+            tier = archer.get_request_tier(request)
+            assert tier != 1 or tier == 5  # not granted by legacy cookie
+
+    def test_jwt_cookie_grants_access(self):
+        """A valid JWT cookie must grant the correct tier."""
+        from archer_state import make_auth_jwt
+        jwt = make_auth_jwt(2, 'Khloe')
+        with archer.display_app.test_request_context(
+            '/', headers={'Cookie': f'archer_auth={jwt}'}
+        ):
+            from flask import request
+            assert archer.get_request_tier(request) == 2
+
+
+# ═══════════════════════════════════════════════════════════════
+# 46. Encrypted log stream — one-time key gate
+# ═══════════════════════════════════════════════════════════════
+class TestLogStreamKey:
+    def test_key_endpoint_requires_csrf(self):
+        """POST /terminal/log_stream_key without CSRF must return 403."""
+        with archer.display_app.test_client() as c:
+            c.set_cookie('archer_auth', _make_cookie(1))
+            r = c.post('/terminal/log_stream_key', json={})
+        assert r.status_code == 403
+
+    def test_key_endpoint_requires_tier1(self):
+        """Tier 2 must not be able to get a log stream key."""
+        c = _authed_client(2)
+        r = c.post('/terminal/log_stream_key', json={})
+        d = json.loads(r.data)
+        assert r.status_code == 403 or 'error' in d
+
+    def test_stream_without_key_rejected(self):
+        """GET /terminal/log_stream without a valid key must return 403."""
+        r = client.get('/terminal/log_stream')
+        assert r.status_code == 403
+
+    def test_stream_with_wrong_key_rejected(self):
+        """A made-up key must be rejected."""
+        r = client.get('/terminal/log_stream?key=fakekeyabc123')
+        assert r.status_code == 403
+
+    def test_key_issued_to_tier1(self):
+        """Tier 1 can obtain a stream key via CSRF-protected POST."""
+        c = _authed_client(1)
+        r = c.post('/terminal/log_stream_key', json={})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert 'key' in d and len(d['key']) > 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 47. rotate-secrets terminal command
+# ═══════════════════════════════════════════════════════════════
+class TestRotateSecrets:
+    def test_rotate_secrets_requires_tier1(self):
+        c = _authed_client(2)
+        r = c.post('/terminal/exec', json={'cmd': 'rotate-secrets'})
+        d = json.loads(r.data)
+        assert 'error' in d or r.status_code in (401, 403)
+
+    def test_rotate_secrets_clears_revoked_tokens(self):
+        """After rotate-secrets, _revoked_tokens should be empty."""
+        archer._revoked_tokens['fake_jti'] = 9999999999  # plant a token
+        c = _authed_client(1)
+        with patch('hsm.rotate_master_key', return_value=os.environ['ARCHER_SECRET']):
+            r = c.post('/terminal/exec', json={'cmd': 'rotate-secrets'})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d.get('returncode') == 0
+        assert 'fake_jti' not in archer._revoked_tokens
+
+    def test_rotate_secrets_response_mentions_sessions(self):
+        c = _authed_client(1)
+        with patch('hsm.rotate_master_key', return_value=os.environ['ARCHER_SECRET']):
+            r = c.post('/terminal/exec', json={'cmd': 'rotate-secrets'})
+        d = json.loads(r.data)
+        assert 'session' in d.get('stdout', '').lower()
 
 
 if __name__ == '__main__':

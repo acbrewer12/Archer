@@ -1,18 +1,49 @@
 #!/bin/bash
-# Run this on the Pi to connect it to Archer's terminal.
+# Run this on the Pi to connect it to Archer's terminal
 # Usage: bash pi_connect.sh
 #
-# Required env vars (set in /etc/archer/archer.env or ~/.archer.env):
-#   ARCHER_URL        — full URL of the Archer server (e.g. https://aydencatman-archer.hf.space)
-#   ARCHER_PI_TOKEN   — must match ARCHER_PI_TOKEN on the server
+# Required environment variables (set in ~/.bashrc or ~/.profile on the Pi):
+#   ARCHER_URL       — e.g. https://aydencatman-archer.hf.space
+#   ARCHER_PI_TOKEN  — must match ARCHER_PI_TOKEN set on the server
 
-# Load env file if present (Pi local config)
-for envfile in /etc/archer/archer.env ~/.archer.env "$(dirname "$0")/archer.env"; do
-    [ -f "$envfile" ] && { set -a; . "$envfile"; set +a; break; }
-done
+if [ -z "$ARCHER_URL" ]; then
+    echo "[PI] ERROR: ARCHER_URL is not set. Export it before running this script."
+    echo "       e.g.  export ARCHER_URL=https://aydencatman-archer.hf.space"
+    exit 1
+fi
 
-ARCHER_URL="${ARCHER_URL:?ERROR: ARCHER_URL not set. Add it to /etc/archer/archer.env}"
-TOKEN="${ARCHER_PI_TOKEN:?ERROR: ARCHER_PI_TOKEN not set. Add it to /etc/archer/archer.env}"
+if [ -z "$ARCHER_PI_TOKEN" ]; then
+    echo "[PI] ERROR: ARCHER_PI_TOKEN is not set. Export it before running this script."
+    echo "       e.g.  export ARCHER_PI_TOKEN=<your-token>"
+    exit 1
+fi
+
+# Temp cookie jar — holds archer_sid so CSRF tokens remain valid
+COOKIE_JAR="$(mktemp /tmp/archer_pi_cookies.XXXXXX)"
+trap 'rm -f "$COOKIE_JAR"' EXIT
+
+# Fetch a CSRF token from the server and store the session cookie
+pi_csrf_token() {
+    curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+        "$ARCHER_URL/csrf_token" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null
+}
+
+# POST to an Archer endpoint with CSRF + token auth
+pi_post() {
+    local endpoint="$1"
+    local body="$2"
+    local csrf
+    csrf=$(pi_csrf_token)
+    if [ -z "$csrf" ]; then
+        echo "[PI] WARNING: Could not fetch CSRF token — server may be unreachable"
+        return 1
+    fi
+    curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+        -X POST "$ARCHER_URL$endpoint" \
+        -H "Content-Type: application/json" \
+        -H "X-CSRF-Token: $csrf" \
+        -d "$body"
+}
 
 echo "[PI] Starting Archer Pi terminal connection..."
 
@@ -51,11 +82,9 @@ fi
 
 echo "[PI] Tunnel URL: $TUNNEL_URL"
 
-# Register with Archer
+# Register with Archer (CSRF + token auth)
 echo "[PI] Registering with Archer..."
-curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
-    -H "Content-Type: application/json" \
-    -d "{\"token\":\"$TOKEN\",\"url\":\"$TUNNEL_URL\"}"
+pi_post "/terminal/pi_register" "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}"
 
 echo ""
 echo "[PI] Connected. Terminal available at $ARCHER_URL/terminal"
@@ -64,7 +93,7 @@ echo "[PI] Press Ctrl+C to disconnect"
 # Keep alive — re-register every 5 minutes in case tunnel URL changes
 cleanup() {
     echo "[PI] Disconnecting..."
-    curl -s -X POST "$ARCHER_URL/terminal/pi_disconnect" -H "Content-Type: application/json" -d "{}"
+    pi_post "/terminal/pi_disconnect" "{\"token\":\"$ARCHER_PI_TOKEN\"}"
     kill $TTYD_PID $NGROK_PID 2>/dev/null
     exit 0
 }
@@ -74,9 +103,7 @@ while true; do
     sleep 300
     TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
     if [ -n "$TUNNEL_URL" ]; then
-        curl -s -X POST "$ARCHER_URL/terminal/pi_register" \
-            -H "Content-Type: application/json" \
-            -d "{\"token\":\"$TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
+        pi_post "/terminal/pi_register" "{\"token\":\"$ARCHER_PI_TOKEN\",\"url\":\"$TUNNEL_URL\"}" > /dev/null
         echo "[PI] Re-registered tunnel: $TUNNEL_URL"
     fi
 done
