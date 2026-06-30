@@ -37,9 +37,9 @@ async function pingServer(baseUrl) {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 3000);
-    const r = await fetch(`${baseUrl}/sim/status`, { signal: ctrl.signal });
+    const r = await fetch(`${baseUrl}/health`, { signal: ctrl.signal });
     clearTimeout(t);
-    if (!r.ok) return { ok: false, tier: null, warning: false, msg: null };
+    if (!r.ok) return { ok: false, tier: null };
     const d = await r.json();
     return { ok: true, tier: d.tier ?? null };
   } catch {

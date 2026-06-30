@@ -20,10 +20,12 @@ function buildUrl(ip) {
 }
 
 /**
- * Check whether a string looks like the Archer truck SSID.
+ * Check whether a string exactly matches the Archer truck SSID.
+ * Substring matching was too broad — any network with "ARCHER" in the name
+ * would trigger auto-connect, allowing SSID spoofing.
  */
 function isTruckSsid(ssid) {
-  return typeof ssid === 'string' && ssid.includes('ARCHER');
+  return typeof ssid === 'string' && ssid === TRUCK_SSID;
 }
 
 /**

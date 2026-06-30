@@ -60,8 +60,12 @@ describe('isTruckSsid', () => {
     expect(isTruckSsid('ARCHER-2500HD')).toBe(true);
   });
 
-  test('substring ARCHER matches', () => {
-    expect(isTruckSsid('ARCHER_TRUCK')).toBe(true);
+  test('SSID that merely contains ARCHER does not match (spoofing prevention)', () => {
+    expect(isTruckSsid('ARCHER_TRUCK')).toBe(false);
+  });
+
+  test('SSID containing ARCHER with different suffix does not match', () => {
+    expect(isTruckSsid('ARCHER-9999')).toBe(false);
   });
 
   test('non-truck SSID does not match', () => {

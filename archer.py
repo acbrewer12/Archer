@@ -8808,6 +8808,7 @@ def health_endpoint():
         'git_hash':        git_hash,
         'issues':          issues,
         'maintenance':     system_health.get('maintenance', False),
+        'tier':            tier_state.get('current', 1),
     })
 
 
