@@ -50,19 +50,31 @@ def _terminal_access_check(req):
     return tier in TERMINAL_ALLOWED_TIERS, tier
 
 
-# ── DANGEROUS COMMAND PATTERN ─────────────────────────────────────────────────
-_DANGEROUS = _re.compile(
-    r'\brm\s+(-[a-z]*f[a-z]*\s+)?/'      # rm -rf / or rm /
-    r'|\bmkfs\b'
-    r'|\bdd\s+if=/dev/zero\b'
-    r'|\b(shutdown|reboot|poweroff|halt)\b'
-    r'|:\(\)\s*\{.*\|.*&'                 # fork bomb
-    r'|\bpasswd\b|\buseradd\b|\buserdel\b'
-    r'|\|\s*(sh|bash|zsh|dash)\b'         # pipe to shell
-    r'|>\s*/dev/sd'                        # overwrite disk
-    r'|\bchmod\s+[0-7]*7\s+/'             # chmod on root
-    r'|\bcrontab\s+-r\b'
-)
+# ── TERMINAL COMMAND ALLOWLIST ────────────────────────────────────────────────
+# Explicit allowlist — anything not in these sets is rejected.
+# Hardcoded commands (help, maintenance, rotate-secrets) are handled before
+# this check and never reach _is_terminal_cmd_allowed().
+_TERMINAL_ALLOWED = frozenset([
+    'ps', 'free', 'df', 'uptime', 'cat', 'journalctl',
+])
+_TERMINAL_RESTRICTED = {
+    # curl: only to localhost/127.0.0.1 — blocks outbound data exfiltration
+    'curl':      lambda args: any('localhost' in a or '127.0.0.1' in a for a in args),
+    # systemctl: only status queries, not start/stop/enable/disable
+    'systemctl': lambda args: bool(args) and args[0] == 'status',
+    # python3: only as a json formatter, never arbitrary -c execution
+    'python3':   lambda args: args[:2] == ['-m', 'json.tool'],
+}
+
+def _is_terminal_cmd_allowed(cmd_list):
+    """Return True only if cmd_list[0] is on the explicit allowlist."""
+    if not cmd_list:
+        return False
+    exe = os.path.basename(cmd_list[0])
+    if exe in _TERMINAL_ALLOWED:
+        return True
+    checker = _TERMINAL_RESTRICTED.get(exe)
+    return checker is not None and checker(cmd_list[1:])
 
 # ── TERMINAL PAGE ─────────────────────────────────────────────────────────────
 
@@ -366,24 +378,24 @@ def terminal_exec():
             f"  maintenance on           — redirect all visitors to maintenance page (currently {maint_state})\n"
             "  maintenance off          — restore normal access\n"
             "  maintenance status       — show current state\n"
-            "\nSystem\n"
-            "  ps aux | grep archer     — check if archer.py is running\n"
+            "\nSystem  (allowlisted commands only)\n"
+            "  ps aux                   — check running processes\n"
             "  cat /tmp/ollama.log      — view Ollama logs\n"
             "  free -h                  — memory usage\n"
             "  df -h                    — disk usage\n"
             "  uptime                   — system load\n"
-            "\nArcher State\n"
-            "  curl -s http://localhost:7860/system_health | python3 -m json.tool\n"
-            "  curl -s http://localhost:7860/display_data  | python3 -m json.tool\n"
-            "  curl -s http://localhost:7860/build/part/search?q=engine | python3 -m json.tool\n"
+            "  journalctl -n 50         — recent system journal\n"
+            "  systemctl status archer  — archer service status\n"
+            "\nArcher State  (curl to localhost only)\n"
+            "  curl -s http://localhost:7860/system_health\n"
+            "  curl -s http://localhost:7860/display_data\n"
+            "  curl -s http://localhost:7860/build/part/search?q=engine\n"
             "\nLogs\n"
             "  (Logs tab above streams live server output)\n"
-            "\nGPS / Location  (single-line, paste as-is)\n"
-            "  curl -s -X POST http://localhost:7860/location/update -H 'Content-Type: application/json' -d '{\"lat\":37.64,\"lon\":-91.53}'\n"
             "\nSecurity\n"
             "  rotate-secrets           — rotate HSM master key, invalidate all sessions\n"
-            "\nType any shell command to run it on the server.\n"
-            "For pipes or redirects, use: bash -c 'cmd | pipe'\n"
+            "\nAllowed commands: cat, curl (localhost only), df, free, journalctl,\n"
+            "  ps, python3 -m json.tool, systemctl status, uptime\n"
         )
         return jsonify({'stdout': help_text, 'stderr': '', 'returncode': 0})
 
@@ -411,14 +423,15 @@ def terminal_exec():
             return jsonify({'stdout': '[HSM] Master key rotated — all active sessions invalidated. Users must sign in again.', 'stderr': '', 'returncode': 0})
         except Exception as _e:
             return jsonify({'stdout': '', 'stderr': f'rotate-secrets failed: {_e}', 'returncode': 1})
-    if _DANGEROUS.search(cmd):
-        return jsonify({'error': 'Blocked: command matches a dangerous pattern'})
     try:
         cmd_list = shlex.split(cmd)
     except ValueError as e:
         return jsonify({'error': f'Invalid command syntax: {e}'})
     if not cmd_list:
         return jsonify({'stdout': '', 'stderr': ''})
+    if not _is_terminal_cmd_allowed(cmd_list):
+        allowed_list = ', '.join(sorted(_TERMINAL_ALLOWED | set(_TERMINAL_RESTRICTED)))
+        return jsonify({'error': f'Command not permitted. Allowed: {allowed_list}'}), 403
     try:
         result = subprocess.run(
             cmd_list, shell=False, capture_output=True, text=True, timeout=15,
@@ -507,6 +520,10 @@ def terminal_log_stream():
 
 @bp.route('/terminal/pi_status')
 def pi_status():
+    """Return Pi tunnel URL — Tier 1 only (URL grants SSH-level Pi access)."""
+    allowed, tier = _terminal_access_check(request)
+    if not allowed:
+        return jsonify({'error': 'Tier 1 required'}), 403
     return jsonify(pi_tunnel_url)
 
 

@@ -27,6 +27,10 @@ def _get_conn() -> sqlite3.Connection:
             )
         ''')
         conn.commit()
+        try:
+            os.chmod(_DB_PATH, 0o600)
+        except OSError:
+            pass
         _local.conn = conn
     return _local.conn
 

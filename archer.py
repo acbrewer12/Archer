@@ -19,6 +19,8 @@ import hmac
 import hashlib
 import secrets
 
+_USE_TLS = os.environ.get('USE_TLS', 'false').lower() == 'true'
+
 try:
     from sierra_ecu_config import SierraECU as _SierraECU
     _ecu = _SierraECU()
@@ -192,7 +194,7 @@ def csrf_token_endpoint():
     token = _csrf_token_for(sid)
     resp = make_response(jsonify({'token': token}))
     resp.set_cookie('archer_sid', sid, httponly=False, samesite='Lax',
-                    secure=False, max_age=86400 * 30)
+                    secure=_USE_TLS, max_age=86400 * 30)
     return resp
 
 @display_app.after_request
@@ -203,7 +205,7 @@ def _refresh_auth_cookie(response):
     cookie = _r.cookies.get('archer_auth', '')
     if cookie and response.status_code < 400:
         response.set_cookie('archer_auth', cookie, max_age=86400 * 30,
-                            httponly=True, samesite='Lax', secure=False)
+                            httponly=True, samesite='Lax', secure=_USE_TLS)
     return response
 
 # ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
@@ -8923,7 +8925,6 @@ one_time_codes = {}
 # ── MASTER SIGN-IN CODE ───────────────────────────────────────────────────────
 # Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
 # devices are registered so he can always get back in.
-import random as _rand_master
 _master_code = os.environ.get('ARCHER_MASTER_CODE', '250022')
 _master_code_enabled = True   # toggled from Tier 1 dashboard
 
@@ -8940,8 +8941,7 @@ def _check_master_auto_enable():
 
 def generate_one_time_code(name, tier):
     """Generate a 6-digit one-time registration code."""
-    import random as _random
-    code = str(_random.randint(100000, 999999))
+    code = str(secrets.randbelow(900000) + 100000)
     one_time_codes[code] = {
         'name':    name,
         'tier':    int(tier),
@@ -9023,7 +9023,7 @@ def index():
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
         r2.headers['Cache-Control'] = 'no-store'
-        r2.set_cookie('archer_auth', jwt_val, max_age=86400*30, httponly=True, samesite='Lax')
+        r2.set_cookie('archer_auth', jwt_val, max_age=86400*30, httponly=True, samesite='Lax', secure=_USE_TLS)
         return r2
 
     # 1. Try MAC detection
@@ -9325,7 +9325,7 @@ def register_mac():
     # Set auth cookie (HS256 JWT)
     redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
     resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax')
+    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax', secure=_USE_TLS)
     return resp
 
 @display_app.route('/deregister_mac', methods=['POST'])
@@ -9510,8 +9510,11 @@ def generate_code_route():
 @_limiter.limit('10 per minute')
 @csrf_required
 def revoke_code():
-    """Revoke an unused invite code."""
+    """Revoke an unused invite code — Tier 1 only."""
     from flask import request as freq
+    ok, _tier = require_tier1(freq)
+    if not ok:
+        return jsonify({'error': 'Tier 1 required'}), 403
     data = freq.json or {}
     code = data.get('code', '')
     if code in one_time_codes:
@@ -9586,8 +9589,7 @@ def sign_in_code_refresh():
     global _master_code
     if get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    import random as _r
-    _master_code = str(_r.randint(100000, 999999))
+    _master_code = str(secrets.randbelow(900000) + 100000)
     return jsonify({'success': True, 'code': _master_code})
 
 
@@ -9617,9 +9619,9 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
 @csrf_required
 def notify_tier1():
     from flask import request as freq
-    # Require at least tier 2 (passenger) — reject unauthenticated senders
+    # Require at least tier 2 (passenger) — reject unauthenticated/family/valet callers
     ok, tier = require_tier1(freq)
-    if not ok and tier > 2:
+    if tier > 2:
         return jsonify({'error': 'Not authorized'}), 403
     if not _validate_csrf(freq):
         return jsonify({'error': 'CSRF validation failed'}), 403
