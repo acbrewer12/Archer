@@ -71,10 +71,22 @@ def _validate_csrf(req) -> bool:
     return True
 
 def csrf_required(f):
-    """Decorator: reject requests missing a valid CSRF token."""
+    """Decorator: reject requests missing a valid CSRF token or valid JWT bearer.
+
+    Android native clients (VoiceActivity) cannot share the WebView's session cookie,
+    so they send the archer_auth JWT as Authorization: Bearer <token> instead.
+    """
     @functools.wraps(f)
     def _wrapped(*args, **kwargs):
         from flask import request as _r
+        # Android native: accept a valid archer_auth JWT as Bearer token
+        auth = _r.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            try:
+                decode_auth_jwt(auth[7:])
+                return f(*args, **kwargs)
+            except Exception:
+                pass
         if not _validate_csrf(_r):
             return jsonify({'error': 'CSRF validation failed'}), 403
         return f(*args, **kwargs)

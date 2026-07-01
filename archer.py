@@ -6443,38 +6443,41 @@ def handle_command(text):
     if any(x in t for x in ['slow down','cruising','back off']):
         truck_state['rpm'] = 1800; truck_state['speed'] = 45; truck_state['boost'] = 0; return "Backing off."
 
-    # ── STATUS QUERIES ───────────────────
-    if 'oil' in t:
-        temp = truck_state['oil_temp']
-        return f"Oil is at {temp}. Getting warm — back it down." if temp > 230 else f"Oil is at {temp}. Holding steady."
-    if any(x in t for x in ['ethanol','how much ethanol','e85 level']):
-        eth = truck_state['ethanol']
-        if eth > 80: return f"E85 at {eth} percent. Full power map is active."
-        if eth > 50: return f"Ethanol at {eth} percent. Still in the power map."
-        return f"Ethanol is down to {eth} percent. Murphy USA in Rolla when you get a chance."
-    if any(x in t for x in ['battery','voltage']):
-        return f"Main battery at {truck_state['battery_main']} volts. Looking good."
-    if any(x in t for x in ['boost','psi']):
-        return f"Boost at {truck_state['boost']} PSI right now."
-    if 'what song' in t or ('music' in t and 'what' in t):
-        if music_state['playing']: return f"{music_state['current_song'].title()}. Energy is {music_state['energy']}."
-        return "Nothing playing right now."
-    if t == 'speed' or 'how fast' in t or 'current speed' in t:
-        spd = truck_state['speed']
-        if spd == 0: return "Sitting still right now."
-        if spd < 35: return f"{spd} mph. Taking it easy."
-        if spd < 60: return f"{spd} mph. Cruising."
-        return f"{spd} mph. Moving."
-    if 'status' in t: print_status(); return "Status printed above."
-    if any(x in t for x in ['end session','session summary','how was the drive','recap','park it','going home']):
-        return end_session_summary()
-    if 'rpm' in t:
-        for word in t.split():
-            try:
-                val = int(word)
-                if 500 <= val <= 6500: truck_state['rpm'] = val; return f"RPM set to {val}."
-            except: pass
-        return f"RPM is at {truck_state['rpm']}."
+    # ── STATUS QUERIES ─── (short commands only; longer questions go to LLM) ─────
+    # Gate: quick status commands are short by nature. Anything > 5 words is almost
+    # certainly a real question ("why does synthetic oil last longer") — skip to LLM.
+    if len(t.split()) <= 5:
+        if 'oil' in t:
+            temp = truck_state['oil_temp']
+            return f"Oil is at {temp}. Getting warm — back it down." if temp > 230 else f"Oil is at {temp}. Holding steady."
+        if any(x in t for x in ['ethanol','how much ethanol','e85 level']):
+            eth = truck_state['ethanol']
+            if eth > 80: return f"E85 at {eth} percent. Full power map is active."
+            if eth > 50: return f"Ethanol at {eth} percent. Still in the power map."
+            return f"Ethanol is down to {eth} percent. Murphy USA in Rolla when you get a chance."
+        if any(x in t for x in ['battery','voltage']):
+            return f"Main battery at {truck_state['battery_main']} volts. Looking good."
+        if any(x in t for x in ['boost','psi']):
+            return f"Boost at {truck_state['boost']} PSI right now."
+        if 'what song' in t or ('music' in t and 'what' in t):
+            if music_state['playing']: return f"{music_state['current_song'].title()}. Energy is {music_state['energy']}."
+            return "Nothing playing right now."
+        if t == 'speed' or 'how fast' in t or 'current speed' in t:
+            spd = truck_state['speed']
+            if spd == 0: return "Sitting still right now."
+            if spd < 35: return f"{spd} mph. Taking it easy."
+            if spd < 60: return f"{spd} mph. Cruising."
+            return f"{spd} mph. Moving."
+        if 'status' in t: print_status(); return "Status printed above."
+        if any(x in t for x in ['end session','session summary','how was the drive','recap','park it','going home']):
+            return end_session_summary()
+        if 'rpm' in t:
+            for word in t.split():
+                try:
+                    val = int(word)
+                    if 500 <= val <= 6500: truck_state['rpm'] = val; return f"RPM set to {val}."
+                except: pass
+            return f"RPM is at {truck_state['rpm']}."
 
     return None
 
@@ -8272,6 +8275,41 @@ def voice_command_endpoint():
         return jsonify({'response': response or ''})
     except Exception as e:
         return jsonify({'response': 'Give me a second.'})
+
+
+# ── FCM DEVICE TOKEN ─────────────────────────────────────────────────────────
+_fcm_tokens: set = set()
+
+@display_app.route('/fcm_token', methods=['POST'])
+@_limiter.limit('10 per minute')
+def fcm_token_route():
+    """POST /fcm_token — register an Android FCM device token.
+
+    Called by ArcherMessagingService.onNewToken(). No CSRF required because
+    this fires before any session exists. Rate-limited to prevent token spam.
+    Tokens are stored in memory and persisted to fcm_tokens.json so the Pi
+    can send targeted push notifications via firebase-admin.
+    """
+    from flask import request as flask_request
+    import json as _json_lib
+    data  = flask_request.get_json() or {}
+    token = data.get('token', '').strip()
+    if not token or len(token) > 512:
+        return jsonify({'error': 'Invalid token'}), 400
+    _fcm_tokens.add(token)
+    try:
+        tok_path = os.path.join(os.path.dirname(__file__), 'fcm_tokens.json')
+        existing = []
+        if os.path.exists(tok_path):
+            with open(tok_path) as _f:
+                existing = _json_lib.load(_f)
+        if token not in existing:
+            existing.append(token)
+            with open(tok_path, 'w') as _f:
+                _json_lib.dump(existing, _f)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
 
 
 @display_app.route('/drag/stage', methods=['POST'])
