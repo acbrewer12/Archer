@@ -2,124 +2,149 @@
 <html lang="en">
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta name="theme-color" content="#0a0000">
-<title>ARCHER — Fan Q&amp;A</title>
+<meta name="theme-color" content="#0c0c0e">
+<title>ARCHER — Fan Q&A</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Quicksand:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap');
 
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html{background:#030001}
-body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height:100vh;display:flex;flex-direction:column;overflow:hidden;max-width:680px;margin:0 auto;width:100%;box-shadow:0 0 60px rgba(204,0,0,0.08)}
+:root{
+  --bg:#0c0c0e;--surface:#15151a;--border:#26262c;
+  --amber:#ffb200;--amber-dim:#8a5f1f;
+  --text:#e8e6e1;--muted:#6b6b75;--alert:#d92626;
+  --mono:'IBM Plex Mono',monospace;
+  --body:'Inter',sans-serif;
+  --display:'Oswald',sans-serif;
+}
 
-.hdr{background:#0d0005;border-bottom:2px solid #cc0000;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{background:var(--bg)}
+body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh;display:flex;flex-direction:column;overflow:hidden;max-width:680px;margin:0 auto;width:100%}
+
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* ── HEADER ── */
+.hdr{background:var(--bg);border-bottom:1px solid var(--amber);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px}
 .hdr-left{display:flex;flex-direction:column}
-.hdr-title{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:6px;color:#cc0000;line-height:1}
-.hdr-sub{font-size:8px;color:#552222;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-top:1px}
+.hdr-title{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:5px;color:var(--text);line-height:1;text-transform:uppercase}
+.hdr-sub{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);margin-top:2px}
 .hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
-.live-badge{background:#cc0000;border-radius:4px;padding:2px 7px;font-size:8px;font-family:'Share Tech Mono',monospace;letter-spacing:2px;color:#fff;display:none;animation:live-pulse 1.5s ease-in-out infinite}
-@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
-.react-chip{background:#1a0000;border:1px solid #440010;border-radius:20px;padding:3px 10px;font-size:10px;color:#cc6633;font-family:'Share Tech Mono',monospace;letter-spacing:1px;display:none}
-.sign-in-btn{background:#1a0000;border:1px solid #550000;border-radius:20px;padding:5px 12px;font-size:9px;color:#ff6644;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;transition:all 0.15s;white-space:nowrap;line-height:1.4}
-.sign-in-btn:active{background:#2a0000;border-color:#cc0000}
+.live-badge{background:var(--amber);color:#0c0c0e;border-radius:3px;padding:2px 7px;font-size:8px;font-family:var(--mono);font-weight:600;letter-spacing:2px;display:none;animation:live-pulse 1.5s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.react-chip{background:transparent;border:1px solid var(--border);border-radius:3px;padding:3px 8px;font-size:10px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;display:none}
+.sign-in-btn{background:transparent;border:1px solid var(--border);border-radius:3px;padding:5px 12px;font-size:9px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;cursor:pointer;text-decoration:none;white-space:nowrap;line-height:1.4;transition:border-color .15s,color .15s}
+.sign-in-btn:hover,.sign-in-btn:active{border-color:var(--amber);color:var(--text)}
 .user-chip{display:flex;align-items:center;gap:6px}
-.user-name{font-size:10px;color:#ff8866;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
-.dash-btn{background:#1a0000;border:1px solid #440000;border-radius:20px;padding:5px 12px;font-size:10px;color:#ffaa88;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.user-name{font-size:10px;color:var(--muted);font-family:var(--mono);letter-spacing:1px}
+.dash-btn{background:transparent;border:1px solid var(--border);border-radius:3px;padding:5px 12px;font-size:10px;color:var(--text);font-family:var(--mono);letter-spacing:1px;cursor:pointer;text-decoration:none;white-space:nowrap;transition:border-color .15s}
+.dash-btn:hover{border-color:var(--amber)}
 
-.stats-bar{background:#0d0005;border-bottom:1px solid #1a0008;padding:6px 16px;display:flex;gap:16px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;align-items:center}
+/* ── DIC PANEL — stats-bar + live-hint merged ── */
+.stats-bar{background:#09090b;border-bottom:1px solid var(--border);padding:10px 12px 9px;display:flex;gap:0;flex-shrink:0;overflow-x:auto;scrollbar-width:none;position:relative;box-shadow:inset 0 3px 10px rgba(0,0,0,.8),inset 0 -1px 4px rgba(0,0,0,.4)}
 .stats-bar::-webkit-scrollbar{display:none}
-.stat-chip{display:flex;flex-direction:column;align-items:center;flex-shrink:0;min-width:48px}
-.stat-val{font-size:13px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
-.stat-lbl{font-size:8px;color:#552222;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
-.stale-badge{display:none;font-size:8px;color:#cc7700;font-family:'Share Tech Mono',monospace;letter-spacing:1px;white-space:nowrap;border:1px solid #442200;border-radius:10px;padding:2px 8px;margin-left:auto;flex-shrink:0}
+.stats-bar::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.07) 3px,rgba(0,0,0,.07) 4px);pointer-events:none;z-index:0}
+.stats-bar::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:rgba(255,178,0,.06);pointer-events:none}
+.stat-chip{display:flex;flex-direction:column;align-items:center;flex:1;min-width:50px;flex-shrink:0;padding:0 4px;position:relative;z-index:1}
+.stat-chip+.stat-chip{border-left:1px solid rgba(255,255,255,.04)}
+.stat-val{font-size:18px;font-weight:400;color:var(--amber);font-family:var(--mono);font-variant-numeric:tabular-nums;line-height:1.1;letter-spacing:-.02em}
+.stat-lbl{font-size:7px;color:var(--amber-dim);letter-spacing:2px;font-family:var(--mono);margin-top:3px;text-transform:uppercase}
+@keyframes dic-flash{0%{color:#fff9e8;text-shadow:0 0 6px var(--amber)}100%{color:var(--amber);text-shadow:none}}
+.dic-flash{animation:dic-flash .25s ease-out forwards}
+.stale-badge{display:none;position:absolute;bottom:4px;right:8px;font-size:7px;color:var(--alert);font-family:var(--mono);letter-spacing:1px;font-weight:600;background:rgba(217,38,38,.1);border:1px solid rgba(217,38,38,.25);border-radius:2px;padding:1px 5px;z-index:2}
 
-.info-strip-wrap{position:relative;flex-shrink:0;border-bottom:1px solid #1a0008}
-.info-strip-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:32px;background:linear-gradient(to right,transparent,#080002);pointer-events:none}
-.info-strip{display:flex;gap:8px;padding:8px 12px;overflow-x:auto;scrollbar-width:none}
+/* live-hint kept in DOM for JS compat — hidden, merged into DIC panel */
+.live-hint{display:none}
+
+/* ── INFO STRIP ── */
+.info-strip-wrap{position:relative;flex-shrink:0;border-bottom:1px solid var(--border)}
+.info-strip-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:24px;background:linear-gradient(to right,transparent,var(--bg));pointer-events:none}
+.info-strip{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;scrollbar-width:none}
 .info-strip::-webkit-scrollbar{display:none}
-.info-card{background:#0d0005;border:1px solid #2a0010;border-radius:10px;padding:9px 13px;flex-shrink:0;min-width:120px}
-.info-icon{font-size:18px;margin-bottom:3px}
-.info-label{font-size:8px;color:#884444;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
-.info-val{font-size:12px;font-weight:700;color:#ff8866;line-height:1.3}
+.info-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:8px 12px;flex-shrink:0;min-width:110px}
+.info-icon{font-size:15px;margin-bottom:4px}
+.info-label{font-size:8px;color:var(--amber-dim);letter-spacing:3px;font-family:var(--mono);margin-bottom:3px;text-transform:uppercase}
+.info-val{font-size:12px;font-weight:500;color:var(--text);font-family:var(--mono);line-height:1.3}
 
-.build-bar-wrap{padding:5px 14px 4px;flex-shrink:0;border-bottom:1px solid #1a0008}
-.build-bar-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
-.build-bar-lbl{font-size:8px;color:#554433;letter-spacing:2px;font-family:'Share Tech Mono',monospace}
-.build-bar-pct{font-size:9px;color:#ff5522;font-family:'Share Tech Mono',monospace;font-weight:700}
-.build-bar-track{background:#0d0005;border:1px solid #1a0008;border-radius:3px;height:5px;overflow:hidden}
-.build-bar-fill{height:100%;background:linear-gradient(to right,#cc0000,#ff6633);width:0%;transition:width 0.6s ease}
-.build-bar-detail{font-size:8px;color:#442222;font-family:'Share Tech Mono',monospace;margin-top:3px}
+/* ── BUILD BAR ── */
+.build-bar-wrap{padding:6px 14px 5px;flex-shrink:0;border-bottom:1px solid var(--border)}
+.build-bar-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.build-bar-lbl{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);text-transform:uppercase}
+.build-bar-pct{font-size:9px;font-weight:600;color:var(--amber);font-family:var(--mono)}
+.build-bar-track{background:var(--surface);border:1px solid var(--border);border-radius:2px;height:4px;overflow:hidden}
+.build-bar-fill{height:100%;background:var(--amber);width:0%;transition:width .6s ease}
+.build-bar-detail{font-size:8px;color:var(--muted);font-family:var(--mono);margin-top:3px;letter-spacing:1px}
 
-.status-card{padding:4px 14px;flex-shrink:0;font-size:10px;color:#554433;font-family:'Share Tech Mono',monospace;letter-spacing:1px;border-bottom:1px solid #100006}
+/* ── STATUS CARD ── */
+.status-card{padding:5px 14px;flex-shrink:0;font-size:10px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;border-bottom:1px solid var(--border)}
 
-.drag-feed{padding:6px 12px;flex-shrink:0;border-bottom:1px solid #1a0008;display:none}
-.drag-feed-lbl{font-size:8px;color:#664433;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:5px}
+/* ── DRAG FEED ── */
+.drag-feed{padding:6px 12px;flex-shrink:0;border-bottom:1px solid var(--border);display:none}
+.drag-feed-lbl{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);margin-bottom:5px;text-transform:uppercase}
 .drag-feed-row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
 .drag-feed-row::-webkit-scrollbar{display:none}
-.drag-run-card{background:#0d0005;border:1px solid #2a0010;border-radius:8px;padding:7px 11px;flex-shrink:0;min-width:90px}
-.drc-et{font-size:17px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
-.drc-mph{font-size:9px;color:#884444;font-family:'Share Tech Mono',monospace;margin-top:2px}
-.drc-date{font-size:8px;color:#442222;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.drag-run-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 11px;flex-shrink:0;min-width:90px}
+.drc-et{font-size:17px;font-weight:400;color:var(--text);font-family:var(--mono);font-variant-numeric:tabular-nums;line-height:1}
+.drc-mph{font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:3px}
+.drc-date{font-size:8px;color:var(--muted);font-family:var(--mono);margin-top:2px;opacity:.6}
 
-.chat-area{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px;position:relative}
-.live-hint{display:flex;flex-direction:column;gap:6px;padding:8px 12px;flex-shrink:0;border-top:1px solid #1e0008;background:linear-gradient(to bottom,#0a0002,#080002)}
-.live-hint-label{font-size:8px;color:#664422;letter-spacing:3px;font-family:'Share Tech Mono',monospace;border-top:1px solid #2a0010;padding-top:8px}
-.live-hint-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
-.live-hint-card{background:#0d0005;border:1px solid #1e0008;border-radius:8px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:3px}
-.lhc-val{font-size:15px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
-.lhc-lbl{font-size:7px;color:#664433;letter-spacing:1px;font-family:'Share Tech Mono',monospace;text-align:center}
+/* ── SUGGESTIONS ── */
+.suggestions{padding:6px 12px 8px;flex-shrink:0;border-bottom:1px solid var(--border)}
+.sug-toggle{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);cursor:pointer;padding:2px 0;user-select:none;display:inline-flex;align-items:center;gap:4px;text-transform:uppercase;transition:color .15s}
+.sug-toggle:hover{color:var(--text)}
+.sug-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.sug-chip{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:5px 10px;font-size:10px;color:var(--muted);cursor:pointer;font-family:var(--mono);letter-spacing:.5px;transition:border-color .15s,color .15s;white-space:nowrap}
+.sug-chip:hover,.sug-chip:active{border-color:var(--amber);color:var(--text)}
+
+/* ── CHAT ── */
+.chat-area{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .chat-area::-webkit-scrollbar{width:3px}
-.chat-area::-webkit-scrollbar-track{background:transparent}
-.chat-area::-webkit-scrollbar-thumb{background:#330010;border-radius:2px}
+.chat-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 
 .msg{display:flex;gap:8px;align-items:flex-start;max-width:90%}
 .msg.user{flex-direction:row-reverse;align-self:flex-end}
-.msg-bubble{padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.5;font-weight:500;word-break:break-word}
-.msg.archer .msg-bubble{background:#0d0005;border:1px solid #2a0010;color:#ddbbbb;border-bottom-left-radius:4px}
-.msg.user .msg-bubble{background:#2a0008;border:1px solid #550020;color:#ffcccc;border-bottom-right-radius:4px}
-.msg-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;margin-top:2px}
-.msg.archer .msg-avatar{background:radial-gradient(circle,#cc0000,#330000);border:2px solid #cc0000;animation:avatar-pulse 3s ease-in-out infinite}
-@keyframes avatar-pulse{0%,100%{box-shadow:0 0 0 0 rgba(204,0,0,0.3)}50%{box-shadow:0 0 0 5px rgba(204,0,0,0)}}
-.msg.user .msg-avatar{background:#1a0008;border:1px solid #440020;font-size:11px}
-.msg-tag{font-size:8px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px;color:#660022}
-.msg.user .msg-tag{text-align:right;color:#885544}
-.msg-actions{display:flex;gap:5px;margin-top:4px}
-.msg-react-btn,.msg-share-btn{background:none;border:1px solid #2a0010;border-radius:14px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all 0.15s}
-.msg-react-btn{color:#884444}
-.msg-react-btn.fired{border-color:#cc0000;color:#ff6633;background:#1a0005}
-.msg-share-btn{color:#664444}
-.msg-share-btn:active{border-color:#555;color:#aaa}
+.msg-bubble{padding:9px 13px;border-radius:8px;font-size:13px;line-height:1.55;font-weight:400;word-break:break-word}
+.msg.archer .msg-bubble{background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:2px}
+.msg.user   .msg-bubble{background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-right-radius:2px}
+.msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:2px;background:var(--surface);border:1px solid var(--border)}
+.msg.archer .msg-avatar{border-color:var(--amber-dim);animation:avatar-pulse 3s ease-in-out infinite}
+@keyframes avatar-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,178,0,.2)}50%{box-shadow:0 0 0 4px rgba(255,178,0,0)}}
+.msg-tag{font-size:8px;letter-spacing:2px;font-family:var(--mono);margin-bottom:3px;text-transform:uppercase}
+.msg.archer .msg-tag{color:var(--amber)}
+.msg.user   .msg-tag{text-align:right;color:var(--muted)}
+.msg-actions{display:flex;gap:5px;margin-top:5px}
+.msg-react-btn,.msg-share-btn{background:none;border:1px solid var(--border);border-radius:3px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:var(--mono);color:var(--muted);transition:border-color .15s,color .15s}
+.msg-react-btn:hover,.msg-share-btn:hover{border-color:var(--amber);color:var(--text)}
+.msg-react-btn.fired{border-color:var(--amber);color:var(--amber)}
 
-.build-divider{display:flex;align-items:center;gap:10px;padding:12px 0;flex-shrink:0}
-.build-divider-line{flex:1;height:1px;background:#1a0008}
-.build-divider-badge{background:#0d0005;border:1px solid #2a0010;border-radius:12px;padding:4px 12px;font-size:9px;color:#ff6633;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
+.build-divider{display:flex;align-items:center;gap:10px;padding:10px 0}
+.build-divider-line{flex:1;height:1px;background:var(--border)}
+.build-divider-badge{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:4px 12px;font-size:9px;color:var(--muted);font-family:var(--mono);letter-spacing:2px;text-transform:uppercase}
 
-.typing-bubble{padding:9px 13px;background:#0d0005;border:1px solid #2a0010;border-radius:14px;border-bottom-left-radius:4px;display:inline-flex;gap:4px;align-items:center}
-.dot{width:6px;height:6px;border-radius:50%;background:#660022;animation:blink 1.2s infinite}
-.dot:nth-child(2){animation-delay:0.2s}
-.dot:nth-child(3){animation-delay:0.4s}
-@keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}
+.typing-bubble{padding:9px 13px;background:var(--surface);border:1px solid var(--border);border-radius:8px;border-bottom-left-radius:2px;display:inline-flex;gap:4px;align-items:center}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
+.dot:nth-child(2){animation-delay:.2s}
+.dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
 
-.suggestions{padding:0 12px 6px;flex-shrink:0}
-.sug-toggle{font-size:8px;color:#553322;letter-spacing:3px;font-family:'Share Tech Mono',monospace;cursor:pointer;padding:4px 0;user-select:none;display:inline-flex;align-items:center;gap:4px}
-.sug-toggle:active{color:#cc6633}
-.sug-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
-.sug-chip{background:#0d0005;border:1px solid #2a0010;border-radius:20px;padding:5px 11px;font-size:10px;color:#cc6644;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:0.5px;transition:all 0.15s;white-space:nowrap}
-.sug-chip:active{background:#200008;border-color:#cc0000;color:#ff8866}
+/* ── HISTORY BAR ── */
+.history-bar{background:var(--bg);border-top:1px solid var(--border);padding:4px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.history-label{font-size:8px;color:var(--muted);letter-spacing:2px;font-family:var(--mono)}
+.clear-btn{font-size:9px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;cursor:pointer;padding:3px 8px;border:1px solid var(--border);border-radius:3px;background:none;transition:border-color .15s,color .15s}
+.clear-btn:hover{color:var(--alert);border-color:var(--alert)}
 
-.input-bar{background:#0d0005;border-top:1px solid #2a0010;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
-#fan-input{flex:1;background:#150008;border:1px solid #330010;border-radius:22px;padding:9px 15px;color:#fff;font-family:'Quicksand',sans-serif;font-size:13px;outline:none;-webkit-appearance:none;min-width:0}
-#fan-input::placeholder{color:#774433}
-.fan-mute-btn{width:34px;height:34px;border-radius:50%;background:#150008;border:1px solid #330020;color:#664444;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
-.fan-mute-btn.muted{color:#cc4422;border-color:#550020}
-.fan-mic-btn{width:38px;height:38px;border-radius:50%;background:#150008;border:2px solid #440020;color:#cc4444;font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
-.fan-mic-btn.active{background:rgba(204,0,0,0.2);border-color:#cc0000;color:#ff4422}
-.fan-send-btn{width:38px;height:38px;border-radius:50%;background:#cc0000;border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s}
-.fan-send-btn:active{transform:scale(0.92);background:#aa0000}
-
-.history-bar{background:#0d0005;border-top:1px solid #1a0008;padding:4px 12px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-.history-label{font-size:8px;color:#552222;letter-spacing:2px;font-family:'Share Tech Mono',monospace}
-.clear-btn{font-size:9px;color:#552222;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;padding:3px 8px;border:1px solid #1a0008;border-radius:10px;background:none}
-.clear-btn:active{color:#cc0000;border-color:#cc0000}
+/* ── INPUT BAR ── */
+.input-bar{background:var(--surface);border-top:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#fan-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 14px;color:var(--text);font-family:var(--body);font-size:13px;outline:none;-webkit-appearance:none;min-width:0;transition:border-color .15s}
+#fan-input:focus{border-color:var(--amber)}
+#fan-input::placeholder{color:var(--muted)}
+/* mute: amber when sound is ON (active), dim when muted */
+.fan-mute-btn{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--amber);color:var(--amber);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s,color .2s,opacity .2s}
+.fan-mute-btn.muted{border-color:var(--border);color:var(--muted);opacity:.5}
+.fan-mic-btn{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--border);color:var(--muted);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .2s,color .2s}
+.fan-mic-btn.active{border-color:var(--amber);color:var(--amber)}
+.fan-send-btn{width:36px;height:36px;border-radius:50%;background:var(--amber);border:none;color:#0c0c0e;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s}
+.fan-send-btn:active{opacity:.8}
 </style>
 </head>
 <body>
@@ -132,14 +157,13 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
   <div class="hdr-right" id="hdr-right">
     <span class="live-badge" id="live-badge">&#9679; LIVE</span>
     <span class="react-chip" id="react-chip">&#128293; <span id="react-count">0</span></span>
-    <!-- user/signin appended by JS -->
   </div>
 </div>
 
 <div class="stats-bar">
   <div class="stat-chip"><div class="stat-val" id="f-speed">--</div><div class="stat-lbl">MPH</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-rpm">--</div><div class="stat-lbl">RPM</div></div>
-  <div class="stat-chip"><div class="stat-val" id="f-boost">--</div><div class="stat-lbl">BOOST</div></div>
+  <div class="stat-chip"><div class="stat-val" id="f-boost">--</div><div class="stat-lbl">PSI</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-mode">--</div><div class="stat-lbl">MODE</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-oil">--</div><div class="stat-lbl">OIL &deg;F</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-bat">--</div><div class="stat-lbl">VOLTS</div></div>
@@ -177,7 +201,7 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 <div class="build-bar-wrap">
   <div class="build-bar-hdr">
     <span class="build-bar-lbl">PHASE 1 BUILD PROGRESS</span>
-    <span class="build-bar-pct" id="build-pct">0%</span>
+    <span class="build-bar-pct" id="build-pct">--</span>
   </div>
   <div class="build-bar-track"><div class="build-bar-fill" id="build-fill"></div></div>
   <div class="build-bar-detail" id="build-detail">&nbsp;</div>
@@ -204,13 +228,13 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 
 <div class="chat-area" id="chat"></div>
 
-<div class="live-hint" id="live-hint">
-  <div class="live-hint-label"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:#cc0000;margin-right:6px;vertical-align:middle;animation:avatar-pulse 2s ease-in-out infinite"></span>LIVE STATUS</div>
+<!-- live-hint kept in DOM so JS set() calls to lh-* don't throw — merged visually into DIC panel -->
+<div class="live-hint" id="live-hint" aria-hidden="true">
   <div class="live-hint-grid">
-    <div class="live-hint-card"><div class="lhc-val" id="lh-speed">--</div><div class="lhc-lbl">MPH</div></div>
-    <div class="live-hint-card"><div class="lhc-val" id="lh-rpm">--</div><div class="lhc-lbl">RPM</div></div>
-    <div class="live-hint-card"><div class="lhc-val" id="lh-oil">--</div><div class="lhc-lbl">OIL &deg;F</div></div>
-    <div class="live-hint-card"><div class="lhc-val" id="lh-bat">--</div><div class="lhc-lbl">VOLTS</div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-speed"></div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-rpm"></div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-oil"></div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-bat"></div></div>
   </div>
 </div>
 
@@ -243,8 +267,6 @@ let staleTimer = null;
 // ── HEADER AUTH UI ──
 (function renderHeader() {
   const el = document.getElementById('hdr-right');
-  const userEl = document.createElement('div');
-  userEl.style.display = 'contents';
   if (USER) {
     const chip = document.createElement('div');
     chip.className = 'user-chip';
@@ -295,6 +317,27 @@ function toggleSugs() {
   if (arrow) arrow.textContent = sugsExpanded ? '▼' : '▸';
 }
 
+// ── DIC DIGIT FLASH ──
+function flashDic(el) {
+  if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.classList.remove('dic-flash');
+  void el.offsetWidth;
+  el.classList.add('dic-flash');
+  el.addEventListener('animationend', function(){ el.classList.remove('dic-flash'); }, {once: true});
+}
+
+function setDic(id, v) {
+  const e = document.getElementById(id);
+  if (!e || v == null) return;
+  const s = String(v);
+  if (e.textContent !== s) { e.textContent = s; flashDic(e); }
+}
+
+function set(id, v) {
+  const e = document.getElementById(id);
+  if (e && v != null) e.textContent = v;
+}
+
 // ── LIVE STATS ──
 async function pollStats() {
   try {
@@ -304,22 +347,21 @@ async function pollStats() {
     clearStale();
 
     const spd = Math.round(d.speed || 0);
-    const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.textContent = v; };
-    set('f-speed', spd);
-    set('f-rpm', d.rpm || 750);
-    set('f-boost', (d.boost || 0) + ' PSI');
-    set('f-mode', (d.drive_mode || 'SPORT').toUpperCase().slice(0, 5));
-    set('f-oil', d.oil_temp || '--');
-    set('f-bat', d.battery ? d.battery.toFixed(1) + 'V' : '--');
+    setDic('f-speed', spd);
+    setDic('f-rpm',   d.rpm || 750);
+    setDic('f-boost', d.boost || 0);
+    setDic('f-mode',  (d.drive_mode || 'SPORT').toUpperCase().slice(0, 5));
+    setDic('f-oil',   d.oil_temp || '--');
+    setDic('f-bat',   d.battery ? d.battery.toFixed(1) : '--');
     set('lh-speed', spd);
-    set('lh-rpm', d.rpm || 750);
-    set('lh-oil', d.oil_temp || '--');
-    set('lh-bat', d.battery ? d.battery.toFixed(1) : '--');
+    set('lh-rpm',   d.rpm || 750);
+    set('lh-oil',   d.oil_temp || '--');
+    set('lh-bat',   d.battery ? d.battery.toFixed(1) : '--');
 
     const caps = d.build_caps || {};
-    const sc  = caps.supercharged || false;
-    const eth = caps.ethanol_sensor || false;
-    const ph  = d.build_phase || 1;
+    const sc   = caps.supercharged || false;
+    const eth  = caps.ethanol_sensor || false;
+    const ph   = d.build_phase || 1;
     const engEl  = document.getElementById('f-engine');
     const phEl   = document.getElementById('f-phase');
     const fuelEl = document.getElementById('f-fuel');
@@ -327,7 +369,6 @@ async function pollStats() {
     if (phEl)   phEl.textContent   = 'Phase ' + ph + (ph >= 2 ? ' — Supercharged' : ' — In Progress');
     if (fuelEl) fuelEl.textContent = eth ? 'E85 Flex Fuel' : 'Regular 87 (E85 Pending)';
 
-    // LIVE badge
     const liveBadge = document.getElementById('live-badge');
     if (liveBadge) liveBadge.style.display = spd > 5 ? 'inline-block' : 'none';
 
@@ -370,9 +411,9 @@ function updateStatusCard(d, spd) {
   const mode = (d.drive_mode || 'comfort').toUpperCase();
   const loc  = d.gps_name || '';
   let text;
-  if (spd > 5)   text = '⚡ CRUISING AT ' + spd + ' MPH' + (loc ? ' — ' + loc.toUpperCase() : '');
+  if (spd > 5)        text = '⚡ CRUISING AT ' + spd + ' MPH' + (loc ? ' — ' + loc.toUpperCase() : '');
   else if (rpm > 900) text = '🔧 IDLING — ' + rpm + ' RPM';
-  else           text = '💤 ENGINE OFF / PARKED';
+  else                text = '💤 ENGINE OFF / PARKED';
   el.textContent = text;
 }
 
@@ -382,20 +423,17 @@ function updateBuildBar(d) {
   const installed = parts.filter(function(p){ return p.status === 'installed'; }).length;
   const pending   = parts.filter(function(p){ return p.status === 'pending'; }).length;
   const total     = parts.length;
-  // target = all known parts when any are logged; bare minimum of 1 to avoid div-by-zero
   const target    = total > 0 ? total : 1;
   const pct       = total === 0 ? 0 : Math.min(100, Math.round(installed / target * 100));
-  const fillEl   = document.getElementById('build-fill');
-  const pctEl    = document.getElementById('build-pct');
-  const detEl    = document.getElementById('build-detail');
+  const fillEl = document.getElementById('build-fill');
+  const pctEl  = document.getElementById('build-pct');
+  const detEl  = document.getElementById('build-detail');
   if (fillEl) fillEl.style.width = pct + '%';
   if (pctEl)  pctEl.textContent  = total === 0 ? '--' : pct + '%';
   if (detEl) {
-    if (total === 0) {
-      detEl.textContent = 'NO PARTS LOGGED YET';
-    } else {
-      detEl.textContent = installed + '/' + total + ' PARTS INSTALLED' + (pending > 0 ? ' • ' + pending + ' PENDING' : ' • COMPLETE');
-    }
+    detEl.textContent = total === 0
+      ? 'NO PARTS LOGGED YET'
+      : installed + '/' + total + ' PARTS INSTALLED' + (pending > 0 ? ' • ' + pending + ' PENDING' : ' • COMPLETE');
   }
 }
 
@@ -409,10 +447,9 @@ function updateDragFeed(d) {
   feedEl.style.display = 'block';
   rowEl.innerHTML = '';
   runs.slice().reverse().forEach(function(r) {
-    const card = document.createElement('div');
-    card.className = 'drag-run-card';
-    const etEl = document.createElement('div'); etEl.className = 'drc-et'; etEl.textContent = (r.et || '--') + 's';
-    const mphEl = document.createElement('div'); mphEl.className = 'drc-mph'; mphEl.textContent = '@ ' + (r.mph || '--') + ' MPH';
+    const card   = document.createElement('div'); card.className = 'drag-run-card';
+    const etEl   = document.createElement('div'); etEl.className = 'drc-et';   etEl.textContent = (r.et || '--') + 's';
+    const mphEl  = document.createElement('div'); mphEl.className = 'drc-mph'; mphEl.textContent = '@ ' + (r.mph || '--') + ' MPH';
     const dateEl = document.createElement('div'); dateEl.className = 'drc-date'; dateEl.textContent = r.date || '';
     card.appendChild(etEl); card.appendChild(mphEl); card.appendChild(dateEl);
     rowEl.appendChild(card);
@@ -428,8 +465,8 @@ function updateContextChips(d, spd) {
   const runs = d.drag_recent_runs || [];
 
   let c0text = 'Fuel?', c0q = 'What fuel does Archer run?';
-  if (spd > 5)       { c0text = spd + ' MPH — where?'; c0q = "You're doing " + spd + " MPH right now — where are you headed?"; }
-  else if (oil > 210){ c0text = 'Oil temp high?'; c0q = 'Is that oil temperature normal or is something wrong?'; }
+  if (spd > 5)              { c0text = spd + ' MPH — where?'; c0q = "You're doing " + spd + " MPH right now — where are you headed?"; }
+  else if (oil > 210)       { c0text = 'Oil temp high?'; c0q = 'Is that oil temperature normal or is something wrong?'; }
   else if (h >= 22 || h < 5){ c0text = 'Night drive?'; c0q = 'Why are you out driving so late?'; }
   dynChips[0].textContent = c0text;
   dynChips[0].onclick = function(){ askQuestion(c0q); };
@@ -472,7 +509,7 @@ function renderMsg(role, text, appendToDOM) {
   const div      = document.createElement('div');
   div.className  = 'msg ' + role;
 
-  const avatarEl = document.createElement('div');
+  const avatarEl       = document.createElement('div');
   avatarEl.className   = 'msg-avatar';
   avatarEl.textContent = isArcher ? '🔴' : '💬';
 
@@ -481,7 +518,7 @@ function renderMsg(role, text, appendToDOM) {
   tagEl.className   = 'msg-tag';
   tagEl.textContent = isArcher ? 'ARCHER' : (USER ? USER.name.toUpperCase() : 'YOU');
 
-  const bubbleEl = document.createElement('div');
+  const bubbleEl       = document.createElement('div');
   bubbleEl.className   = 'msg-bubble';
   bubbleEl.textContent = text;
 
@@ -489,19 +526,19 @@ function renderMsg(role, text, appendToDOM) {
   innerDiv.appendChild(bubbleEl);
 
   if (isArcher && appendToDOM !== false) {
-    const actionsEl   = document.createElement('div');
+    const actionsEl     = document.createElement('div');
     actionsEl.className = 'msg-actions';
 
-    const reactBtn = document.createElement('button');
+    const reactBtn       = document.createElement('button');
     reactBtn.className   = 'msg-react-btn';
     reactBtn.textContent = '🔥';
-    reactBtn.onclick = function(){ reactToMsg(reactBtn); };
+    reactBtn.onclick     = function(){ reactToMsg(reactBtn); };
 
-    const shareBtn = document.createElement('button');
-    shareBtn.className   = 'msg-share-btn';
-    shareBtn.textContent = '↗';
-    shareBtn.dataset.text = text;
-    shareBtn.onclick = function(){ shareMsg(shareBtn); };
+    const shareBtn            = document.createElement('button');
+    shareBtn.className        = 'msg-share-btn';
+    shareBtn.textContent      = '↗';
+    shareBtn.dataset.text     = text;
+    shareBtn.onclick          = function(){ shareMsg(shareBtn); };
 
     actionsEl.appendChild(reactBtn);
     actionsEl.appendChild(shareBtn);
@@ -528,14 +565,14 @@ function showTyping() {
   const d = document.createElement('div');
   d.className = 'msg archer';
   d.id = 'typing-indicator';
-  const avatarEl = document.createElement('div');
+  const avatarEl       = document.createElement('div');
   avatarEl.className   = 'msg-avatar';
   avatarEl.textContent = '🔴';
   const innerDiv = document.createElement('div');
   const tagEl    = document.createElement('div');
   tagEl.className   = 'msg-tag';
   tagEl.textContent = 'ARCHER';
-  const bubble = document.createElement('div');
+  const bubble     = document.createElement('div');
   bubble.className = 'typing-bubble';
   bubble.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
   innerDiv.appendChild(tagEl);
@@ -568,8 +605,8 @@ function shareMsg(btn) {
   if (navigator.share) {
     navigator.share({
       title: 'Archer — 2006 GMC Sierra 2500HD',
-      text: '🔴 ARCHER says: "' + text.slice(0, 120) + (text.length > 120 ? '…' : '') + '"',
-      url: url
+      text:  '🔴 ARCHER says: “' + text.slice(0, 120) + (text.length > 120 ? '…' : '') + '”',
+      url:   url
     }).catch(function(){});
   } else {
     try {
@@ -624,15 +661,14 @@ function addWelcome() {
     : "Hey, welcome to the fan page. I'm Archer — a 2006 GMC Sierra 2500HD being built into something serious. Ask me anything about the truck, the build, or what I'm running right now.";
   renderMsg('archer', greeting);
   fetch(BASE + '/display_data').then(function(r){ return r.json(); }).then(function(d) {
-    const sc = (d.build_caps || {}).supercharged;
-    const ph = d.build_phase || 1;
+    const sc         = (d.build_caps || {}).supercharged;
     const phaseLabel = sc ? 'PHASE 2 — SUPERCHARGED' : 'PHASE 1 — BUILDING';
-    const divEl = document.createElement('div');
-    divEl.className = 'build-divider';
-    divEl.id = 'build-divider';
-    const line1 = document.createElement('div'); line1.className = 'build-divider-line';
-    const badge = document.createElement('div'); badge.className = 'build-divider-badge'; badge.textContent = phaseLabel;
-    const line2 = document.createElement('div'); line2.className = 'build-divider-line';
+    const divEl      = document.createElement('div');
+    divEl.className  = 'build-divider';
+    divEl.id         = 'build-divider';
+    const line1      = document.createElement('div'); line1.className = 'build-divider-line';
+    const badge      = document.createElement('div'); badge.className = 'build-divider-badge'; badge.textContent = phaseLabel;
+    const line2      = document.createElement('div'); line2.className = 'build-divider-line';
     divEl.appendChild(line1); divEl.appendChild(badge); divEl.appendChild(line2);
     chatEl.appendChild(divEl);
     chatEl.scrollTop = chatEl.scrollHeight;
@@ -701,12 +737,9 @@ function toggleFanMic() {
   sr = new SRClass();
   sr.lang = 'en-US';
   sr.interimResults = false;
-  sr.onresult = function(e) {
-    document.getElementById('fan-input').value = e.results[0][0].transcript;
-    sendFanQuestion();
-  };
-  sr.onend  = function(){ micActive = false; setMicUI(false); };
-  sr.onerror = function(){ micActive = false; setMicUI(false); };
+  sr.onresult  = function(e) { document.getElementById('fan-input').value = e.results[0][0].transcript; sendFanQuestion(); };
+  sr.onend     = function(){ micActive = false; setMicUI(false); };
+  sr.onerror   = function(){ micActive = false; setMicUI(false); };
   sr.start();
   micActive = true;
   setMicUI(true);
@@ -722,8 +755,9 @@ function setMicUI(on) {
 function ttsSpeak(text) {
   if (muted || !window.speechSynthesis) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.rate = 1.0; u.pitch = 1;
+  const u   = new SpeechSynthesisUtterance(text);
+  u.rate    = 1.0;
+  u.pitch   = 1;
   speechSynthesis.speak(u);
 }
 </script>
