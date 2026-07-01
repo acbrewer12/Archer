@@ -625,6 +625,12 @@ def save_state():
         'compustar_log':     compustar['trigger_log'][-50:],
     }
     try:
+        from blueprints.fans import _fan_reactions as _fr, _fan_questions_total as _fq
+        data['fan_reactions']       = _fr
+        data['fan_questions_total'] = _fq
+    except Exception:
+        pass
+    try:
         from db import db_save
         db_save(data)
     except Exception as _e:
@@ -691,6 +697,12 @@ def load_state():
     if saved_clog:
         compustar['trigger_log'].extend(saved_clog)
     _recalc_build_spent()
+    try:
+        import blueprints.fans as _fans_mod
+        _fans_mod._fan_reactions       = data.get('fan_reactions', 0)
+        _fans_mod._fan_questions_total = data.get('fan_questions_total', 0)
+    except Exception:
+        pass
     print("[ARCHER] Memory loaded.")
 
 # ── TIER SYSTEM ─────────────────────────
@@ -1679,7 +1691,7 @@ def get_display_data():
         'tier':          tier_state['current'],
         'night_mode':    display_settings['night_mode'],
         'color_theme':   display_settings['color_theme'],
-        'build_parts':   len(build_tracker['parts']),
+        'build_parts_count': len(build_tracker['parts']),
         'build_spent':   build_tracker['total_spent'],
         'fault_count':   len(fault_codes),
         'odometer':      odometer['miles'],
@@ -7572,7 +7584,7 @@ function updateDisplay(d) {
     const bSpent = document.getElementById('b-spent');
     if (bSpent) bSpent.textContent = '$' + (d.build_spent || 0).toLocaleString();
     const bParts = document.getElementById('b-parts');
-    if (bParts) bParts.textContent = d.build_parts || 0;
+    if (bParts) bParts.textContent = d.build_parts_count || 0;
     const bHp = document.getElementById('b-hp');
     if (bHp) { bHp.textContent = (d.est_hp || 556) + ' HP'; bHp.style.color = d.est_hp > 700 ? '#00cc44' : d.est_hp > 600 ? '#ffaa00' : '#cc0000'; }
     const bOdo = document.getElementById('b-odo');

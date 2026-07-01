@@ -14,7 +14,7 @@ bp = Blueprint('fans', __name__)
 
 _fan_reactions = 0
 _fan_reactions_lock = _threading.Lock()
-_fan_questions_today = 0
+_fan_questions_total = 0
 _fan_questions_lock = _threading.Lock()
 
 
@@ -54,7 +54,7 @@ def register_page():
 @_limiter.limit('10 per minute; 60 per hour')
 def fans_ask():
     """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
-    global _fan_questions_today
+    global _fan_questions_total
     try:
         data = request.get_json() or {}
         question = (data.get('question') or data.get('command') or '').strip()
@@ -62,7 +62,7 @@ def fans_ask():
             return jsonify({'response': 'Ask me something about Archer!'})
         from archer import ask_archer
         with _fan_questions_lock:
-            _fan_questions_today += 1
+            _fan_questions_total += 1
         response = ask_archer(question)
         return jsonify({'response': response or "I'm not sure about that one."})
     except Exception:
@@ -81,6 +81,7 @@ def fans_react():
 
 
 @bp.route('/fans/stats')
+@_limiter.limit('60 per minute')
 def fans_stats():
     """Public endpoint returning fan engagement totals for Tier 1 FAN HEAT display."""
-    return jsonify({'reactions': _fan_reactions, 'questions_today': _fan_questions_today})
+    return jsonify({'reactions': _fan_reactions, 'questions_total': _fan_questions_total})
