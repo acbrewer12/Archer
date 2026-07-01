@@ -4,12 +4,18 @@ All routes here are public (no tier auth required).
 """
 import os
 import json
+import threading as _threading
 
 from flask import Blueprint, jsonify, Response, request
 
 from archer_state import _limiter, decode_auth_jwt
 
 bp = Blueprint('fans', __name__)
+
+_fan_reactions = 0
+_fan_reactions_lock = _threading.Lock()
+_fan_questions_today = 0
+_fan_questions_lock = _threading.Lock()
 
 
 @bp.route('/fans')
@@ -48,13 +54,33 @@ def register_page():
 @_limiter.limit('10 per minute; 60 per hour')
 def fans_ask():
     """Public read-only fan Q&A — no commands executed, no TTS, no auth required."""
+    global _fan_questions_today
     try:
         data = request.get_json() or {}
         question = (data.get('question') or data.get('command') or '').strip()
         if not question:
             return jsonify({'response': 'Ask me something about Archer!'})
         from archer import ask_archer
+        with _fan_questions_lock:
+            _fan_questions_today += 1
         response = ask_archer(question)
         return jsonify({'response': response or "I'm not sure about that one."})
     except Exception:
         return jsonify({'response': 'Give me a second.'})
+
+
+@bp.route('/fans/react', methods=['POST'])
+@_limiter.limit('20 per minute')
+def fans_react():
+    """Increment the global fan reaction counter. Returns updated total."""
+    global _fan_reactions
+    with _fan_reactions_lock:
+        _fan_reactions += 1
+        total = _fan_reactions
+    return jsonify({'reactions': total})
+
+
+@bp.route('/fans/stats')
+def fans_stats():
+    """Public endpoint returning fan engagement totals for Tier 1 FAN HEAT display."""
+    return jsonify({'reactions': _fan_reactions, 'questions_today': _fan_questions_today})
