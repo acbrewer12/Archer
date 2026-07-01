@@ -4,6 +4,7 @@ edge-tts
 SpeechRecognition
 requests
 pyserial
+firebase-admin>=6.0.0
 
 # ── Pi offline voice stack (install manually on Pi) ──────
 # pip install vosk sounddevice

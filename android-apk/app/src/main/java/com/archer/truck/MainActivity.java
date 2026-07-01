@@ -56,15 +56,29 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler,
                     android.net.http.SslError error) {
-                handler.proceed(); // allow self-signed certs for local Pi server
+                // Only bypass SSL for the Pi's own self-signed cert — never for other domains
+                android.net.Uri errUri = android.net.Uri.parse(error.getUrl());
+                android.net.Uri piUri  = android.net.Uri.parse(ARCHER_URL);
+                if (errUri.getHost() != null && errUri.getHost().equals(piUri.getHost())) {
+                    handler.proceed();
+                } else {
+                    handler.cancel();
+                }
             }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                request.grant(request.getResources()); // mic, camera, etc.
-            }
+                // Only grant permissions to the Pi server origin
+                android.net.Uri piUri = android.net.Uri.parse(ARCHER_URL);
+                String piOrigin = piUri.getScheme() + "://" + piUri.getHost()
+                    + (piUri.getPort() != -1 ? ":" + piUri.getPort() : "");
+                if (request.getOrigin().toString().startsWith(piOrigin)) {
+                    request.grant(request.getResources());
+                } else {
+                    request.deny();
+                }
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin,
                     GeolocationPermissions.Callback callback) {
