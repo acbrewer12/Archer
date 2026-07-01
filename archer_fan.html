@@ -69,7 +69,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:1
 /* ── BUILD BAR ── */
 .build-bar-wrap{padding:6px 14px 5px;flex-shrink:0;border-bottom:1px solid var(--border)}
 .build-bar-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.build-bar-lbl{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);text-transform:uppercase}
+.build-bar-lbl{font-size:8px;color:var(--amber-dim);letter-spacing:3px;font-family:var(--mono);text-transform:uppercase}
 .build-bar-pct{font-size:9px;font-weight:600;color:var(--amber);font-family:var(--mono)}
 .build-bar-track{background:var(--surface);border:1px solid var(--border);border-radius:2px;height:4px;overflow:hidden}
 .build-bar-fill{height:100%;background:var(--amber);width:0%;transition:width .6s ease}
@@ -80,7 +80,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:1
 
 /* ── DRAG FEED ── */
 .drag-feed{padding:6px 12px;flex-shrink:0;border-bottom:1px solid var(--border);display:none}
-.drag-feed-lbl{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);margin-bottom:5px;text-transform:uppercase}
+.drag-feed-lbl{font-size:8px;color:var(--amber-dim);letter-spacing:3px;font-family:var(--mono);margin-bottom:5px;text-transform:uppercase}
 .drag-feed-row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
 .drag-feed-row::-webkit-scrollbar{display:none}
 .drag-run-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 11px;flex-shrink:0;min-width:90px}
@@ -107,7 +107,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:1
 .msg.archer .msg-bubble{background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:2px}
 .msg.user   .msg-bubble{background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-right-radius:2px}
 .msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:2px;background:var(--surface);border:1px solid var(--border)}
-.msg.archer .msg-avatar{border-color:var(--amber-dim);animation:avatar-pulse 3s ease-in-out infinite}
+.msg.archer .msg-avatar{border-color:var(--amber-dim)}
+.msg.archer .msg-avatar.pulsing{animation:avatar-pulse 3s ease-in-out infinite}
 @keyframes avatar-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,178,0,.2)}50%{box-shadow:0 0 0 4px rgba(255,178,0,0)}}
 .msg-tag{font-size:8px;letter-spacing:2px;font-family:var(--mono);margin-bottom:3px;text-transform:uppercase}
 .msg.archer .msg-tag{color:var(--amber)}
@@ -566,7 +567,7 @@ function showTyping() {
   d.className = 'msg archer';
   d.id = 'typing-indicator';
   const avatarEl       = document.createElement('div');
-  avatarEl.className   = 'msg-avatar';
+  avatarEl.className   = 'msg-avatar pulsing';
   avatarEl.textContent = '🔴';
   const innerDiv = document.createElement('div');
   const tagEl    = document.createElement('div');
