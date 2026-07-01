@@ -79,6 +79,7 @@ public class MainActivity extends Activity {
                 } else {
                     request.deny();
                 }
+            }
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin,
                     GeolocationPermissions.Callback callback) {
