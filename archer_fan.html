@@ -377,18 +377,26 @@ function updateStatusCard(d, spd) {
 }
 
 // ── BUILD PROGRESS BAR ──
-const PHASE1_TARGET = 8;
 function updateBuildBar(d) {
   const parts     = d.build_parts || [];
   const installed = parts.filter(function(p){ return p.status === 'installed'; }).length;
   const pending   = parts.filter(function(p){ return p.status === 'pending'; }).length;
-  const pct       = Math.min(100, Math.round(installed / PHASE1_TARGET * 100));
+  const total     = parts.length;
+  // target = all known parts when any are logged; bare minimum of 1 to avoid div-by-zero
+  const target    = total > 0 ? total : 1;
+  const pct       = total === 0 ? 0 : Math.min(100, Math.round(installed / target * 100));
   const fillEl   = document.getElementById('build-fill');
   const pctEl    = document.getElementById('build-pct');
   const detEl    = document.getElementById('build-detail');
   if (fillEl) fillEl.style.width = pct + '%';
-  if (pctEl)  pctEl.textContent  = pct + '%';
-  if (detEl)  detEl.textContent  = installed + ' PARTS INSTALLED' + (pending > 0 ? ' • ' + pending + ' PENDING' : ' • PHASE 1 COMPLETE');
+  if (pctEl)  pctEl.textContent  = total === 0 ? '--' : pct + '%';
+  if (detEl) {
+    if (total === 0) {
+      detEl.textContent = 'NO PARTS LOGGED YET';
+    } else {
+      detEl.textContent = installed + '/' + total + ' PARTS INSTALLED' + (pending > 0 ? ' • ' + pending + ' PENDING' : ' • COMPLETE');
+    }
+  }
 }
 
 // ── DRAG RUNS FEED ──
