@@ -5,23 +5,24 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Archer Mirror</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;600&family=Oswald:wght@600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
 html{width:100%;height:100%;background:#000}
-body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+:root{--red:#cc0000;--amber:#ffaa00;--green:#00cc44;--label:#555;--text2:#777}
+body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:'IBM Plex Mono',monospace;user-select:none}
 
 /* ── LAYOUT ─────────────────────────────── */
-#app{display:grid;grid-template-rows:26px 1fr 28px 32px 18px 20px;height:272px;width:480px}
+#app{display:grid;grid-template-rows:26px 1fr 28px 32px 18px 20px;height:272px;width:480px;box-shadow:inset 0 0 20px rgba(0,0,0,0.7)}
 
 /* ── TOP BAR ────────────────────────────── */
 #topbar{display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#080808;border-bottom:1px solid #111}
-#tb-logo{font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:4px;color:#cc0000}
+#tb-logo{font-family:'Oswald',sans-serif;font-weight:700;font-size:14px;letter-spacing:4px;color:var(--red)}
 #tb-clock{display:flex;flex-direction:column;align-items:center;line-height:1}
-#tb-clock-time{font-family:'Share Tech Mono',monospace;font-size:13px;letter-spacing:3px;color:#888;font-weight:400}
-#tb-clock-date{font-family:'Share Tech Mono',monospace;font-size:7px;letter-spacing:1px;color:#444;margin-top:1px}
+#tb-clock-time{font-size:13px;letter-spacing:3px;color:#888;font-weight:400}
+#tb-clock-date{font-size:7px;letter-spacing:1px;color:#444;margin-top:1px}
 #tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:#555}
 #obd-dot{width:7px;height:7px;border-radius:50%;background:#333;transition:background 0.4s}
-#obd-dot.live{background:#00ff44;box-shadow:0 0 5px #00ff44}
+#obd-dot.live{background:var(--green);box-shadow:0 0 5px var(--green)}
 #obd-dot.sim{background:#ff6600;box-shadow:0 0 5px #ff6600}
 
 /* ── CENTER — SPEED ─────────────────────── */
@@ -36,7 +37,7 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
 .rstat{text-align:right}
 .rstat-val{font-family:'Bebas Neue',sans-serif;font-size:28px;line-height:1;transition:color 0.3s}
 .rstat-lbl{font-size:7px;letter-spacing:2px;color:#888}  /* WCAG AA: #888 on #000 = 5.9:1 */
-#rs-rpm .rstat-val{color:#ffaa00}
+#rs-rpm .rstat-val{color:var(--amber)}
 #rs-boost .rstat-val{color:#ff6600}
 
 /* ── RPM BAR ────────────────────────────── */
@@ -44,7 +45,7 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
 #rpm-track{background:#0d0d0d;height:10px;border-radius:2px;overflow:hidden;border:1px solid #111}
 #rpm-fill{height:100%;width:12%;background:linear-gradient(90deg,#00cc44,#ffaa00,#cc0000);border-radius:2px;transition:width 0.15s ease-out;will-change:width;transform:translateZ(0)}
 #rpm-labels{display:flex;justify-content:space-between;margin-top:2px;font-size:7px;color:#444;letter-spacing:0}
-#rpm-num-overlay{position:absolute;right:14px;top:-1px;font-size:9px;color:#ffaa00;letter-spacing:1px}
+#rpm-num-overlay{position:absolute;right:14px;top:-1px;font-size:9px;color:var(--amber);letter-spacing:1px}
 
 /* ── BOTTOM STATS ───────────────────────── */
 #bottombar{display:grid;grid-template-columns:repeat(5,1fr);align-items:center;padding:0 8px;border-top:1px solid #0d0d0d;background:#050505}
@@ -53,7 +54,7 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
 .bstat-lbl{font-size:6px;letter-spacing:1px;color:#555;margin-top:1px}
 #bs-boost .bstat-val{color:#ff6600}
 #bs-oil .bstat-val{color:#ffaa00}
-#bs-bat .bstat-val{color:#00cc44}
+#bs-bat .bstat-val{color:var(--green)}
 #bs-eth .bstat-val{color:#4488ff}
 #bs-mood .bstat-val{font-size:11px;color:#cc0000;letter-spacing:1px}
 
@@ -61,24 +62,24 @@ body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-fami
 #wx-strip{display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#060606;border-top:1px solid #0d0d0d;overflow:hidden}
 #wx-left{display:flex;align-items:center;gap:5px}
 #wx-icon{font-size:11px;line-height:1}
-#wx-temp{font-family:'Bebas Neue',sans-serif;font-size:13px;color:#aaa;letter-spacing:1px}
+#wx-temp{font-family:'IBM Plex Mono',monospace;font-size:13px;color:#aaa;letter-spacing:1px}
 #wx-feels{font-size:7px;color:#555;letter-spacing:1px}
 #wx-right{display:flex;align-items:center;gap:8px}
 #wx-humidity{font-size:7px;color:#4488ff;letter-spacing:1px}
 #wx-uv-wrap{display:flex;align-items:center;gap:3px}
 #wx-uv-lbl{font-size:6px;color:#555;letter-spacing:1px}
-#wx-uv{font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;transition:color 0.3s}
+#wx-uv{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:1px;transition:color 0.3s}
 
 /* ── ARCHER MESSAGE ─────────────────────── */
 #msg-bar{display:flex;align-items:center;gap:8px;padding:0 10px;background:#080808;border-top:1px solid #111;overflow:hidden}
-#msg-prefix{font-size:8px;letter-spacing:2px;color:#cc0000;flex-shrink:0}
+#msg-prefix{font-size:8px;letter-spacing:2px;color:var(--red);flex-shrink:0}
 #msg-text{font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 0.3s}
 #msg-text.fresh{color:#cc6600}
 
 /* ── WARNING FLASH ──────────────────────── */
-@keyframes warnflash{0%,100%{border-color:#cc0000}50%{border-color:transparent}}
+@keyframes warnflash{0%,100%{border-color:var(--red)}50%{border-color:transparent}}
 #app.warning{animation:warnflash 0.6s infinite}
-#app.warning{border:2px solid #cc0000}
+#app.warning{border:2px solid var(--red)}
 
 /* ── NIGHT MODE — dim + red shift for driving in the dark ── */
 body.night { filter: brightness(0.55) sepia(0.3) hue-rotate(330deg); }
@@ -97,7 +98,7 @@ body.red   { filter: brightness(0.45) sepia(0.8) hue-rotate(310deg) saturate(1.5
     </div>
     <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
     <button id="mirror-mode-btn" onclick="mirrorCycleMode()" title="Day/Night/Red mode"
-      style="background:none;border:none;color:#444;font-size:11px;cursor:pointer;padding:2px 4px;font-family:'Share Tech Mono',monospace">🌙</button>
+      style="background:none;border:none;color:#444;font-size:11px;cursor:pointer;padding:2px 4px;font-family:'IBM Plex Mono',monospace">🌙</button>
   </div>
 
   <!-- CENTER -->

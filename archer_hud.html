@@ -6,9 +6,9 @@
 <meta name="theme-color" content="#000000">
 <title>Archer HUD</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;600&family=Oswald:wght@600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Share Tech Mono',monospace;user-select:none}
+html,body{height:100%;overflow:hidden;background:#000;color:#fff;font-family:'IBM Plex Mono',monospace;user-select:none}
 :root{
   --red:#cc0000;
   --amber:#ffaa00;
@@ -16,7 +16,7 @@ html,body{height:100%;overflow:hidden;background:#000;color:#fff;font-family:'Sh
   --label:#555;   /* was #333 — improved from 1.6:1 to 2.9:1 */
   --text2:#777;   /* was #555 — improved from 2.9:1 to 4.5:1 */
 }
-body{display:flex;flex-direction:column}
+body{display:flex;flex-direction:column;box-shadow:inset 0 0 20px rgba(0,0,0,0.7)}
 
 /* TOP BAR */
 #topbar{
@@ -24,7 +24,7 @@ body{display:flex;flex-direction:column}
   padding:0 14px;height:42px;flex-shrink:0;
   background:#050505;border-bottom:1px solid #111
 }
-#tb-logo{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:5px;color:var(--red)}
+#tb-logo{font-family:'Oswald',sans-serif;font-weight:700;font-size:24px;letter-spacing:5px;color:var(--red)}
 #tb-clock{font-size:14px;letter-spacing:2px;color:#888}
 #tb-obd{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:1px;color:#777}
 #obd-dot{width:8px;height:8px;border-radius:50%;background:#222;transition:background 0.4s}
@@ -62,7 +62,7 @@ body{display:flex;flex-direction:column}
 #speed-num.amber{color:var(--amber);text-shadow:0 0 40px rgba(255,170,0,0.3)}
 #speed-num.hot{color:var(--red);text-shadow:0 0 60px rgba(204,0,0,0.5),0 0 120px rgba(204,0,0,0.2)}
 #speed-unit{font-size:10px;letter-spacing:5px;color:#777;margin-top:6px}
-#hud-gear-indicator{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:4px;color:#777;margin-top:4px;transition:color 0.3s}
+#hud-gear-indicator{font-family:'IBM Plex Mono',monospace;font-size:20px;letter-spacing:4px;color:#777;margin-top:4px;transition:color 0.3s}
 /* Side panels */
 .side-panel{position:absolute;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:2px}
 #panel-left{left:10px;text-align:center}
@@ -102,6 +102,10 @@ body{display:flex;flex-direction:column}
 .hstat:last-child{border-right:none}
 .hstat-val{font-family:'Bebas Neue',sans-serif;font-size:24px;line-height:1;transition:color 0.3s;will-change:color;transform:translateZ(0)}
 .hstat-lbl{font-size:7px;letter-spacing:1px;color:#777;margin-top:2px}
+
+/* NIGHT / RED MODE */
+body.night { filter: brightness(0.55) sepia(0.3) hue-rotate(330deg); }
+body.red   { filter: brightness(0.45) sepia(0.8) hue-rotate(310deg) saturate(1.5); }
 </style>
 </head>
 <body>
@@ -110,6 +114,8 @@ body{display:flex;flex-direction:column}
   <div id="tb-logo">ARCHER</div>
   <div id="tb-clock">--:--</div>
   <div id="tb-obd"><div id="obd-dot"></div><span id="obd-label">SIM</span></div>
+  <button id="hud-mode-btn" onclick="hudCycleMode()" title="Day/Night/Red mode"
+    style="background:none;border:none;color:#444;font-size:13px;cursor:pointer;padding:2px 4px;font-family:'IBM Plex Mono',monospace">🌙</button>
 </div>
 
 <div id="msg-strip">
@@ -168,10 +174,10 @@ body{display:flex;flex-direction:column}
 <div id="nav-strip" style="background:#050505;border-top:1px solid #0d0d0d;border-bottom:1px solid #0d0d0d;padding:5px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0">
   <div id="nav-arrow" style="font-size:22px;color:#666;flex-shrink:0;transition:color 0.3s">↑</div>
   <div style="flex:1;min-width:0">
-    <div id="nav-instruction" style="font-size:11px;color:#777;letter-spacing:1px;font-family:'Share Tech Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">No active route</div>
+    <div id="nav-instruction" style="font-size:11px;color:#777;letter-spacing:1px;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">No active route</div>
     <div id="nav-road" style="font-size:9px;color:#666;letter-spacing:1px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
   </div>
-  <div id="nav-dist" style="font-size:13px;color:#666;letter-spacing:1px;font-family:'Bebas Neue',sans-serif;flex-shrink:0"></div>
+  <div id="nav-dist" style="font-size:13px;color:#666;letter-spacing:1px;font-family:'IBM Plex Mono',monospace;flex-shrink:0"></div>
 </div>
 
 <div id="statsrow">
@@ -367,6 +373,34 @@ async function poll() {
 
 poll();
 setInterval(poll, 800);
+
+// ── HUD DAY/NIGHT/RED MODE ────────────────────────────────────────
+(function() {
+  const CYCLE = {day: 'night', night: 'red', red: 'day'};
+  const ICONS  = {day: '🌙', night: '🔴', red: '☀️'};
+  function _autoMode() {
+    const h = new Date().getHours();
+    if (h >= 7 && h < 17) return 'day';
+    if (h >= 17 && h < 21) return 'night';
+    return 'red';
+  }
+  function _applyMode(m) {
+    document.body.classList.remove('night', 'red');
+    if (m !== 'day') document.body.classList.add(m);
+    const btn = document.getElementById('hud-mode-btn');
+    if (btn) btn.textContent = ICONS[m] || '🌙';
+  }
+  let _mode = localStorage.getItem('hud_mode') || 'auto';
+  _applyMode(_mode === 'auto' ? _autoMode() : _mode);
+  setInterval(() => { if (_mode === 'auto') _applyMode(_autoMode()); }, 60000);
+  window.hudCycleMode = function() {
+    const cur = document.body.classList.contains('red') ? 'red'
+              : document.body.classList.contains('night') ? 'night' : 'day';
+    _mode = CYCLE[cur];
+    localStorage.setItem('hud_mode', _mode);
+    _applyMode(_mode);
+  };
+})();
 </script>
 </body>
 </html>
