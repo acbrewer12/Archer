@@ -15,18 +15,22 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .hdr-left{display:flex;flex-direction:column}
 .hdr-title{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:6px;color:#cc0000;line-height:1}
 .hdr-sub{font-size:8px;color:#552222;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-top:1px}
-.hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.live-badge{background:#cc0000;border-radius:4px;padding:2px 7px;font-size:8px;font-family:'Share Tech Mono',monospace;letter-spacing:2px;color:#fff;display:none;animation:live-pulse 1.5s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+.react-chip{background:#1a0000;border:1px solid #440010;border-radius:20px;padding:3px 10px;font-size:10px;color:#cc6633;font-family:'Share Tech Mono',monospace;letter-spacing:1px;display:none}
 .sign-in-btn{background:#1a0000;border:1px solid #550000;border-radius:20px;padding:5px 12px;font-size:9px;color:#ff6644;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;transition:all 0.15s;white-space:nowrap;line-height:1.4}
 .sign-in-btn:active{background:#2a0000;border-color:#cc0000}
 .user-chip{display:flex;align-items:center;gap:6px}
 .user-name{font-size:10px;color:#ff8866;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 .dash-btn{background:#1a0000;border:1px solid #440000;border-radius:20px;padding:5px 12px;font-size:10px;color:#ffaa88;font-family:'Share Tech Mono',monospace;letter-spacing:1px;cursor:pointer;text-decoration:none;white-space:nowrap}
 
-.stats-bar{background:#0d0005;border-bottom:1px solid #1a0008;padding:6px 16px;display:flex;gap:16px;overflow-x:auto;scrollbar-width:none;flex-shrink:0}
+.stats-bar{background:#0d0005;border-bottom:1px solid #1a0008;padding:6px 16px;display:flex;gap:16px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;align-items:center}
 .stats-bar::-webkit-scrollbar{display:none}
 .stat-chip{display:flex;flex-direction:column;align-items:center;flex-shrink:0;min-width:48px}
 .stat-val{font-size:13px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
 .stat-lbl{font-size:8px;color:#552222;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.stale-badge{display:none;font-size:8px;color:#cc7700;font-family:'Share Tech Mono',monospace;letter-spacing:1px;white-space:nowrap;border:1px solid #442200;border-radius:10px;padding:2px 8px;margin-left:auto;flex-shrink:0}
 
 .info-strip-wrap{position:relative;flex-shrink:0;border-bottom:1px solid #1a0008}
 .info-strip-wrap::after{content:'';position:absolute;right:0;top:0;bottom:0;width:32px;background:linear-gradient(to right,transparent,#080002);pointer-events:none}
@@ -37,9 +41,28 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .info-label{font-size:8px;color:#884444;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px}
 .info-val{font-size:12px;font-weight:700;color:#ff8866;line-height:1.3}
 
+.build-bar-wrap{padding:5px 14px 4px;flex-shrink:0;border-bottom:1px solid #1a0008}
+.build-bar-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.build-bar-lbl{font-size:8px;color:#554433;letter-spacing:2px;font-family:'Share Tech Mono',monospace}
+.build-bar-pct{font-size:9px;color:#ff5522;font-family:'Share Tech Mono',monospace;font-weight:700}
+.build-bar-track{background:#0d0005;border:1px solid #1a0008;border-radius:3px;height:5px;overflow:hidden}
+.build-bar-fill{height:100%;background:linear-gradient(to right,#cc0000,#ff6633);width:0%;transition:width 0.6s ease}
+.build-bar-detail{font-size:8px;color:#442222;font-family:'Share Tech Mono',monospace;margin-top:3px}
+
+.status-card{padding:4px 14px;flex-shrink:0;font-size:10px;color:#554433;font-family:'Share Tech Mono',monospace;letter-spacing:1px;border-bottom:1px solid #100006}
+
+.drag-feed{padding:6px 12px;flex-shrink:0;border-bottom:1px solid #1a0008;display:none}
+.drag-feed-lbl{font-size:8px;color:#664433;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:5px}
+.drag-feed-row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.drag-feed-row::-webkit-scrollbar{display:none}
+.drag-run-card{background:#0d0005;border:1px solid #2a0010;border-radius:8px;padding:7px 11px;flex-shrink:0;min-width:90px}
+.drc-et{font-size:17px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
+.drc-mph{font-size:9px;color:#884444;font-family:'Share Tech Mono',monospace;margin-top:2px}
+.drc-date{font-size:8px;color:#442222;font-family:'Share Tech Mono',monospace;margin-top:2px}
+
 .chat-area{flex:1;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px;position:relative}
 .live-hint{display:flex;flex-direction:column;gap:6px;padding:8px 12px;flex-shrink:0;border-top:1px solid #1e0008;background:linear-gradient(to bottom,#0a0002,#080002)}
-.live-hint-label{font-size:8px;color:#664422;letter-spacing:3px;font-family:'Share Tech Mono',monospace;padding-left:0;border-top:1px solid #2a0010;padding-top:8px}
+.live-hint-label{font-size:8px;color:#664422;letter-spacing:3px;font-family:'Share Tech Mono',monospace;border-top:1px solid #2a0010;padding-top:8px}
 .live-hint-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
 .live-hint-card{background:#0d0005;border:1px solid #1e0008;border-radius:8px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:3px}
 .lhc-val{font-size:15px;font-weight:700;color:#ff4422;font-family:'Share Tech Mono',monospace;line-height:1}
@@ -59,10 +82,15 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 .msg.user .msg-avatar{background:#1a0008;border:1px solid #440020;font-size:11px}
 .msg-tag{font-size:8px;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:2px;color:#660022}
 .msg.user .msg-tag{text-align:right;color:#885544}
+.msg-actions{display:flex;gap:5px;margin-top:4px}
+.msg-react-btn,.msg-share-btn{background:none;border:1px solid #2a0010;border-radius:14px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all 0.15s}
+.msg-react-btn{color:#884444}
+.msg-react-btn.fired{border-color:#cc0000;color:#ff6633;background:#1a0005}
+.msg-share-btn{color:#664444}
+.msg-share-btn:active{border-color:#555;color:#aaa}
 
 .build-divider{display:flex;align-items:center;gap:10px;padding:12px 0;flex-shrink:0}
 .build-divider-line{flex:1;height:1px;background:#1a0008}
-.build-divider-text{font-size:9px;color:#554433;letter-spacing:2px;font-family:'Share Tech Mono',monospace;white-space:nowrap}
 .build-divider-badge{background:#0d0005;border:1px solid #2a0010;border-radius:12px;padding:4px 12px;font-size:9px;color:#ff6633;font-family:'Share Tech Mono',monospace;letter-spacing:1px}
 
 .typing-bubble{padding:9px 13px;background:#0d0005;border:1px solid #2a0010;border-radius:14px;border-bottom-left-radius:4px;display:inline-flex;gap:4px;align-items:center}
@@ -72,14 +100,17 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
 @keyframes blink{0%,80%,100%{opacity:0.2}40%{opacity:1}}
 
 .suggestions{padding:0 12px 6px;flex-shrink:0}
-.sug-label{font-size:8px;color:#331010;letter-spacing:3px;font-family:'Share Tech Mono',monospace;margin-bottom:5px}
-.sug-chips{display:flex;flex-wrap:wrap;gap:5px}
+.sug-toggle{font-size:8px;color:#553322;letter-spacing:3px;font-family:'Share Tech Mono',monospace;cursor:pointer;padding:4px 0;user-select:none;display:inline-flex;align-items:center;gap:4px}
+.sug-toggle:active{color:#cc6633}
+.sug-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
 .sug-chip{background:#0d0005;border:1px solid #2a0010;border-radius:20px;padding:5px 11px;font-size:10px;color:#cc6644;cursor:pointer;font-family:'Share Tech Mono',monospace;letter-spacing:0.5px;transition:all 0.15s;white-space:nowrap}
 .sug-chip:active{background:#200008;border-color:#cc0000;color:#ff8866}
 
 .input-bar{background:#0d0005;border-top:1px solid #2a0010;padding:8px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
 #fan-input{flex:1;background:#150008;border:1px solid #330010;border-radius:22px;padding:9px 15px;color:#fff;font-family:'Quicksand',sans-serif;font-size:13px;outline:none;-webkit-appearance:none;min-width:0}
 #fan-input::placeholder{color:#774433}
+.fan-mute-btn{width:34px;height:34px;border-radius:50%;background:#150008;border:1px solid #330020;color:#664444;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
+.fan-mute-btn.muted{color:#cc4422;border-color:#550020}
 .fan-mic-btn{width:38px;height:38px;border-radius:50%;background:#150008;border:2px solid #440020;color:#cc4444;font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s}
 .fan-mic-btn.active{background:rgba(204,0,0,0.2);border-color:#cc0000;color:#ff4422}
 .fan-send-btn{width:38px;height:38px;border-radius:50%;background:#cc0000;border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s}
@@ -99,7 +130,9 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
     <div class="hdr-sub">2006 GMC SIERRA 2500HD</div>
   </div>
   <div class="hdr-right" id="hdr-right">
-    <!-- filled by JS -->
+    <span class="live-badge" id="live-badge">&#9679; LIVE</span>
+    <span class="react-chip" id="react-chip">&#128293; <span id="react-count">0</span></span>
+    <!-- user/signin appended by JS -->
   </div>
 </div>
 
@@ -110,41 +143,58 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
   <div class="stat-chip"><div class="stat-val" id="f-mode">--</div><div class="stat-lbl">MODE</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-oil">--</div><div class="stat-lbl">OIL &deg;F</div></div>
   <div class="stat-chip"><div class="stat-val" id="f-bat">--</div><div class="stat-lbl">VOLTS</div></div>
+  <span class="stale-badge" id="stale-badge"></span>
 </div>
 
 <div class="info-strip-wrap"><div class="info-strip">
   <div class="info-card">
-    <div class="info-icon">🚚</div>
+    <div class="info-icon">&#128666;</div>
     <div class="info-label">YEAR / MODEL</div>
     <div class="info-val">2006 GMC Sierra 2500HD</div>
   </div>
   <div class="info-card">
-    <div class="info-icon">⚙️</div>
+    <div class="info-icon">&#9881;&#65039;</div>
     <div class="info-label">ENGINE</div>
     <div class="info-val" id="f-engine">6.0L LQ4 V8</div>
   </div>
   <div class="info-card">
-    <div class="info-icon">⛽</div>
+    <div class="info-icon">&#9981;</div>
     <div class="info-label">FUEL</div>
-    <div class="info-val">E85 Flex Fuel</div>
+    <div class="info-val" id="f-fuel">Regular 87</div>
   </div>
   <div class="info-card">
-    <div class="info-icon">🔧</div>
+    <div class="info-icon">&#128295;</div>
     <div class="info-label">BUILD STATUS</div>
     <div class="info-val" id="f-phase">Phase 1 &mdash; In Progress</div>
   </div>
   <div class="info-card">
-    <div class="info-icon">📍</div>
+    <div class="info-icon">&#128205;</div>
     <div class="info-label">HOME BASE</div>
     <div class="info-val">Salem, Missouri</div>
   </div>
 </div></div>
 
+<div class="build-bar-wrap">
+  <div class="build-bar-hdr">
+    <span class="build-bar-lbl">PHASE 1 BUILD PROGRESS</span>
+    <span class="build-bar-pct" id="build-pct">0%</span>
+  </div>
+  <div class="build-bar-track"><div class="build-bar-fill" id="build-fill"></div></div>
+  <div class="build-bar-detail" id="build-detail">&nbsp;</div>
+</div>
+
+<div class="status-card" id="status-card">&nbsp;</div>
+
+<div class="drag-feed" id="drag-feed">
+  <div class="drag-feed-lbl">RECENT DRAG RUNS</div>
+  <div class="drag-feed-row" id="drag-feed-row"></div>
+</div>
+
 <div class="suggestions" id="suggestions">
-  <div class="sug-label">ASK ME</div>
-  <div class="sug-chips">
-    <div class="sug-chip" onclick="askQuestion('What engine does Archer have?')">Engine?</div>
-    <div class="sug-chip" onclick="askQuestion('What fuel does Archer run?')">Fuel?</div>
+  <div class="sug-toggle" id="sug-toggle" onclick="toggleSugs()">ASK ME <span id="sug-arrow">&#9660;</span></div>
+  <div class="sug-chips" id="sug-chips">
+    <div class="sug-chip dynamic" onclick="askQuestion('What fuel does Archer run?')">Fuel?</div>
+    <div class="sug-chip dynamic" onclick="askQuestion('What is your best quarter mile time?')">Best ET?</div>
     <div class="sug-chip" onclick="askQuestion('What mods does Archer have?')">Mods?</div>
     <div class="sug-chip" onclick="askQuestion('What is the build plan?')">Build plan?</div>
     <div class="sug-chip" onclick="askQuestion('How fast is Archer?')">How fast?</div>
@@ -159,19 +209,19 @@ body{background:#080002;color:#fff;font-family:'Quicksand',sans-serif;min-height
   <div class="live-hint-grid">
     <div class="live-hint-card"><div class="lhc-val" id="lh-speed">--</div><div class="lhc-lbl">MPH</div></div>
     <div class="live-hint-card"><div class="lhc-val" id="lh-rpm">--</div><div class="lhc-lbl">RPM</div></div>
-    <div class="live-hint-card"><div class="lhc-val" id="lh-oil">--</div><div class="lhc-lbl">OIL °F</div></div>
+    <div class="live-hint-card"><div class="lhc-val" id="lh-oil">--</div><div class="lhc-lbl">OIL &deg;F</div></div>
     <div class="live-hint-card"><div class="lhc-val" id="lh-bat">--</div><div class="lhc-lbl">VOLTS</div></div>
   </div>
 </div>
 
-<!-- History bar — shown only for signed-in users -->
 <div class="history-bar" id="history-bar" style="display:none">
   <span class="history-label" id="history-label">CHAT SAVED</span>
   <button class="clear-btn" onclick="clearHistory()">CLEAR</button>
 </div>
 
 <div class="input-bar">
-  <button class="fan-mic-btn" id="fan-mic" onclick="toggleFanMic()">🎤</button>
+  <button class="fan-mute-btn" id="fan-mute" onclick="toggleMute()" title="Toggle TTS">&#128266;</button>
+  <button class="fan-mic-btn" id="fan-mic" onclick="toggleFanMic()">&#127908;</button>
   <input id="fan-input" type="text" placeholder="Ask about the truck..." onkeydown="if(event.key==='Enter')sendFanQuestion()">
   <button class="fan-send-btn" onclick="sendFanQuestion()">&#8593;</button>
 </div>
@@ -185,69 +235,274 @@ const MAX_SAVED = 60;
 let micActive = false;
 const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
 let sr = null;
+let muted = false;
+let lastPollOk = null;
+let sugsExpanded = true;
+let staleTimer = null;
 
 // ── HEADER AUTH UI ──
 (function renderHeader() {
   const el = document.getElementById('hdr-right');
+  const userEl = document.createElement('div');
+  userEl.style.display = 'contents';
   if (USER) {
-    el.innerHTML =
-      '<div class="user-chip">' +
-        '<span class="user-name">&#128100; ' + esc(USER.name.toUpperCase()) + '</span>' +
-        '<a class="dash-btn" href="/">&#8592; DASHBOARD</a>' +
-      '</div>';
-    // Show history bar
+    const chip = document.createElement('div');
+    chip.className = 'user-chip';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'user-name';
+    nameSpan.textContent = '\u{1F464} ' + USER.name.toUpperCase();
+    const dashLink = document.createElement('a');
+    dashLink.className = 'dash-btn';
+    dashLink.href = '/';
+    dashLink.textContent = '← DASHBOARD';
+    chip.appendChild(nameSpan);
+    chip.appendChild(dashLink);
+    el.appendChild(chip);
     const hb = document.getElementById('history-bar');
     if (hb) hb.style.display = 'flex';
     const hl = document.getElementById('history-label');
     if (hl) hl.textContent = 'CHAT SAVED • ' + USER.name.toUpperCase();
   } else {
-    el.innerHTML = '<a class="sign-in-btn" href="/register">SIGN IN<br>TO SAVE CHAT</a>';
+    const link = document.createElement('a');
+    link.className = 'sign-in-btn';
+    link.href = '/register';
+    link.innerHTML = 'SIGN IN<br>TO SAVE CHAT';
+    el.appendChild(link);
   }
 })();
+
+// ── MUTE ──
+(function initMute() {
+  try { muted = localStorage.getItem('archer_fan_muted') === '1'; } catch(e) {}
+  const btn = document.getElementById('fan-mute');
+  if (btn) { btn.textContent = muted ? '🔇' : '🔊'; btn.classList.toggle('muted', muted); }
+})();
+
+function toggleMute() {
+  muted = !muted;
+  try { localStorage.setItem('archer_fan_muted', muted ? '1' : '0'); } catch(e) {}
+  const btn = document.getElementById('fan-mute');
+  if (btn) { btn.textContent = muted ? '🔇' : '🔊'; btn.classList.toggle('muted', muted); }
+  if (muted && window.speechSynthesis) speechSynthesis.cancel();
+}
+
+// ── SUGGESTIONS TOGGLE ──
+function toggleSugs() {
+  sugsExpanded = !sugsExpanded;
+  const chips = document.getElementById('sug-chips');
+  const arrow = document.getElementById('sug-arrow');
+  if (chips) chips.style.display = sugsExpanded ? 'flex' : 'none';
+  if (arrow) arrow.textContent = sugsExpanded ? '▼' : '▸';
+}
 
 // ── LIVE STATS ──
 async function pollStats() {
   try {
     const r = await fetch(BASE + '/display_data');
     const d = await r.json();
+    lastPollOk = Date.now();
+    clearStale();
+
+    const spd = Math.round(d.speed || 0);
     const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.textContent = v; };
-    set('f-speed', Math.round(d.speed || 0));
+    set('f-speed', spd);
     set('f-rpm', d.rpm || 750);
     set('f-boost', (d.boost || 0) + ' PSI');
-    set('f-mode', (d.drive_mode || 'SPORT').toUpperCase().slice(0,5));
+    set('f-mode', (d.drive_mode || 'SPORT').toUpperCase().slice(0, 5));
     set('f-oil', d.oil_temp || '--');
     set('f-bat', d.battery ? d.battery.toFixed(1) + 'V' : '--');
-    set('lh-speed', Math.round(d.speed || 0));
+    set('lh-speed', spd);
     set('lh-rpm', d.rpm || 750);
     set('lh-oil', d.oil_temp || '--');
     set('lh-bat', d.battery ? d.battery.toFixed(1) : '--');
-    const sc = d.supercharged || false;
-    const ph = d.build_phase || 1;
-    const eng = document.getElementById('f-engine');
-    const phEl = document.getElementById('f-phase');
-    if (eng) eng.textContent = sc ? 'LSA 6.2L Supercharged V8' : '6.0L LQ4 V8';
-    if (phEl) phEl.textContent = 'Phase ' + ph + (ph >= 2 ? ' — Supercharged' : ' — In Progress');
-  } catch(e) {}
+
+    const caps = d.build_caps || {};
+    const sc  = caps.supercharged || false;
+    const eth = caps.ethanol_sensor || false;
+    const ph  = d.build_phase || 1;
+    const engEl  = document.getElementById('f-engine');
+    const phEl   = document.getElementById('f-phase');
+    const fuelEl = document.getElementById('f-fuel');
+    if (engEl)  engEl.textContent  = sc ? 'LSA 6.2L Supercharged V8' : '6.0L LQ4 V8';
+    if (phEl)   phEl.textContent   = 'Phase ' + ph + (ph >= 2 ? ' — Supercharged' : ' — In Progress');
+    if (fuelEl) fuelEl.textContent = eth ? 'E85 Flex Fuel' : 'Regular 87 (E85 Pending)';
+
+    // LIVE badge
+    const liveBadge = document.getElementById('live-badge');
+    if (liveBadge) liveBadge.style.display = spd > 5 ? 'inline-block' : 'none';
+
+    updateStatusCard(d, spd);
+    updateBuildBar(d);
+    updateDragFeed(d);
+    updateContextChips(d, spd);
+  } catch(e) {
+    showStale();
+  }
 }
 pollStats();
 setInterval(pollStats, 6000);
 
+// ── STALE INDICATOR ──
+function clearStale() {
+  const el = document.getElementById('stale-badge');
+  if (el) el.style.display = 'none';
+  if (staleTimer) { clearInterval(staleTimer); staleTimer = null; }
+}
+
+function showStale() {
+  if (!lastPollOk) return;
+  const el = document.getElementById('stale-badge');
+  if (!el) return;
+  function tick() {
+    const secs = Math.round((Date.now() - lastPollOk) / 1000);
+    el.textContent = 'LAST SEEN ' + secs + 's AGO';
+    el.style.display = 'inline-block';
+  }
+  tick();
+  if (!staleTimer) staleTimer = setInterval(tick, 1000);
+}
+
+// ── STATUS CARD ──
+function updateStatusCard(d, spd) {
+  const el = document.getElementById('status-card');
+  if (!el) return;
+  const rpm  = d.rpm || 750;
+  const mode = (d.drive_mode || 'comfort').toUpperCase();
+  const loc  = d.gps_name || '';
+  let text;
+  if (spd > 5)   text = '⚡ CRUISING AT ' + spd + ' MPH' + (loc ? ' — ' + loc.toUpperCase() : '');
+  else if (rpm > 900) text = '🔧 IDLING — ' + rpm + ' RPM';
+  else           text = '💤 ENGINE OFF / PARKED';
+  el.textContent = text;
+}
+
+// ── BUILD PROGRESS BAR ──
+const PHASE1_TARGET = 8;
+function updateBuildBar(d) {
+  const parts     = d.build_parts || [];
+  const installed = parts.filter(function(p){ return p.status === 'installed'; }).length;
+  const pending   = parts.filter(function(p){ return p.status === 'pending'; }).length;
+  const pct       = Math.min(100, Math.round(installed / PHASE1_TARGET * 100));
+  const fillEl   = document.getElementById('build-fill');
+  const pctEl    = document.getElementById('build-pct');
+  const detEl    = document.getElementById('build-detail');
+  if (fillEl) fillEl.style.width = pct + '%';
+  if (pctEl)  pctEl.textContent  = pct + '%';
+  if (detEl)  detEl.textContent  = installed + ' PARTS INSTALLED' + (pending > 0 ? ' • ' + pending + ' PENDING' : ' • PHASE 1 COMPLETE');
+}
+
+// ── DRAG RUNS FEED ──
+function updateDragFeed(d) {
+  const runs   = d.drag_recent_runs || [];
+  const feedEl = document.getElementById('drag-feed');
+  const rowEl  = document.getElementById('drag-feed-row');
+  if (!feedEl || !rowEl) return;
+  if (!runs.length) { feedEl.style.display = 'none'; return; }
+  feedEl.style.display = 'block';
+  rowEl.innerHTML = '';
+  runs.slice().reverse().forEach(function(r) {
+    const card = document.createElement('div');
+    card.className = 'drag-run-card';
+    const etEl = document.createElement('div'); etEl.className = 'drc-et'; etEl.textContent = (r.et || '--') + 's';
+    const mphEl = document.createElement('div'); mphEl.className = 'drc-mph'; mphEl.textContent = '@ ' + (r.mph || '--') + ' MPH';
+    const dateEl = document.createElement('div'); dateEl.className = 'drc-date'; dateEl.textContent = r.date || '';
+    card.appendChild(etEl); card.appendChild(mphEl); card.appendChild(dateEl);
+    rowEl.appendChild(card);
+  });
+}
+
+// ── CONTEXT-AWARE CHIPS ──
+function updateContextChips(d, spd) {
+  const dynChips = document.querySelectorAll('.sug-chip.dynamic');
+  if (!dynChips.length) return;
+  const oil  = d.oil_temp || 0;
+  const h    = new Date().getHours();
+  const runs = d.drag_recent_runs || [];
+
+  let c0text = 'Fuel?', c0q = 'What fuel does Archer run?';
+  if (spd > 5)       { c0text = spd + ' MPH — where?'; c0q = "You're doing " + spd + " MPH right now — where are you headed?"; }
+  else if (oil > 210){ c0text = 'Oil temp high?'; c0q = 'Is that oil temperature normal or is something wrong?'; }
+  else if (h >= 22 || h < 5){ c0text = 'Night drive?'; c0q = 'Why are you out driving so late?'; }
+  dynChips[0].textContent = c0text;
+  dynChips[0].onclick = function(){ askQuestion(c0q); };
+
+  if (dynChips[1]) {
+    let c1text = 'Best ET?', c1q = "What's your best quarter mile time?";
+    if (runs.length) {
+      const r = runs[runs.length - 1];
+      c1text = 'Last: ' + r.et + 's?';
+      c1q    = 'Tell me about that drag run — ' + r.et + 's at ' + r.mph + ' MPH.';
+    }
+    dynChips[1].textContent = c1text;
+    dynChips[1].onclick = function(){ askQuestion(c1q); };
+  }
+}
+
+// ── REACTION COUNTER ──
+async function loadReactions() {
+  try {
+    const r = await fetch(BASE + '/fans/stats');
+    const d = await r.json();
+    updateReactChip(d.reactions || 0);
+  } catch(e) {}
+}
+loadReactions();
+
+function updateReactChip(count) {
+  const chip = document.getElementById('react-chip');
+  const cnt  = document.getElementById('react-count');
+  if (cnt)  cnt.textContent = count;
+  if (chip) chip.style.display = count > 0 ? 'inline-flex' : 'none';
+}
+
 // ── CHAT HELPERS ──
 const chatEl = document.getElementById('chat');
-let chatHistory = []; // {role, text} objects
-
-function esc(t) {
-  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+let chatHistory = [];
 
 function renderMsg(role, text, appendToDOM) {
   const isArcher = role === 'archer';
-  const div = document.createElement('div');
-  div.className = 'msg ' + role;
-  div.innerHTML =
-    '<div class="msg-avatar">' + (isArcher ? '🔴' : '💬') + '</div>' +
-    '<div><div class="msg-tag">' + (isArcher ? 'ARCHER' : (USER ? esc(USER.name.toUpperCase()) : 'YOU')) + '</div>' +
-    '<div class="msg-bubble">' + esc(text) + '</div></div>';
+  const div      = document.createElement('div');
+  div.className  = 'msg ' + role;
+
+  const avatarEl = document.createElement('div');
+  avatarEl.className   = 'msg-avatar';
+  avatarEl.textContent = isArcher ? '🔴' : '💬';
+
+  const innerDiv = document.createElement('div');
+  const tagEl    = document.createElement('div');
+  tagEl.className   = 'msg-tag';
+  tagEl.textContent = isArcher ? 'ARCHER' : (USER ? USER.name.toUpperCase() : 'YOU');
+
+  const bubbleEl = document.createElement('div');
+  bubbleEl.className   = 'msg-bubble';
+  bubbleEl.textContent = text;
+
+  innerDiv.appendChild(tagEl);
+  innerDiv.appendChild(bubbleEl);
+
+  if (isArcher && appendToDOM !== false) {
+    const actionsEl   = document.createElement('div');
+    actionsEl.className = 'msg-actions';
+
+    const reactBtn = document.createElement('button');
+    reactBtn.className   = 'msg-react-btn';
+    reactBtn.textContent = '🔥';
+    reactBtn.onclick = function(){ reactToMsg(reactBtn); };
+
+    const shareBtn = document.createElement('button');
+    shareBtn.className   = 'msg-share-btn';
+    shareBtn.textContent = '↗';
+    shareBtn.dataset.text = text;
+    shareBtn.onclick = function(){ shareMsg(shareBtn); };
+
+    actionsEl.appendChild(reactBtn);
+    actionsEl.appendChild(shareBtn);
+    innerDiv.appendChild(actionsEl);
+  }
+
+  div.appendChild(avatarEl);
+  div.appendChild(innerDiv);
+
   if (appendToDOM !== false) {
     chatEl.appendChild(div);
     chatEl.scrollTop = chatEl.scrollHeight;
@@ -257,7 +512,7 @@ function renderMsg(role, text, appendToDOM) {
 
 function addMsg(role, text) {
   renderMsg(role, text);
-  chatHistory.push({role, text});
+  chatHistory.push({role: role, text: text});
   saveHistory();
 }
 
@@ -265,10 +520,20 @@ function showTyping() {
   const d = document.createElement('div');
   d.className = 'msg archer';
   d.id = 'typing-indicator';
-  d.innerHTML =
-    '<div class="msg-avatar">🔴</div>' +
-    '<div><div class="msg-tag">ARCHER</div>' +
-    '<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>';
+  const avatarEl = document.createElement('div');
+  avatarEl.className   = 'msg-avatar';
+  avatarEl.textContent = '🔴';
+  const innerDiv = document.createElement('div');
+  const tagEl    = document.createElement('div');
+  tagEl.className   = 'msg-tag';
+  tagEl.textContent = 'ARCHER';
+  const bubble = document.createElement('div');
+  bubble.className = 'typing-bubble';
+  bubble.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+  innerDiv.appendChild(tagEl);
+  innerDiv.appendChild(bubble);
+  d.appendChild(avatarEl);
+  d.appendChild(innerDiv);
   chatEl.appendChild(d);
   chatEl.scrollTop = chatEl.scrollHeight;
 }
@@ -278,13 +543,39 @@ function removeTyping() {
   if (d) d.remove();
 }
 
+// ── REACTION + SHARE ──
+async function reactToMsg(btn) {
+  if (btn.classList.contains('fired')) return;
+  btn.classList.add('fired');
+  try {
+    const r = await fetch(BASE + '/fans/react', {method: 'POST'});
+    const d = await r.json();
+    updateReactChip(d.reactions);
+  } catch(e) {}
+}
+
+function shareMsg(btn) {
+  const text = btn.dataset.text || '';
+  const url  = window.location.origin + '/fans';
+  if (navigator.share) {
+    navigator.share({
+      title: 'Archer — 2006 GMC Sierra 2500HD',
+      text: '🔴 ARCHER says: "' + text.slice(0, 120) + (text.length > 120 ? '…' : '') + '"',
+      url: url
+    }).catch(function(){});
+  } else {
+    try {
+      navigator.clipboard.writeText(url);
+      btn.textContent = '✓';
+      setTimeout(function(){ btn.textContent = '↗'; }, 2000);
+    } catch(e) {}
+  }
+}
+
 // ── LOCAL STORAGE CHAT ──
 function saveHistory() {
   if (!STORAGE_KEY) return;
-  try {
-    const toSave = chatHistory.slice(-MAX_SAVED);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-  } catch(e) {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory.slice(-MAX_SAVED))); } catch(e) {}
 }
 
 function loadHistory() {
@@ -295,10 +586,13 @@ function loadHistory() {
     const saved = JSON.parse(raw);
     if (!saved || !saved.length) return false;
     chatHistory = saved;
-    saved.forEach(m => renderMsg(m.role, m.text));
+    saved.forEach(function(m){ renderMsg(m.role, m.text); });
     chatEl.scrollTop = chatEl.scrollHeight;
-    const sugs = document.getElementById('suggestions');
-    if (sugs) sugs.style.display = 'none';
+    const chips = document.getElementById('sug-chips');
+    const arrow = document.getElementById('sug-arrow');
+    if (chips) chips.style.display = 'none';
+    if (arrow) arrow.textContent = '▸';
+    sugsExpanded = false;
     return true;
   } catch(e) { return false; }
 }
@@ -309,39 +603,44 @@ function clearHistory() {
   chatHistory = [];
   chatEl.innerHTML = '';
   addWelcome();
-  document.getElementById('suggestions').style.display = 'flex';
+  const chips = document.getElementById('sug-chips');
+  const arrow = document.getElementById('sug-arrow');
+  if (chips) chips.style.display = 'flex';
+  if (arrow) arrow.textContent = '▼';
+  sugsExpanded = true;
 }
 
 function addWelcome() {
   const greeting = USER
     ? 'Hey ' + USER.name + ', welcome back. Chat is saved on this device. Ask me anything about the truck.'
-    : 'Hey, welcome to the fan page. I\'m Archer — a 2006 GMC Sierra 2500HD being built into something serious. Ask me anything about the truck, the build, or what I\'m running right now.';
+    : "Hey, welcome to the fan page. I'm Archer — a 2006 GMC Sierra 2500HD being built into something serious. Ask me anything about the truck, the build, or what I'm running right now.";
   renderMsg('archer', greeting);
-  // Build phase divider
-  fetch(BASE + '/display_data').then(r => r.json()).then(d => {
-    const phase = d.build_phase || 1;
-    const sc = d.supercharged;
+  fetch(BASE + '/display_data').then(function(r){ return r.json(); }).then(function(d) {
+    const sc = (d.build_caps || {}).supercharged;
+    const ph = d.build_phase || 1;
     const phaseLabel = sc ? 'PHASE 2 — SUPERCHARGED' : 'PHASE 1 — BUILDING';
     const divEl = document.createElement('div');
     divEl.className = 'build-divider';
     divEl.id = 'build-divider';
-    divEl.innerHTML = '<div class="build-divider-line"></div>' +
-      '<div class="build-divider-badge">' + phaseLabel + '</div>' +
-      '<div class="build-divider-line"></div>';
+    const line1 = document.createElement('div'); line1.className = 'build-divider-line';
+    const badge = document.createElement('div'); badge.className = 'build-divider-badge'; badge.textContent = phaseLabel;
+    const line2 = document.createElement('div'); line2.className = 'build-divider-line';
+    divEl.appendChild(line1); divEl.appendChild(badge); divEl.appendChild(line2);
     chatEl.appendChild(divEl);
-  }).catch(() => {});
-  // Second bubble with live data snapshot (fetched async)
-  fetch(BASE + '/display_data').then(r => r.json()).then(d => {
-    const spd = Math.round(d.speed || 0);
-    const rpm = d.rpm || 750;
-    const oil = d.oil_temp || '--';
-    const bat = d.battery ? d.battery.toFixed(1) : '--';
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }).catch(function(){});
+  fetch(BASE + '/display_data').then(function(r){ return r.json(); }).then(function(d) {
+    const spd  = Math.round(d.speed || 0);
+    const rpm  = d.rpm || 750;
+    const oil  = d.oil_temp || '--';
+    const bat  = d.battery ? d.battery.toFixed(1) : '--';
     const mode = (d.drive_mode || 'comfort').toUpperCase();
     const status = spd > 0
-      ? `Running ${mode} at ${spd} mph right now. Oil is at ${oil}°F, ${bat}V on the battery.`
-      : `Sitting at idle — ${rpm} RPM, oil at ${oil}°F, ${bat}V. Hit me with a question.`;
+      ? 'Running ' + mode + ' at ' + spd + ' mph right now. Oil is at ' + oil + '°F, ' + bat + 'V on the battery.'
+      : 'Sitting at idle — ' + rpm + ' RPM, oil at ' + oil + '°F, ' + bat + 'V. Hit me with a question.';
     renderMsg('archer', status);
-  }).catch(() => {});
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }).catch(function(){});
 }
 
 // ── INIT ──
@@ -351,11 +650,16 @@ if (!hadHistory) addWelcome();
 // ── SEND QUESTION ──
 async function sendFanQuestion() {
   const inp = document.getElementById('fan-input');
-  const q = inp.value.trim();
+  const q   = inp.value.trim();
   if (!q) return;
   inp.value = '';
-  const sugs = document.getElementById('suggestions');
-  if (sugs) sugs.style.display = 'none';
+  if (sugsExpanded) {
+    const chips = document.getElementById('sug-chips');
+    const arrow = document.getElementById('sug-arrow');
+    if (chips) chips.style.display = 'none';
+    if (arrow) arrow.textContent = '▸';
+    sugsExpanded = false;
+  }
   const bd = document.getElementById('build-divider');
   if (bd) bd.style.display = 'none';
   addMsg('user', q);
@@ -393,8 +697,8 @@ function toggleFanMic() {
     document.getElementById('fan-input').value = e.results[0][0].transcript;
     sendFanQuestion();
   };
-  sr.onend = function() { micActive = false; setMicUI(false); };
-  sr.onerror = function() { micActive = false; setMicUI(false); };
+  sr.onend  = function(){ micActive = false; setMicUI(false); };
+  sr.onerror = function(){ micActive = false; setMicUI(false); };
   sr.start();
   micActive = true;
   setMicUI(true);
@@ -408,7 +712,7 @@ function setMicUI(on) {
 
 // ── TTS ──
 function ttsSpeak(text) {
-  if (!window.speechSynthesis) return;
+  if (muted || !window.speechSynthesis) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.0; u.pitch = 1;
