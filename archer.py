@@ -1794,6 +1794,7 @@ def get_display_data():
         'vehicle_model': vehicle_config.get('model'),
         'vehicle_name':  get_vehicle_name(),
         'vehicle_name_header': get_vehicle_name('header'),
+        'prndl':         truck_state.get('prndl', 'P'),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -8611,7 +8612,8 @@ def get_request_tier(request):
         except ValueError:
             return 5
     # Fingerprint system (in-cabin devices with no cookie)
-    fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
+    # Never read from query params — cookie only to prevent URL-based privilege escalation
+    fp = request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
 @display_app.route('/logout', methods=['POST'])
@@ -10400,6 +10402,73 @@ justify-content:center;height:100vh;text-align:center}
 <body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
 <div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
 <script>setTimeout(()=>window.location.href='/',30000)</script></body></html>''', mimetype='text/html')
+
+
+@display_app.route('/service')
+def service_tracker_page():
+    """Service tracker — Tier 1 only. Serves archer_maintenance.html regardless of maintenance mode."""
+    from flask import Response as FR, redirect as _redir
+    if get_request_tier(request) != 1:
+        return _redir('/')
+    if os.path.exists('archer_maintenance.html'):
+        with open('archer_maintenance.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">SERVICE TRACKER NOT FOUND</body></html>', mimetype='text/html')
+
+
+# ── SERVICE HISTORY (server-side persistence) ──────────────
+_SERVICE_HISTORY_FILE = 'service_history.json'
+
+
+def _load_service_history():
+    try:
+        with open(_SERVICE_HISTORY_FILE, 'r', encoding='utf-8') as _f:
+            return json.load(_f)
+    except Exception:
+        return []
+
+
+def _save_service_history(records):
+    try:
+        with open(_SERVICE_HISTORY_FILE, 'w', encoding='utf-8') as _f:
+            json.dump(records, _f)
+    except Exception:
+        pass
+
+
+@display_app.route('/service_history')
+def service_history_get():
+    if get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    return jsonify({'records': _load_service_history()})
+
+
+@display_app.route('/service_history', methods=['POST'])
+@csrf_required
+def service_history_post():
+    from flask import request as _req
+    if get_request_tier(_req) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    data   = _req.get_json() or {}
+    action = data.get('action')
+    if action == 'add':
+        record  = data.get('record', {})
+        records = _load_service_history()
+        if record:
+            records.insert(0, record)
+            _save_service_history(records)
+        return jsonify({'ok': True, 'records': records})
+    if action == 'delete':
+        del_id  = data.get('id')
+        records = [r for r in _load_service_history() if r.get('id') != del_id]
+        _save_service_history(records)
+        return jsonify({'ok': True, 'records': records})
+    if action == 'save':
+        records = data.get('records', [])
+        _save_service_history(records)
+        return jsonify({'ok': True})
+    return jsonify({'error': 'Unknown action'}), 400
 
 
 @display_app.route('/weather/compare/data')

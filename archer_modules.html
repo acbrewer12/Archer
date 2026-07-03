@@ -687,10 +687,11 @@ async function simulateLowTire(corner) {
 }
 
 async function runDriveCycle(name) {
+  const btn = event.target;
   document.querySelectorAll('.dc-btn').forEach(b => b.classList.remove('dc-active'));
-  event.target.classList.add('dc-active');
+  btn.classList.add('dc-active');
   await api('/modules/drive_cycle', 'POST', {name});
-  setTimeout(() => event.target.classList.remove('dc-active'), 3000);
+  setTimeout(() => btn.classList.remove('dc-active'), 3000);
   refreshNow();
 }
 

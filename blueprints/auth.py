@@ -3,7 +3,8 @@ blueprints/auth.py — Authentication, device management, and tier notification 
 Extracted from archer.py; all state and business logic remain in archer.py,
 accessed via late import to avoid circular dependencies.
 """
-import random as _random
+import hmac as _hmac
+import secrets as _secrets
 
 from flask import Blueprint, jsonify, make_response, request
 
@@ -23,10 +24,14 @@ def _a():
 @csrf_required
 def register_device_endpoint():
     a = _a()
+    # Tier 1 only — the public registration path is /register_mac with invite codes
+    ok, _ = a.require_tier1(request)
+    if not ok:
+        return jsonify({'ok': False, 'error': 'Tier 1 required'}), 403
     data        = request.get_json()
     fingerprint = data.get('fingerprint', '')
     name        = data.get('name', 'Unknown')
-    tier        = max(2, min(4, int(data.get('tier', 2))))  # self-register max Tier 2
+    tier        = max(2, min(4, int(data.get('tier', 2))))  # max Tier 2 via this path
     if not fingerprint:
         return jsonify({'ok': False, 'error': 'No fingerprint'})
     a.register_device(fingerprint, name, tier)
@@ -120,7 +125,7 @@ def register_mac():
 
     # Check master Tier 1 code first
     entry = None
-    if a._master_code_enabled and a._master_code and code == a._master_code:
+    if a._master_code_enabled and a._master_code and _hmac.compare_digest(code, a._master_code):
         entry = {'name': 'Ayden', 'tier': 1}
 
     # Fall back to one-time code
@@ -420,7 +425,7 @@ def sign_in_code_refresh():
     a = _a()
     if a.get_request_tier(request) != 1:
         return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    a._master_code = str(_random.randint(100000, 999999))
+    a._master_code = str(_secrets.randbelow(900000) + 100000)
     return jsonify({'success': True, 'code': a._master_code})
 
 

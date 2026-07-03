@@ -484,7 +484,7 @@ async function poll() {
           logEvent('🚨 Speed exceeded limit — ' + speed + ' MPH', 'alert');
           speedAlerted = true;
         }
-      } else if (speed > 75) {
+      } else if (speed > 65) {
         // Deep amber when approaching danger (66-80)
         speedEl.style.color      = 'var(--amber)';
         speedEl.style.textShadow = '0 0 20px rgba(255,170,0,0.7)';

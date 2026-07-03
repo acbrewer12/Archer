@@ -254,9 +254,11 @@ async function fetchVersionInfo() {
     if (d.git_hash) {
       document.getElementById('ver-hash').textContent = 'build ' + d.git_hash.substring(0,7);
     }
-    // Uptime from server
+    // Uptime from server — store baseline so the 1s tick can interpolate smoothly
     if (d.uptime_seconds !== undefined) {
-      document.getElementById('ver-uptime').textContent = formatUptime(Math.round(d.uptime_seconds));
+      _serverUptime  = Math.round(d.uptime_seconds);
+      _serverUptimeAt = Date.now();
+      document.getElementById('ver-uptime').textContent = formatUptime(_serverUptime);
     }
   } catch(_) {
     // Server not yet up — show page-relative time

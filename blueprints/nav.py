@@ -13,6 +13,9 @@ def _a():
 @csrf_required
 def nav_save_place():
     from flask import request as _req
+    a = _a()
+    if a.get_request_tier(_req) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     data    = _req.get_json()
     name    = data.get('name', '').strip().lower()
     lat     = data.get('lat')
@@ -20,7 +23,6 @@ def nav_save_place():
     address = data.get('address', '')
     if not name or lat is None or lon is None:
         return jsonify({'error': 'Need name, lat, lon'}), 400
-    a = _a()
     a.nav_places[name] = {'lat': float(lat), 'lon': float(lon), 'address': address}
     a.save_state()
     print(f'[NAV] Saved place "{name}" → {lat},{lon}')
@@ -30,4 +32,6 @@ def nav_save_place():
 @bp.route('/nav/places')
 def nav_list_places():
     a = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     return jsonify({k: v for k, v in a.nav_places.items()})

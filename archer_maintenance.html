@@ -442,25 +442,31 @@ const countTick = setInterval(() => {
 fetchMaintenance();
 setInterval(fetchMaintenance, 30000);
 
-// ── MAINTENANCE HISTORY (localStorage) ───────────────────
-const HIST_KEY = 'archer_maint_history';
+// ── MAINTENANCE HISTORY (server-synced) ──────────────────
+let _csrfToken = '';
+(async () => { try { const r = await fetch('/csrf_token'); const d = await r.json(); _csrfToken = d.token || ''; } catch(e){} })();
+function _csrfHeaders() { return {'Content-Type':'application/json','X-CSRF-Token':_csrfToken}; }
 
-function loadHistory() {
-  try { return JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch(_){ return []; }
-}
-function saveHistory(arr) {
-  localStorage.setItem(HIST_KEY, JSON.stringify(arr));
+let _historyRecords = [];
+
+async function loadHistoryFromServer() {
+  try {
+    const r = await fetch('/service_history');
+    if (!r.ok) return;
+    const d = await r.json();
+    _historyRecords = d.records || [];
+  } catch(_) {}
+  renderHistory();
 }
 
 function renderHistory() {
   const log   = document.getElementById('history-log');
-  const items = loadHistory();
   if (!log) return;
+  const items = _historyRecords;
   if (items.length === 0) {
     log.innerHTML = '<div class="hist-empty">NO SERVICE RECORDS — ADD ONE ABOVE</div>';
     return;
   }
-  // Sort by date desc
   const sorted = [...items].sort((a,b) => new Date(b.date) - new Date(a.date));
   log.innerHTML = '';
   sorted.forEach(rec => {
@@ -491,16 +497,14 @@ function toggleAddForm() {
   const form = document.getElementById('add-form');
   const isOpen = form.classList.toggle('open');
   if (isOpen) {
-    // Pre-fill date with today
     const today = new Date().toISOString().slice(0,10);
     document.getElementById('f-date').value = today;
-    // Pre-fill mileage from display_data if available
     const mi = _displayData.trip_stats?.total_distance_mi;
     if (mi) document.getElementById('f-mi').value = Math.round(mi);
   }
 }
 
-function saveRecord() {
+async function saveRecord() {
   const type  = document.getElementById('f-type').value.trim();
   const mi    = document.getElementById('f-mi').value;
   const date  = document.getElementById('f-date').value;
@@ -511,33 +515,46 @@ function saveRecord() {
 
   const rec = {
     id:    Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-    type,
-    date,
+    type, date,
     mi:    mi    ? parseInt(mi)    : null,
     cost:  cost  ? parseFloat(cost): null,
     notes: notes || null
   };
 
-  const hist = loadHistory();
-  hist.push(rec);
-  saveHistory(hist);
+  try {
+    const r = await fetch('/service_history', {
+      method: 'POST', headers: _csrfHeaders(),
+      body: JSON.stringify({action: 'add', record: rec})
+    });
+    const d = await r.json();
+    if (d.ok) _historyRecords = d.records || [];
+  } catch(_) {
+    // Optimistic local update if server unreachable
+    _historyRecords.unshift(rec);
+  }
 
-  // Reset form
   document.getElementById('f-mi').value    = '';
   document.getElementById('f-cost').value  = '';
   document.getElementById('f-notes').value = '';
   document.getElementById('add-form').classList.remove('open');
-
   renderHistory();
 }
 
-function deleteRecord(id) {
-  const hist = loadHistory().filter(r => r.id !== id);
-  saveHistory(hist);
+async function deleteRecord(id) {
+  try {
+    const r = await fetch('/service_history', {
+      method: 'POST', headers: _csrfHeaders(),
+      body: JSON.stringify({action: 'delete', id})
+    });
+    const d = await r.json();
+    if (d.ok) _historyRecords = d.records || [];
+  } catch(_) {
+    _historyRecords = _historyRecords.filter(r => r.id !== id);
+  }
   renderHistory();
 }
 
-// Initial history render
-renderHistory();
+// Load history from server on page load
+loadHistoryFromServer();
 </script>
 </body></html>

@@ -854,15 +854,6 @@ function showToast(msg, color) {
   setTimeout(() => { toast.style.opacity='0'; setTimeout(()=>toast.remove(),500); }, 3000);
 }
 
-async function needAyden() {
-  const msg = `${passengerName} needs you — speed ${Math.round(currentSpeed)} mph`;
-  const result = await sendTier1Notification(msg);
-  if (result?.id) pollForResponse(result.id, msg);
-  updateArcherMsg(`Ayden has been notified. He knows you need him, ${passengerName}.`);
-  const btn = document.getElementById('need-ayden-btn');
-  if (btn) { btn.style.background='#cc0000'; setTimeout(()=>btn.style.background='',1200); }
-}
-
 // ─── COMFORT / MODES ───
 function setMode(card, mode) {
   document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('on'));
@@ -997,26 +988,6 @@ async function playPlaylist(id, name) {
 
 // Check Spotify on load and when music tab opens
 checkSpotify();
-
-// ─── COMFORT / MODES ───
-function setMode(card, mode) {
-  document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('on'));
-  card.classList.add('on');
-  document.getElementById('comfort-mode').textContent = mode;
-  document.getElementById('s-mode').textContent = mode;
-  const msgs = {
-    COMFORT: 'Comfort mode. Smooth and easy.',
-    SPORT:   'Sport mode. Ayden likes this one.',
-    TOW:     'Tow mode. Heavy duty.',
-    ECO:     'Eco mode. Saving fuel.',
-  };
-  updateArcherMsg(msgs[mode] || 'Mode changed.');
-}
-function setHeat(btn) {
-  const parent = btn.parentElement;
-  parent.querySelectorAll('.heat-btn').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-}
 
 // ─── LIVE DATA ───
 async function pollLive() {
