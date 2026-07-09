@@ -1,0 +1,82 @@
+name: Test Cloudflare Bypass Methods
+
+# Manual trigger only — this is a one-off comparison test, not the
+# real daily price check. Run it from the Actions tab whenever you
+# want to (re-)test all three approaches against the James O'Neal page.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  patchright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Patchright
+        run: |
+          pip install patchright
+          patchright install chromium
+      - name: Write summary header
+        run: |
+          echo "| Method | Result | Detail |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+      - name: Run test
+        run: python test_patchright.py
+
+  camoufox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Camoufox
+        run: |
+          pip install camoufox[geoip]
+          python -m camoufox fetch
+      - name: Run test
+        run: python test_camoufox.py
+
+  flaresolverr:
+    runs-on: ubuntu-latest
+    # This is what makes FlareSolverr different from the other two —
+    # it's not a Python library, it's a whole separate service that
+    # needs to actually be running before the script can talk to it.
+    # GitHub Actions "services" spin up a Docker container alongside
+    # this job automatically and tear it down when the job ends.
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports:
+          - 8191:8191
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install requests
+        run: pip install requests
+      - name: Wait for FlareSolverr to be ready
+        run: |
+          for i in {1..30}; do
+            curl -sf http://localhost:8191/ && break
+            echo "Waiting for FlareSolverr..."
+            sleep 2
+          done
+      - name: Run test
+        run: python test_flaresolverr.py
+
+  # Runs after all three, regardless of whether they succeeded or
+  # failed, and prints one final combined view so you don't have to
+  # dig through three separate job logs to compare results.
+  summarize:
+    needs: [patchright, camoufox, flaresolverr]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: |
+          echo "Check each job above (patchright / camoufox / flaresolverr) for its own step summary table." >> $GITHUB_STEP_SUMMARY
+          echo "Whichever one shows a real price is the one worth keeping long-term." >> $GITHUB_STEP_SUMMARY
