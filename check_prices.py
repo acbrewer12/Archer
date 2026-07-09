@@ -134,6 +134,37 @@ def check_sold(page, response, original_url):
     return None
 
 
+def dismiss_popups(page):
+    """Click through common cookie-consent banners and promo popups.
+    A lot of dealer sites show one of these on first load, and some
+    genuinely block the rest of the page from finishing its render
+    until it's dismissed — a real, common obstacle, not a rare edge
+    case. Tries a range of common button text/patterns; harmless if
+    none of them exist on a given page."""
+    patterns = [
+        'Accept All', 'Accept Cookies', 'Accept', 'I Agree', 'Agree',
+        'Got it', 'OK', 'Close', 'No Thanks', 'Continue', 'Dismiss',
+    ]
+    for text in patterns:
+        try:
+            btn = page.get_by_role('button', name=text, exact=False).first
+            if btn.count() > 0 and btn.is_visible(timeout=1000):
+                btn.click(timeout=2000)
+                page.wait_for_timeout(500)
+        except Exception:
+            continue  # button with this text doesn't exist on this page — expected most of the time
+
+    # generic "X" close button on a modal, by common aria-label patterns
+    for selector in ['[aria-label="Close"]', '[aria-label="close"]', 'button.close', '.modal-close']:
+        try:
+            btn = page.locator(selector).first
+            if btn.count() > 0 and btn.is_visible(timeout=1000):
+                btn.click(timeout=2000)
+                page.wait_for_timeout(500)
+        except Exception:
+            continue
+
+
 def get_all_texts(page):
     """Returns the visible text of the main page PLUS every iframe on
     it. Third-party pricing widgets (TradePending and similar dealer
@@ -218,14 +249,19 @@ def capture_debug_snippet(page):
     the first '$' or the word 'price' on the page — checking iframes
     too — so the failure note in the sheet has actual content to
     diagnose from instead of just 'not found'."""
+    title = ''
+    try:
+        title = page.title()[:40]
+    except Exception:
+        pass
     for text in get_all_texts(page):
         idx = text.find('$')
         if idx == -1:
             idx = text.lower().find('price')
         if idx != -1:
             snippet = text[max(0, idx - 30):idx + 60].replace('\n', ' ').strip()
-            return snippet[:90]
-    return f'no $ or "price" text found in main page or any of {len(page.frames)-1} iframe(s)'
+            return f'[{title}] {snippet[:80]}'
+    return f'[{title}] no $ or "price" text found in main page or any of {len(page.frames)-1} iframe(s) after popup-dismiss + scroll'
 
 
 def main():
@@ -262,6 +298,7 @@ def main():
                     # price data without depending on the network ever going silent.
                     response = page.goto(url, wait_until='load', timeout=45000)
                     page.wait_for_timeout(2500)
+                    dismiss_popups(page)
                     # scroll down partway — some price/deal widgets only
                     # render once scrolled into view (lazy-loading for
                     # performance), this nudges them to load
@@ -270,6 +307,7 @@ def main():
                         page.wait_for_timeout(1500)
                     except Exception:
                         pass
+                    dismiss_popups(page)  # some popups only appear after scroll/delay, not immediately on load
                     sold_status = check_sold(page, response, url)
 
                     if sold_status:
