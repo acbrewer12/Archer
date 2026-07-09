@@ -134,46 +134,72 @@ def check_sold(page, response, original_url):
     return None
 
 
+def get_all_texts(page):
+    """Returns the visible text of the main page PLUS every iframe on
+    it. Third-party pricing widgets (TradePending and similar dealer
+    tools) commonly render inside an iframe — a separate embedded
+    document with its own content that the main page's body text
+    cannot see at all. This is very likely why the James O'Neal page
+    came back with literally zero '$' or 'price' text found even
+    though the price is clearly visible on screen."""
+    texts = []
+    try:
+        texts.append(page.locator('body').inner_text())
+    except Exception:
+        pass
+    for frame in page.frames:
+        if frame == page.main_frame:
+            continue
+        try:
+            texts.append(frame.locator('body').inner_text())
+        except Exception:
+            continue  # some frames are cross-origin and genuinely unreadable — expected, not an error
+    return texts
+
+
 def extract_price(page):
     """Try several strategies, most reliable first, same approach real
-    price-tracking tools use since no single method works everywhere."""
+    price-tracking tools use since no single method works everywhere.
+    Checks the main page AND all iframes for each strategy."""
 
     # Strategy 1: JSON-LD structured data (most reliable when present —
     # many listing sites embed this for search engine SEO)
-    try:
-        scripts = page.locator('script[type="application/ld+json"]').all_text_contents()
-        for s in scripts:
-            try:
-                data = json.loads(s)
-                items = data if isinstance(data, list) else [data]
-                for item in items:
-                    offers = item.get('offers', {}) if isinstance(item, dict) else {}
-                    price = offers.get('price') if isinstance(offers, dict) else None
-                    if price:
-                        return float(str(price).replace(',', ''))
-            except (json.JSONDecodeError, AttributeError, ValueError):
-                continue
-    except Exception:
-        pass
-
-    # Strategy 2: common price meta tags
-    for selector in ['meta[itemprop="price"]', 'meta[property="product:price:amount"]']:
+    for frame in page.frames:
         try:
-            el = page.locator(selector).first
-            if el.count() > 0:
-                content = el.get_attribute('content')
-                if content:
-                    return float(content.replace(',', ''))
+            scripts = frame.locator('script[type="application/ld+json"]').all_text_contents()
+            for s in scripts:
+                try:
+                    data = json.loads(s)
+                    items = data if isinstance(data, list) else [data]
+                    for item in items:
+                        offers = item.get('offers', {}) if isinstance(item, dict) else {}
+                        price = offers.get('price') if isinstance(offers, dict) else None
+                        if price:
+                            return float(str(price).replace(',', ''))
+                except (json.JSONDecodeError, AttributeError, ValueError):
+                    continue
         except Exception:
             continue
 
-    # Strategy 3: fall back to visible rendered text — this is the part
-    # that only works because Playwright actually executed the JS first.
-    # Try comma-formatted first ($10,999), then cents ($10,999.00),
-    # then bare digits with no comma ($10999) — small dealer sites in
-    # particular often skip comma formatting that bigger platforms use.
-    try:
-        text = page.locator('body').inner_text()
+    # Strategy 2: common price meta tags
+    for frame in page.frames:
+        for selector in ['meta[itemprop="price"]', 'meta[property="product:price:amount"]']:
+            try:
+                el = frame.locator(selector).first
+                if el.count() > 0:
+                    content = el.get_attribute('content')
+                    if content:
+                        return float(content.replace(',', ''))
+            except Exception:
+                continue
+
+    # Strategy 3: fall back to visible rendered text, checking the main
+    # page AND every iframe — this is the part that only works because
+    # Playwright actually executed the JS first. Try comma-formatted
+    # first ($10,999), then cents ($10,999.00), then bare digits with
+    # no comma ($10999) — small dealer sites in particular often skip
+    # comma formatting that bigger platforms use.
+    for text in get_all_texts(page):
         for pattern in [
             r'\$([\d]{2,3},\d{3})\.\d{2}',   # $10,999.00
             r'\$([\d]{2,3},\d{3})(?!\d)',    # $10,999
@@ -183,29 +209,23 @@ def extract_price(page):
             m = re.search(pattern, text)
             if m:
                 return float(m.group(1).replace(',', ''))
-    except Exception:
-        pass
 
     return None
 
 
 def capture_debug_snippet(page):
     """When every extraction strategy fails, grab real text from around
-    the first '$' or the word 'price' on the page, so the failure note
-    in the sheet has actual content to diagnose from instead of just
-    'not found' — this is what lets the next fix be based on what the
-    page really shows rather than another guess."""
-    try:
-        text = page.locator('body').inner_text()
+    the first '$' or the word 'price' on the page — checking iframes
+    too — so the failure note in the sheet has actual content to
+    diagnose from instead of just 'not found'."""
+    for text in get_all_texts(page):
         idx = text.find('$')
         if idx == -1:
             idx = text.lower().find('price')
         if idx != -1:
             snippet = text[max(0, idx - 30):idx + 60].replace('\n', ' ').strip()
             return snippet[:90]
-    except Exception:
-        pass
-    return 'no $ or "price" text found on page at all'
+    return f'no $ or "price" text found in main page or any of {len(page.frames)-1} iframe(s)'
 
 
 def main():
@@ -242,6 +262,14 @@ def main():
                     # price data without depending on the network ever going silent.
                     response = page.goto(url, wait_until='load', timeout=45000)
                     page.wait_for_timeout(2500)
+                    # scroll down partway — some price/deal widgets only
+                    # render once scrolled into view (lazy-loading for
+                    # performance), this nudges them to load
+                    try:
+                        page.mouse.wheel(0, 800)
+                        page.wait_for_timeout(1500)
+                    except Exception:
+                        pass
                     sold_status = check_sold(page, response, url)
 
                     if sold_status:
