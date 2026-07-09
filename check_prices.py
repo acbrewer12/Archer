@@ -89,12 +89,20 @@ def find_columns(sheet):
 # fully-rendered page text (lowercase). Kept fairly specific — bare
 # "sold" alone is too easy to false-positive on ("500+ sold this year"
 # type marketing copy), so most of these are multi-word phrases.
+# Every phrase here specifically references "vehicle" or "listing" —
+# deliberately excludes generic phrases like "currently unavailable" or
+# "no longer available" on their own, since those show up constantly
+# for reasons that have nothing to do with the car itself: a financing
+# widget being down, a chat feature offline, a broken video embed.
+# "Currently unavailable" alone caused a real false positive on a
+# truck that was still actively for sale — every phrase below is
+# tied specifically to the vehicle/listing itself, not a bare
+# unavailability word that could belong to anything on the page.
 SOLD_PHRASES = [
     'this vehicle has been sold', 'vehicle has sold', 'this vehicle is sold',
-    'no longer available', 'vehicle unavailable', 'listing has ended',
-    'listing is no longer active', 'this listing has expired',
-    'off the market', 'currently unavailable', 'vehicle not found',
-    'this vehicle is no longer', 'page not found', "sorry, we couldn't find",
+    'vehicle is no longer available', 'vehicle unavailable',
+    'this vehicle is no longer', 'vehicle not found',
+    'listing has ended', 'listing is no longer active', 'this listing has expired',
 ]
 
 
