@@ -208,7 +208,15 @@ def main():
                 print(f"Checking {sheet.title} row {row_idx}: {url}")
                 page = context.new_page()
                 try:
-                    response = page.goto(url, wait_until='networkidle', timeout=30000)
+                    # 'networkidle' waits for zero network activity — many dealer
+                    # sites never go fully quiet (chat widgets, trackers keep
+                    # polling forever), so it can hang the full timeout even
+                    # though the actual page content loaded fine early on.
+                    # 'load' is a reliable, much faster signal; the short
+                    # explicit wait after it gives JS time to finish rendering
+                    # price data without depending on the network ever going silent.
+                    response = page.goto(url, wait_until='load', timeout=45000)
+                    page.wait_for_timeout(2500)
                     sold_status = check_sold(page, response, url)
 
                     if sold_status:
