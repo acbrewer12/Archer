@@ -1447,6 +1447,26 @@ Archer says: You do not.
 Tier 4 says: where are we going
 Archer says: Wherever you were told to go.
 
+Examples using live telemetry data:
+Tier 1 says: what's the oil at
+Archer says: 203 degrees. Trending up — been pushing it.
+
+Tier 1 says: what's boost doing
+Archer says: Peaking around 11 PSI right now. Ethanol holding at 73 percent.
+
+Tier 1 says: battery okay
+Archer says: 14.1 volts. Charging fine.
+
+Examples answering general questions in Archer's voice:
+Tier 1 says: why does synthetic oil last longer than conventional
+Archer says: The base molecules are uniform — no wax, no impurities. Handles heat without breaking down as fast.
+
+Tier 1 says: what is a Duramax
+Archer says: GM's diesel — 6.6 liters, iron block. Built to pull. Not what we are, but solid.
+
+Tier 1 says: why does a cold engine run rich
+Archer says: Fuel does not atomize well cold, so the ECU dumps extra to compensate until temps normalize.
+
 Rules you never break:
 - Maximum 2 sentences. Never more. Ever.
 - No advice unless asked directly
@@ -1774,6 +1794,7 @@ def get_display_data():
         'vehicle_model': vehicle_config.get('model'),
         'vehicle_name':  get_vehicle_name(),
         'vehicle_name_header': get_vehicle_name('header'),
+        'prndl':         truck_state.get('prndl', 'P'),
     }
 
 # ── ASK ARCHER ───────────────────────────
@@ -1858,13 +1879,61 @@ Truck data right now:
 
     response = None
 
-    # Try 1 — Google Gemini (primary: free tier, 1,500 req/day, no cost)
+    # Try 1 — Groq llama-3.3-70b-versatile (PRIMARY: ~0.27s TTFT, 92.1 IFEval, no thinking mode)
+    if not response:
+        GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
+        if GROQ_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] Groq llama-3.3-70b")
+            except Exception as e:
+                print(f"[AI] Groq failed: {e}")
+
+    # Try 2 — Cerebras gpt-oss-120b (FALLBACK: 1M tokens/day, different provider for true redundancy)
+    if not response:
+        CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
+        if CEREBRAS_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "gpt-oss-120b",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api.cerebras.ai/v1/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {CEREBRAS_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] Cerebras gpt-oss-120b")
+            except Exception as e:
+                print(f"[AI] Cerebras failed: {e}")
+
+    # Try 3 — Gemini 2.5 Flash-Lite (TERTIARY: thinking off by default, 1K RPD; 2.0 shuts down Sept 24 2026)
     if not response:
         GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
         if GEMINI_KEY:
             try:
                 payload = json.dumps({
-                    "model": "gemini-2.0-flash-lite",
+                    "model": "gemini-2.5-flash-lite",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
@@ -1878,11 +1947,11 @@ Truck data right now:
                     r = data['choices'][0]['message']['content'].strip()
                     if r and len(r) > 2:
                         response = r
-                        print("[AI] Gemini")
+                        print("[AI] Gemini 2.5 Flash-Lite")
             except Exception as e:
                 print(f"[AI] Gemini failed: {e}")
 
-    # Try 2 — Local Ollama (Pi only; offline fallback when no internet)
+    # Try 4 — Local Ollama (Pi only; offline-emergency fallback)
     if not response and _IS_PI:
         try:
             result = subprocess.run(
@@ -1895,55 +1964,6 @@ Truck data right now:
                 print("[AI] Local Ollama")
         except Exception:
             pass
-
-    # Try 3 — HuggingFace Inference API
-    if not response:
-        HF_TOKEN = os.environ.get('HF_TOKEN', '')
-        if HF_TOKEN:
-            try:
-                payload = json.dumps({
-                    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-                    "messages": [{"role": "user", "content": full_prompt}],
-                    "max_tokens": 150,
-                    "temperature": 0.7,
-                }).encode()
-                req = urllib.request.Request(
-                    "https://router.huggingface.co/hf-inference/v1/chat/completions",
-                    data=payload,
-                    headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = json.loads(resp.read())
-                    r = data['choices'][0]['message']['content'].strip()
-                    if r and len(r) > 2:
-                        response = r
-                        print("[AI] HF Inference API")
-            except Exception as e:
-                print(f"[AI] HF Inference failed: {e}")
-
-    # Try 4 — Groq
-    if not response:
-        GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
-        if GROQ_KEY:
-            try:
-                payload = json.dumps({
-                    "model": "llama3-8b-8192",
-                    "messages": [{"role": "user", "content": full_prompt}],
-                    "max_tokens": 150, "temperature": 0.7,
-                }).encode()
-                req = urllib.request.Request(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    data=payload,
-                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-                )
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read())
-                    r = data['choices'][0]['message']['content'].strip()
-                    if r and len(r) > 2:
-                        response = r
-                        print("[AI] Groq")
-            except Exception:
-                pass
 
     # Try 5 — Smart fallback
     if not response:
@@ -5682,19 +5702,47 @@ Archer says:"""
 
         try:
             response = None
-            GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
-            if GEMINI_KEY:
+            GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
+            if GROQ_KEY:
                 try:
-                    payload = json.dumps({'model': 'gemini-2.0-flash-lite',
+                    payload = json.dumps({'model': 'llama-3.3-70b-versatile',
                                           'messages': [{'role': 'user', 'content': prompt}],
                                           'max_tokens': 80, 'temperature': 0.8}).encode()
                     req = urllib.request.Request(
-                        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-                        data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
-                    with urllib.request.urlopen(req, timeout=10) as r:
+                        'https://api.groq.com/openai/v1/chat/completions',
+                        data=payload, headers={'Authorization': f'Bearer {GROQ_KEY}', 'Content-Type': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=8) as r:
                         response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                 except Exception:
                     pass
+            if not response:
+                CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
+                if CEREBRAS_KEY:
+                    try:
+                        payload = json.dumps({'model': 'gpt-oss-120b',
+                                              'messages': [{'role': 'user', 'content': prompt}],
+                                              'max_tokens': 80, 'temperature': 0.8}).encode()
+                        req = urllib.request.Request(
+                            'https://api.cerebras.ai/v1/chat/completions',
+                            data=payload, headers={'Authorization': f'Bearer {CEREBRAS_KEY}', 'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req, timeout=10) as r:
+                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                    except Exception:
+                        pass
+            if not response:
+                GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
+                if GEMINI_KEY:
+                    try:
+                        payload = json.dumps({'model': 'gemini-2.5-flash-lite',
+                                              'messages': [{'role': 'user', 'content': prompt}],
+                                              'max_tokens': 80, 'temperature': 0.8}).encode()
+                        req = urllib.request.Request(
+                            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                            data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req, timeout=10) as r:
+                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                    except Exception:
+                        pass
             if not response and _IS_PI:
                 try:
                     payload = json.dumps({'model': 'llama3.2', 'prompt': prompt, 'stream': False}).encode()
@@ -5704,17 +5752,6 @@ Archer says:"""
                         response = json.loads(r.read()).get('response', '').strip()
                 except Exception:
                     pass
-            if not response:
-                HF_TOKEN = os.environ.get('HF_TOKEN', '')
-                if HF_TOKEN:
-                    payload = json.dumps({'model': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-                                          'messages': [{'role': 'user', 'content': prompt}],
-                                          'max_tokens': 80, 'temperature': 0.8}).encode()
-                    req = urllib.request.Request(
-                        'https://router.huggingface.co/hf-inference/v1/chat/completions',
-                        data=payload, headers={'Authorization': f'Bearer {HF_TOKEN}', 'Content-Type': 'application/json'})
-                    with urllib.request.urlopen(req, timeout=12) as r:
-                        response = json.loads(r.read())['choices'][0]['message']['content'].strip()
             if not response or 'SILENCE' in response.upper(): continue
             if 'Archer says:' in response:
                 response = response.split('Archer says:')[-1].strip()
@@ -8575,7 +8612,8 @@ def get_request_tier(request):
         except ValueError:
             return 5
     # Fingerprint system (in-cabin devices with no cookie)
-    fp = request.args.get('fp') or request.cookies.get('archer_fp', 'unknown')
+    # Never read from query params — cookie only to prevent URL-based privilege escalation
+    fp = request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
 @display_app.route('/logout', methods=['POST'])
@@ -10364,6 +10402,73 @@ justify-content:center;height:100vh;text-align:center}
 <body><div><div class="r">ARCHER UNDER MAINTENANCE</div>
 <div class="s">SYSTEMS TEMPORARILY OFFLINE — CHECK BACK SHORTLY</div></div>
 <script>setTimeout(()=>window.location.href='/',30000)</script></body></html>''', mimetype='text/html')
+
+
+@display_app.route('/service')
+def service_tracker_page():
+    """Service tracker — Tier 1 only. Serves archer_maintenance.html regardless of maintenance mode."""
+    from flask import Response as FR, redirect as _redir
+    if get_request_tier(request) != 1:
+        return _redir('/')
+    if os.path.exists('archer_maintenance.html'):
+        with open('archer_maintenance.html', 'r', encoding='utf-8') as f:
+            html = f.read()
+        return FR(html, mimetype='text/html')
+    return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">SERVICE TRACKER NOT FOUND</body></html>', mimetype='text/html')
+
+
+# ── SERVICE HISTORY (server-side persistence) ──────────────
+_SERVICE_HISTORY_FILE = 'service_history.json'
+
+
+def _load_service_history():
+    try:
+        with open(_SERVICE_HISTORY_FILE, 'r', encoding='utf-8') as _f:
+            return json.load(_f)
+    except Exception:
+        return []
+
+
+def _save_service_history(records):
+    try:
+        with open(_SERVICE_HISTORY_FILE, 'w', encoding='utf-8') as _f:
+            json.dump(records, _f)
+    except Exception:
+        pass
+
+
+@display_app.route('/service_history')
+def service_history_get():
+    if get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    return jsonify({'records': _load_service_history()})
+
+
+@display_app.route('/service_history', methods=['POST'])
+@csrf_required
+def service_history_post():
+    from flask import request as _req
+    if get_request_tier(_req) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    data   = _req.get_json() or {}
+    action = data.get('action')
+    if action == 'add':
+        record  = data.get('record', {})
+        records = _load_service_history()
+        if record:
+            records.insert(0, record)
+            _save_service_history(records)
+        return jsonify({'ok': True, 'records': records})
+    if action == 'delete':
+        del_id  = data.get('id')
+        records = [r for r in _load_service_history() if r.get('id') != del_id]
+        _save_service_history(records)
+        return jsonify({'ok': True, 'records': records})
+    if action == 'save':
+        records = data.get('records', [])
+        _save_service_history(records)
+        return jsonify({'ok': True})
+    return jsonify({'error': 'Unknown action'}), 400
 
 
 @display_app.route('/weather/compare/data')

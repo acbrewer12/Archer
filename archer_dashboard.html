@@ -472,6 +472,8 @@ html, body {
 
 <div id="reconnect">⚠ RECONNECTING TO ARCHER...</div>
 
+<!-- TAB PANELS -->
+<div class="tab-panel" id="panel-dashboard">
 <!-- BODY -->
 <div id="body">
 
@@ -683,8 +685,10 @@ html, body {
   </div>
 
 </div><!-- /body -->
+</div><!-- /panel-dashboard -->
 
-<!-- LIVE DATA GRAPHS -->
+<!-- LIVE DATA PANEL -->
+<div class="tab-panel" id="panel-live" style="display:none">
 <div id="graphs">
   <div class="gc">
     <div class="gc-lbl">COOLANT TEMP</div>
@@ -715,6 +719,50 @@ html, body {
     <div class="gc-lbl">EXHAUST TEMP</div>
     <div class="gc-val" id="gcv-exh">-- °F</div>
     <canvas class="gc-canvas" id="gcc-exh"></canvas>
+  </div>
+</div>
+</div><!-- /panel-live -->
+
+<!-- DIAGNOSTICS PANEL -->
+<div class="tab-panel" id="panel-diagnostics" style="display:none;padding:16px;max-width:900px;margin:0 auto">
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:12px">ACTIVE FAULT CODES</div>
+  <div id="diag-faults" style="font-family:monospace;font-size:13px;color:var(--text)">No fault codes detected</div>
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-top:20px;margin-bottom:8px">MODULE STATUS</div>
+  <div id="diag-modules" style="font-family:monospace;font-size:11px;color:var(--text-dim)">Waiting for data</div>
+</div>
+
+<!-- ACTUATORS PANEL -->
+<div class="tab-panel" id="panel-actuators" style="display:none;padding:16px;max-width:900px;margin:0 auto">
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:16px">ACTUATOR CONTROLS</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px" id="act-grid">
+    <a href="/modules" style="display:block;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px;color:var(--text);text-decoration:none;font-family:monospace;font-size:11px;letter-spacing:2px">⚙ MODULE CONTROLS →</a>
+  </div>
+  <div style="font-family:monospace;font-size:11px;color:var(--text-dim);margin-top:12px" id="act-state">Loading actuator state...</div>
+</div>
+
+<!-- SYSTEM PANEL -->
+<div class="tab-panel" id="panel-system" style="display:none;padding:16px;max-width:900px;margin:0 auto">
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:12px">SYSTEM INFORMATION</div>
+  <div id="sys-info" style="font-family:monospace;font-size:12px;color:var(--text);line-height:1.8"></div>
+</div>
+
+<!-- AI PANEL -->
+<div class="tab-panel" id="panel-ai" style="display:none;padding:16px;max-width:600px;margin:0 auto">
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:12px">ARCHER AI INTERFACE</div>
+  <div id="ai-msg-box" style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:monospace;font-size:13px;color:var(--text);margin-bottom:12px;min-height:60px" id="ai-panel-msg">Loading...</div>
+  <div style="display:flex;gap:8px">
+    <input id="ai-panel-input" type="text" placeholder="Ask Archer..." style="flex:1;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);font-family:monospace;font-size:12px;outline:none" onkeydown="if(event.key==='Enter')sendAiPanelMsg()">
+    <button onclick="sendAiPanelMsg()" style="background:var(--accent);border:none;border-radius:6px;padding:10px 16px;color:#000;font-family:monospace;font-size:12px;cursor:pointer">ASK</button>
+  </div>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div class="tab-panel" id="panel-settings" style="display:none;padding:16px;max-width:600px;margin:0 auto">
+  <div style="font-size:9px;color:var(--text-dim);letter-spacing:3px;margin-bottom:12px">SETTINGS</div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <a href="/devices" style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;color:var(--text);text-decoration:none;font-family:monospace;font-size:11px;letter-spacing:2px">🔒 MANAGE DEVICES →</a>
+    <a href="/service" style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;color:var(--text);text-decoration:none;font-family:monospace;font-size:11px;letter-spacing:2px">🔧 SERVICE TRACKER →</a>
+    <a href="/modules" style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;color:var(--text);text-decoration:none;font-family:monospace;font-size:11px;letter-spacing:2px">⚙ MODULE CONTROLS →</a>
   </div>
 </div>
 
@@ -763,8 +811,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.nt').forEach(t => {
     t.addEventListener('click', () => {
+      const tab = t.dataset.tab;
       document.querySelectorAll('.nt').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
+      document.querySelectorAll('.tab-panel').forEach(p => { p.style.display = 'none'; });
+      const panel = document.getElementById('panel-' + tab);
+      if (panel) panel.style.display = '';
     });
   });
 
@@ -876,6 +928,14 @@ function applyDisplay(d) {
   gcv('volt',  d.battery,  'V');
   gcv('exh',   d.exhaust,  '°F');
 
+  // PRNDL gear indicator
+  if (d.prndl) {
+    const gears = ['p','r','n','d','l'];
+    gears.forEach(g => document.getElementById('gl-' + g)?.classList.remove('active'));
+    const el = document.getElementById('gl-' + String(d.prndl).toLowerCase());
+    if (el) el.classList.add('active');
+  }
+
   // Archer message
   if (d.archer_msg) setText('msg-text', '"' + d.archer_msg + '"');
 
@@ -892,12 +952,62 @@ function applyDisplay(d) {
   document.getElementById('lock-dot').className  = 'lock-dot' + (locked ? ' locked' : '');
   document.getElementById('lock-label').textContent = locked ? 'SYSTEM LOCKED' : 'SYSTEM UNLOCKED';
   document.getElementById('lock-label').className   = locked ? 'locked' : '';
+
+  // Diagnostics panel
+  const diagFaults = document.getElementById('diag-faults');
+  if (diagFaults) {
+    const faults = d.active_faults || [];
+    diagFaults.innerHTML = faults.length
+      ? faults.map(f => `<div style="padding:6px 0;border-bottom:1px solid var(--border)">${f}</div>`).join('')
+      : '<span style="color:var(--green)">● NO ACTIVE FAULT CODES</span>';
+  }
+  const diagMods = document.getElementById('diag-modules');
+  if (diagMods && d.module_states) {
+    diagMods.innerHTML = Object.entries(d.module_states)
+      .map(([k,v]) => `<div style="padding:3px 0"><span style="color:${v.online?'var(--green)':'var(--accent)'}">●</span> ${v.name} (${k.toUpperCase()}) — ${v.online?'ONLINE':'OFFLINE'}</div>`)
+      .join('');
+  }
+
+  // System panel
+  const sysInfo = document.getElementById('sys-info');
+  if (sysInfo) {
+    sysInfo.innerHTML = [
+      ['OBD MODE',   d.obd_mode || '--'],
+      ['VEHICLE',    d.vehicle_name || '--'],
+      ['BUILD PHASE',d.build_phase != null ? 'Phase ' + d.build_phase : '--'],
+      ['EST HP',     d.est_hp ? d.est_hp + ' HP' : '--'],
+      ['ETHANOL',    d.ethanol != null ? d.ethanol + '%' : '--'],
+      ['DRIVE SCORE',d.drive_score != null ? d.drive_score + '/100' : '--'],
+      ['FAULTS',     (d.fault_count || 0) + ' active'],
+    ].map(([l,v]) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text-dim)">${l}</span><span>${v}</span></div>`).join('');
+  }
+
+  // AI panel — update last message display
+  const aiMsg = document.getElementById('ai-msg-box');
+  if (aiMsg && d.archer_msg) aiMsg.textContent = d.archer_msg;
 }
 
 function sensor(d, key) {
   if (d[key] != null) return d[key];
   if (d.sensor_data && d.sensor_data[key] != null) return d.sensor_data[key];
   return null;
+}
+
+// ── AI panel send ────────────────────────────────────────
+async function sendAiPanelMsg() {
+  const inp = document.getElementById('ai-panel-input');
+  const msg = inp?.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  const out = document.getElementById('ai-msg-box');
+  if (out) out.textContent = '...';
+  try {
+    const r = await fetch('/command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:msg})});
+    const d = await r.json();
+    if (out) out.textContent = d.response || d.message || 'No response';
+  } catch(_) {
+    if (out) out.textContent = 'Connection error';
+  }
 }
 
 // ── Apply health ──────────────────────────────────────────

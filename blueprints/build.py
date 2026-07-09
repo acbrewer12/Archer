@@ -40,8 +40,11 @@ def build_update_route():
 # ── BUILD PART SEARCH ─────────────────────────────────────
 
 @bp.route('/build/part/search')
+@_limiter.limit('20 per minute')
 def build_part_search():
     a    = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     name = request.args.get('name', '')
     pn   = request.args.get('pn', '')
     results = a.web_search_parts(name, pn)
