@@ -109,18 +109,21 @@ def check_sold(page, response, original_url):
     if response.status in (404, 410):
         return f'SOLD/REMOVED — page returned {response.status}'
 
-    # Signal 2: redirected away from the specific listing to somewhere
-    # generic (search results, homepage) — a strong signal the exact
-    # vehicle/product page no longer exists, even if the site itself
-    # returned a normal 200 status for the page it redirected to
+    # Signal 2: redirected to somewhere that's clearly NOT a specific
+    # listing anymore — the homepage, a generic search/results page, or
+    # an explicit error page. Deliberately narrow and specific rather
+    # than a fuzzy "did the URL get shorter" guess — that kind of
+    # heuristic flags completely normal things too (a site cleaning up
+    # its own URL, dropping tracking params, adding a slug), which is
+    # exactly what caused a real false positive on a truck that was
+    # still actually for sale.
     final_url = page.url
-    if final_url.rstrip('/') != original_url.rstrip('/'):
-        # only treat this as suspicious if the URL structure actually
-        # changed shape, not just a trailing-slash or query-param tweak
-        orig_path = original_url.split('?')[0].rstrip('/')
-        final_path = final_url.split('?')[0].rstrip('/')
-        if orig_path != final_path and len(final_path) < len(orig_path) * 0.7:
-            return f'SOLD/REMOVED (probably) — redirected to {final_url}'
+    final_path = final_url.split('?')[0].rstrip('/')
+    path_lower = final_path.lower()
+    generic_redirect_markers = ['/search', '/results', '/inventory?', '/not-found', '/404', '/error']
+    is_homepage = final_path in ('', 'https://' + final_path.split('/')[2]) if '//' in final_path else False
+    if is_homepage or any(marker in path_lower for marker in generic_redirect_markers):
+        return f'SOLD/REMOVED (probably) — redirected to {final_url}'
 
     # Signal 3: sold-indicator text actually on the rendered page
     try:
@@ -241,6 +244,27 @@ def extract_price(page):
             if m:
                 return float(m.group(1).replace(',', ''))
 
+    # Strategy 4: raw HTML source, not just visible rendered text. This
+    # catches a real, different failure mode than the others — a price
+    # that's technically present in the markup but wrapped in something
+    # (a hidden element JS reveals later, an unusual CSS state) that
+    # Playwright's visible-text reading skips over. Won't help when a
+    # bot-challenge page blocked the real content from loading at all
+    # (nothing to find in the HTML if the real page was never
+    # delivered) — but that's a different problem than this catches.
+    try:
+        html = page.content()
+        for pattern in [
+            r'\$([\d]{2,3},\d{3})\.\d{2}',
+            r'\$([\d]{2,3},\d{3})(?!\d)',
+            r'\$([\d]{4,6})(?!\d)',
+        ]:
+            m = re.search(pattern, html)
+            if m:
+                return float(m.group(1).replace(',', ''))
+    except Exception:
+        pass
+
     return None
 
 
@@ -254,6 +278,15 @@ def capture_debug_snippet(page):
         title = page.title()[:40]
     except Exception:
         pass
+
+    # "Just a moment..." is Cloudflare's own bot-challenge page title —
+    # recognizing this specifically means future failures say exactly
+    # what happened instead of a cryptic title someone has to recognize.
+    if title.strip().lower() in ('just a moment...', 'just a moment', 'attention required!'):
+        return (f'[{title}] BLOCKED BY BOT PROTECTION (Cloudflare) — the real page never '
+                f'loaded, nothing to find. This site actively blocks automated browsers; '
+                f'no amount of retrying the extraction logic fixes this specific site.')
+
     for text in get_all_texts(page):
         idx = text.find('$')
         if idx == -1:
@@ -317,7 +350,12 @@ def main():
                         if cols['status_col']:
                             sheet.update_cell(row_idx, cols['status_col'], sold_status)
                         if cols['checked_col']:
-                            sheet.update_cell(row_idx, cols['checked_col'], now)
+                            # Include the detail here too, not just a bare timestamp —
+                            # every other path (found/not-found) puts the reason in
+                            # this same cell, and splitting sold-detection's reason
+                            # into a different column than every other case is
+                            # exactly what caused real confusion diagnosing this.
+                            sheet.update_cell(row_idx, cols['checked_col'], f'{now}  {sold_status}')
                         page.close()
                         continue
 
