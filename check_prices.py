@@ -54,7 +54,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 
 def connect_to_sheet():
-    creds_dict = json.loads(os.environ['GOOGLE_SERVICE_JSON'])
+    creds_dict = json.loads(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
     return client.open_by_key(os.environ['SPREADSHEET_ID'])
