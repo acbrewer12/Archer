@@ -168,19 +168,44 @@ def extract_price(page):
             continue
 
     # Strategy 3: fall back to visible rendered text — this is the part
-    # that only works because Playwright actually executed the JS first
+    # that only works because Playwright actually executed the JS first.
+    # Try comma-formatted first ($10,999), then cents ($10,999.00),
+    # then bare digits with no comma ($10999) — small dealer sites in
+    # particular often skip comma formatting that bigger platforms use.
     try:
         text = page.locator('body').inner_text()
-        matches = re.findall(r'\$([\d]{2,3},\d{3})(?!\d)', text)
-        if matches:
-            return float(matches[0].replace(',', ''))
-        matches = re.findall(r'\$([\d]{1,4}\.\d{2})(?!\d)', text)
-        if matches:
-            return float(matches[0])
+        for pattern in [
+            r'\$([\d]{2,3},\d{3})\.\d{2}',   # $10,999.00
+            r'\$([\d]{2,3},\d{3})(?!\d)',    # $10,999
+            r'\$([\d]{1,4}\.\d{2})(?!\d)',   # $75.00 (small parts)
+            r'\$([\d]{4,6})(?!\d)',          # $10999, no comma at all
+        ]:
+            m = re.search(pattern, text)
+            if m:
+                return float(m.group(1).replace(',', ''))
     except Exception:
         pass
 
     return None
+
+
+def capture_debug_snippet(page):
+    """When every extraction strategy fails, grab real text from around
+    the first '$' or the word 'price' on the page, so the failure note
+    in the sheet has actual content to diagnose from instead of just
+    'not found' — this is what lets the next fix be based on what the
+    page really shows rather than another guess."""
+    try:
+        text = page.locator('body').inner_text()
+        idx = text.find('$')
+        if idx == -1:
+            idx = text.lower().find('price')
+        if idx != -1:
+            snippet = text[max(0, idx - 30):idx + 60].replace('\n', ' ').strip()
+            return snippet[:90]
+    except Exception:
+        pass
+    return 'no $ or "price" text found on page at all'
 
 
 def main():
@@ -250,8 +275,9 @@ def main():
                             sheet.update_cell(row_idx, cols['status_col'], 'Available')
                     else:
                         if cols['checked_col']:
+                            snippet = capture_debug_snippet(page)
                             sheet.update_cell(row_idx, cols['checked_col'],
-                                               f'{now}  price not found — page layout may have changed')
+                                               f'{now}  price not found — saw near "$"/"price": "{snippet}"')
                 except Exception as e:
                     if cols['checked_col']:
                         sheet.update_cell(row_idx, cols['checked_col'], f'{now}  Error: {str(e)[:100]}')
