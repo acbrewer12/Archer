@@ -1,0 +1,31 @@
+name: Check Archer Prices
+
+on:
+  schedule:
+    # Runs daily at 13:00 UTC (8am Central). Change the cron expression
+    # to check more/less often — cron syntax is minute hour day month weekday.
+    - cron: '0 13 * * *'
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab, anytime
+
+jobs:
+  check-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright gspread google-auth
+          playwright install --with-deps chromium
+
+      - name: Run price check
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python check_prices.py
