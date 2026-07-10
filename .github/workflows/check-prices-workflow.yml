@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install patchright camoufox[geoip] gspread google-auth requests
+          pip install patchright camoufox[geoip] gspread google-auth requests curl-cffi
           patchright install chromium
           python -m camoufox fetch
 

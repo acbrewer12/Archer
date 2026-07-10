@@ -43,6 +43,12 @@ from google.oauth2.service_account import Credentials
 # ── Optional engine imports — each degrades gracefully if not installed ────────
 
 try:
+    from curl_cffi import requests as _cffi
+    _HAS_CURL_CFFI = True
+except ImportError:
+    _HAS_CURL_CFFI = False
+
+try:
     from patchright.sync_api import sync_playwright as _pw
     _HAS_PATCHRIGHT = True
 except ImportError:
@@ -64,6 +70,7 @@ except ImportError:
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL', 'http://localhost:8191/v1')
+ZENROWS_API_KEY  = os.environ.get('ZENROWS_API_KEY', '')
 
 # Multi-word phrases tied specifically to the vehicle/listing being gone.
 # Deliberately excludes generic single words like "sold" or "unavailable"
@@ -324,6 +331,84 @@ def _page_to_result(page, response, url: str, engine: str) -> CheckResult:
                        engine=engine, blocked=False)
 
 
+# ── Engine 0: curl-cffi (TLS + HTTP/2 fingerprint impersonation) ─────────────
+
+def _try_curl_cffi(url: str) -> CheckResult:
+    """Impersonates Chrome/Firefox at the TLS and HTTP/2 level using libcurl.
+    No browser process — very fast. Bypasses Cloudflare protections that only
+    inspect the TLS handshake rather than running a full JS challenge. Also
+    extracts JSON-LD from the initial HTML, which many listing sites embed for
+    SEO even when the rendered price itself is JS-driven.
+    Returns blocked=False (not blocked=True) when the page loads but has no
+    price in static HTML — the browser engines will take over for JS rendering."""
+    if not _HAS_CURL_CFFI:
+        return CheckResult(price=None, sold=None,
+                           debug='[curl-cffi] not installed',
+                           engine='curl-cffi', blocked=False)
+
+    for browser_type in ('chrome124', 'chrome120', 'firefox122'):
+        try:
+            with _cffi.Session(impersonate=browser_type) as session:
+                resp = session.get(url, timeout=30, allow_redirects=True,
+                                   headers={'Accept-Language': 'en-US,en;q=0.9'})
+
+            if resp.status_code in (404, 410):
+                return CheckResult(price=None,
+                                   sold=f'SOLD/REMOVED — page returned {resp.status_code}',
+                                   debug='', engine='curl-cffi')
+
+            html = resp.text
+
+            # Still showing a challenge page — try next impersonation
+            title_m = re.search(r'<title[^>]*>(.*?)</title>', html[:3000],
+                                 re.IGNORECASE | re.DOTALL)
+            title = (title_m.group(1).strip() if title_m else '').lower()
+            if resp.status_code == 403 or title in _BLOCK_TITLES:
+                continue
+
+            # JSON-LD (often present in initial HTML even on JS-heavy sites)
+            for ld in re.findall(
+                    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                    html, re.DOTALL | re.IGNORECASE):
+                try:
+                    data = json.loads(ld)
+                    for item in (data if isinstance(data, list) else [data]):
+                        if not isinstance(item, dict):
+                            continue
+                        offers = item.get('offers', {})
+                        p = offers.get('price') if isinstance(offers, dict) else None
+                        if p:
+                            return CheckResult(price=float(str(p).replace(',', '')),
+                                               sold=None, debug='', engine='curl-cffi')
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    continue
+
+            # Sold phrases in static HTML
+            html_lower = html.lower()
+            for phrase in SOLD_PHRASES:
+                if phrase in html_lower:
+                    return CheckResult(price=None,
+                                       sold=f'SOLD/REMOVED — page says "{phrase}"',
+                                       debug='', engine='curl-cffi')
+
+            # Regex scan on raw HTML
+            price = _extract_price_from_html(html)
+            if price is not None:
+                return CheckResult(price=price, sold=None, debug='', engine='curl-cffi')
+
+            # Page loaded but price needs JS — fall through to browser engines
+            return CheckResult(price=None, sold=None,
+                               debug=f'[curl-cffi:{browser_type}] page loaded, price needs JS render',
+                               engine='curl-cffi', blocked=False)
+
+        except Exception:
+            continue
+
+    return CheckResult(price=None, sold=None,
+                       debug='[curl-cffi] all impersonations blocked',
+                       engine='curl-cffi', blocked=True)
+
+
 # ── Engine 1: Patchright (patched Chromium) ───────────────────────────────────
 
 def _try_patchright(url: str, browser) -> CheckResult:
@@ -369,8 +454,10 @@ def _try_camoufox(url: str) -> CheckResult:
                            engine='camoufox', blocked=False)
     page = None
     try:
-        with Camoufox(headless=True, geoip=True) as browser:
-            page = browser.new_page()
+        with Camoufox(headless=True) as browser:
+            # no_viewport=True: Camoufox's Firefox CDP doesn't understand the
+            # isMobile field Playwright sends with every viewport — skip it.
+            page = browser.new_page(no_viewport=True)
             resp = page.goto(url, wait_until='load', timeout=45000)
             page.wait_for_timeout(random.randint(1800, 3200))
             _dismiss_popups(page)
@@ -488,11 +575,93 @@ def _try_flaresolverr(url: str, browser) -> CheckResult:
                 pass
 
 
+# ── Engine 4: ZenRows (optional paid residential proxy) ───────────────────────
+
+def _try_zenrows(url: str) -> CheckResult:
+    """ZenRows routes through residential IPs and handles bot-protection at the
+    infrastructure level — the only reliable free-to-paid escalation for sites
+    that block all datacenter IPs regardless of browser fingerprinting.
+    Only active when ZENROWS_API_KEY is set in environment / GitHub Secrets.
+    Free tier: 1000 credits/month (js_render=true costs 5 credits each, so
+    ~200 JS-rendered checks free per month)."""
+    if not ZENROWS_API_KEY or not _HAS_REQUESTS:
+        return CheckResult(price=None, sold=None,
+                           debug='[zenrows] not configured (set ZENROWS_API_KEY secret)',
+                           engine='zenrows', blocked=False)
+    try:
+        resp = _req.get(
+            'https://api.zenrows.com/v1/',
+            params={
+                'apikey':    ZENROWS_API_KEY,
+                'url':       url,
+                'js_render': 'true',
+                'antibot':   'true',
+                'wait':      '2000',
+            },
+            timeout=90,
+        )
+        if resp.status_code in (404, 410):
+            return CheckResult(price=None,
+                               sold=f'SOLD/REMOVED — ZenRows got {resp.status_code}',
+                               debug='', engine='zenrows')
+        if resp.status_code != 200:
+            return CheckResult(price=None, sold=None,
+                               debug=f'[zenrows] HTTP {resp.status_code}: {resp.text[:100]}',
+                               engine='zenrows', blocked=False)
+
+        html = resp.text
+
+        # JSON-LD
+        for ld in re.findall(
+                r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html, re.DOTALL | re.IGNORECASE):
+            try:
+                data = json.loads(ld)
+                for item in (data if isinstance(data, list) else [data]):
+                    if not isinstance(item, dict):
+                        continue
+                    offers = item.get('offers', {})
+                    p = offers.get('price') if isinstance(offers, dict) else None
+                    if p:
+                        return CheckResult(price=float(str(p).replace(',', '')),
+                                           sold=None, debug='', engine='zenrows')
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+
+        # Sold phrases
+        html_lower = html.lower()
+        for phrase in SOLD_PHRASES:
+            if phrase in html_lower:
+                return CheckResult(price=None,
+                                   sold=f'SOLD/REMOVED — page says "{phrase}"',
+                                   debug='', engine='zenrows')
+
+        price = _extract_price_from_html(html)
+        if price is not None:
+            return CheckResult(price=price, sold=None, debug='', engine='zenrows')
+
+        return CheckResult(price=None, sold=None,
+                           debug='[zenrows] page loaded but no price found in rendered HTML',
+                           engine='zenrows', blocked=False)
+    except Exception as e:
+        return CheckResult(price=None, sold=None,
+                           debug=f'[zenrows] error: {str(e)[:100]}',
+                           engine='zenrows', blocked=False)
+
+
 # ── Waterfall ──────────────────────────────────────────────────────────────────
 
 def check_listing(url: str, browser) -> CheckResult:
     """Try each engine in order; return as soon as price or sold status is found."""
     result = CheckResult(price=None, sold=None, debug='no engines available', engine='none')
+
+    # Engine 0 — curl-cffi (TLS impersonation, no browser, fastest)
+    if _HAS_CURL_CFFI:
+        result = _try_curl_cffi(url)
+        print(f'    curl-cffi    → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
+        if result.price is not None or result.sold is not None:
+            return result
+        # Continue to browser engines even when not blocked — price may need JS
 
     # Engine 1 — Patchright (patched Chromium, no external service needed)
     if _HAS_PATCHRIGHT:
@@ -512,6 +681,13 @@ def check_listing(url: str, browser) -> CheckResult:
     if _flaresolverr_available() and _HAS_PATCHRIGHT:
         result = _try_flaresolverr(url, browser)
         print(f'    flaresolverr → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
+        if result.price is not None or result.sold is not None:
+            return result
+
+    # Engine 4 — ZenRows (optional, residential proxy, last resort)
+    if ZENROWS_API_KEY:
+        result = _try_zenrows(url)
+        print(f'    zenrows      → price={result.price}  sold={bool(result.sold)}')
 
     return result
 
@@ -527,9 +703,10 @@ def main():
     spreadsheet = connect_to_sheet()
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
 
-    print(f'Engines: patchright={_HAS_PATCHRIGHT}  camoufox={_HAS_CAMOUFOX}  '
-          f'requests={_HAS_REQUESTS}')
-    print(f'FlareSolverr URL: {FLARESOLVERR_URL}\n')
+    print(f'Engines: curl_cffi={_HAS_CURL_CFFI}  patchright={_HAS_PATCHRIGHT}  '
+          f'camoufox={_HAS_CAMOUFOX}  requests={_HAS_REQUESTS}')
+    print(f'FlareSolverr URL: {FLARESOLVERR_URL}')
+    print(f'ZenRows: {"configured" if ZENROWS_API_KEY else "not configured (optional)"}\n')
 
     with _pw() as p:
         browser = p.chromium.launch(headless=True)
