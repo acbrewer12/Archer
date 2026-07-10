@@ -1,28 +1,34 @@
 """
 Archer price checker — multi-engine Cloudflare-bypass version.
 
-Per-listing waterfall (each engine tried only if the previous one was
-blocked or found no price):
+Per-listing waterfall — each engine tried only if the previous one was blocked
+or found no price. Seven fundamentally different bypass strategies:
+
+  0. curl-cffi      — TLS + HTTP/2 fingerprint impersonation via libcurl. No
+                       browser process. Bypasses CF checks that only inspect the
+                       handshake. Also extracts JSON-LD from initial HTML.
 
   1. Patchright      — patched Chromium that removes automation traces at the
-                       binary level; clears most Cloudflare / PerimeterX /
-                       DataDome without any external service. Drop-in
-                       replacement for Playwright so all popup-dismiss, scroll,
-                       iframe, JSON-LD, and meta-tag extraction still works.
+                       binary level. Handles most CF / PerimeterX / DataDome.
 
-  2. Camoufox        — patched, anti-detect Firefox; completely different
-                       browser engine and fingerprint, catches sites that
-                       actively block Chromium even when patched.
+  2. nodriver        — pure Chrome DevTools Protocol client; zero Playwright /
+                       Selenium code. Completely different detection profile from
+                       Patchright; uses system Chrome (pre-installed on GitHub
+                       Actions runners).
 
-  3. FlareSolverr    — dedicated Cloudflare Turnstile/Interstitial solver
-                       running as a sidecar service (Docker). Returns
-                       cf_clearance cookies; we inject them into a fresh
-                       Patchright context so we get full JS rendering with
-                       bot-protection already solved — not just static HTML.
+  3. Camoufox        — patched, anti-detect Firefox. Different engine entirely —
+                       catches sites that block all Chromium variants.
 
-Falls through to a "price not found — all engines tried" note only when
-every engine is simultaneously blocked, which in practice covers ~0% of
-real listings since the three use fundamentally different bypass strategies.
+  4. FlareSolverr    — dedicated CF Turnstile/Interstitial solver (Docker
+                       sidecar). Returns cf_clearance cookies injected into a
+                       fresh Patchright session for full JS rendering.
+
+  5. ScraperAPI      — residential proxy API with a free tier (1000 credits /
+                       month, no credit card). Only active when SCRAPERAPI_KEY
+                       is set. Handles datacenter-IP-blocked sites.
+
+  6. ZenRows         — residential proxy API (~$49/month). Only active when
+                       ZENROWS_API_KEY is set. Final paid escalation path.
 
 Same dynamic sheet design: any sheet with Price + Listing URL headers is
 auto-detected and checked. Add parts or trucks by pasting a URL — nothing
@@ -61,6 +67,13 @@ except ImportError:
     _HAS_CAMOUFOX = False
 
 try:
+    import nodriver as _nodriver
+    import asyncio as _asyncio
+    _HAS_NODRIVER = True
+except ImportError:
+    _HAS_NODRIVER = False
+
+try:
     import requests as _req
     _HAS_REQUESTS = True
 except ImportError:
@@ -70,6 +83,7 @@ except ImportError:
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL', 'http://localhost:8191/v1')
+SCRAPERAPI_KEY   = os.environ.get('SCRAPERAPI_KEY', '')
 ZENROWS_API_KEY  = os.environ.get('ZENROWS_API_KEY', '')
 
 # Multi-word phrases tied specifically to the vehicle/listing being gone.
@@ -444,6 +458,102 @@ def _try_patchright(url: str, browser) -> CheckResult:
                 pass
 
 
+# ── Engine 2: nodriver (pure CDP Chrome, no Playwright/Selenium wrapper) ──────
+
+async def _nodriver_async(url: str) -> CheckResult:
+    """Async core — called via asyncio.run() from the sync waterfall."""
+    browser = None
+    try:
+        browser = await _nodriver.start(
+            headless=True,
+            browser_args=['--no-sandbox', '--disable-dev-shm-usage'],
+        )
+        page = await browser.get(url)
+        await _asyncio.sleep(random.uniform(2.0, 3.5))
+
+        title = (await page.evaluate('document.title') or '').strip().lower()
+        if title in _BLOCK_TITLES:
+            return CheckResult(price=None, sold=None,
+                               debug='[nodriver] Cloudflare challenge page',
+                               engine='nodriver', blocked=True)
+
+        # Dismiss common popups
+        for btn_text in ['Accept All', 'Accept Cookies', 'Accept', 'I Agree',
+                         'Got it', 'OK', 'Close', 'No Thanks']:
+            try:
+                el = await page.find(btn_text, best_match=True, timeout=1)
+                if el:
+                    await el.click()
+                    await _asyncio.sleep(0.4)
+            except Exception:
+                pass
+
+        # Scroll to trigger lazy-load price widgets
+        await page.evaluate('window.scrollBy(0, 900)')
+        await _asyncio.sleep(1.2)
+
+        html = await page.get_content()
+
+        # JSON-LD
+        for ld in re.findall(
+                r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html, re.DOTALL | re.IGNORECASE):
+            try:
+                data = json.loads(ld)
+                for item in (data if isinstance(data, list) else [data]):
+                    if not isinstance(item, dict):
+                        continue
+                    offers = item.get('offers', {})
+                    p = offers.get('price') if isinstance(offers, dict) else None
+                    if p:
+                        return CheckResult(price=float(str(p).replace(',', '')),
+                                           sold=None, debug='', engine='nodriver')
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+
+        # Sold phrases
+        html_lower = html.lower()
+        for phrase in SOLD_PHRASES:
+            if phrase in html_lower:
+                return CheckResult(price=None,
+                                   sold=f'SOLD/REMOVED — page says "{phrase}"',
+                                   debug='', engine='nodriver')
+
+        price = _extract_price_from_html(html)
+        if price is not None:
+            return CheckResult(price=price, sold=None, debug='', engine='nodriver')
+
+        return CheckResult(price=None, sold=None,
+                           debug=f'[nodriver:{title[:40]}] page loaded, no price found',
+                           engine='nodriver', blocked=False)
+    except Exception as e:
+        return CheckResult(price=None, sold=None,
+                           debug=f'[nodriver] error: {str(e)[:100]}',
+                           engine='nodriver', blocked=False)
+    finally:
+        if browser:
+            try:
+                browser.stop()
+            except Exception:
+                pass
+
+
+def _try_nodriver(url: str) -> CheckResult:
+    """nodriver uses pure async CDP — no Playwright layer, completely different
+    detection profile. Runs in the main thread's own event loop (separate from
+    Playwright's background thread) so there's no asyncio conflict."""
+    if not _HAS_NODRIVER:
+        return CheckResult(price=None, sold=None,
+                           debug='[nodriver] not installed',
+                           engine='nodriver', blocked=False)
+    try:
+        return _asyncio.run(_nodriver_async(url))
+    except Exception as e:
+        return CheckResult(price=None, sold=None,
+                           debug=f'[nodriver] asyncio error: {str(e)[:100]}',
+                           engine='nodriver', blocked=False)
+
+
 # ── Engine 2: Camoufox (patched Firefox) ─────────────────────────────────────
 
 def _try_camoufox(url: str) -> CheckResult:
@@ -575,7 +685,78 @@ def _try_flaresolverr(url: str, browser) -> CheckResult:
                 pass
 
 
-# ── Engine 4: ZenRows (optional paid residential proxy) ───────────────────────
+# ── Engine 5: ScraperAPI (free tier, residential proxy) ───────────────────────
+
+def _try_scraperapi(url: str) -> CheckResult:
+    """ScraperAPI routes through residential IPs and handles bot-protection.
+    Free tier: 1000 credits/month, no credit card required.
+    render=true (JavaScript rendering) costs 10 credits per request, so the
+    free tier covers ~100 JS-rendered price checks per month — enough for
+    daily checking of ~3 stubborn listings. Set SCRAPERAPI_KEY in Secrets."""
+    if not SCRAPERAPI_KEY or not _HAS_REQUESTS:
+        return CheckResult(price=None, sold=None,
+                           debug='[scraperapi] not configured (SCRAPERAPI_KEY secret)',
+                           engine='scraperapi', blocked=False)
+    try:
+        resp = _req.get(
+            'http://api.scraperapi.com',
+            params={
+                'api_key': SCRAPERAPI_KEY,
+                'url':     url,
+                'render':  'true',
+            },
+            timeout=90,
+        )
+        if resp.status_code in (404, 410):
+            return CheckResult(price=None,
+                               sold=f'SOLD/REMOVED — ScraperAPI got {resp.status_code}',
+                               debug='', engine='scraperapi')
+        if resp.status_code != 200:
+            return CheckResult(price=None, sold=None,
+                               debug=f'[scraperapi] HTTP {resp.status_code}: {resp.text[:80]}',
+                               engine='scraperapi', blocked=False)
+
+        html = resp.text
+
+        # JSON-LD
+        for ld in re.findall(
+                r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html, re.DOTALL | re.IGNORECASE):
+            try:
+                data = json.loads(ld)
+                for item in (data if isinstance(data, list) else [data]):
+                    if not isinstance(item, dict):
+                        continue
+                    offers = item.get('offers', {})
+                    p = offers.get('price') if isinstance(offers, dict) else None
+                    if p:
+                        return CheckResult(price=float(str(p).replace(',', '')),
+                                           sold=None, debug='', engine='scraperapi')
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+
+        # Sold phrases
+        html_lower = html.lower()
+        for phrase in SOLD_PHRASES:
+            if phrase in html_lower:
+                return CheckResult(price=None,
+                                   sold=f'SOLD/REMOVED — page says "{phrase}"',
+                                   debug='', engine='scraperapi')
+
+        price = _extract_price_from_html(html)
+        if price is not None:
+            return CheckResult(price=price, sold=None, debug='', engine='scraperapi')
+
+        return CheckResult(price=None, sold=None,
+                           debug='[scraperapi] page loaded but no price in rendered HTML',
+                           engine='scraperapi', blocked=False)
+    except Exception as e:
+        return CheckResult(price=None, sold=None,
+                           debug=f'[scraperapi] error: {str(e)[:100]}',
+                           engine='scraperapi', blocked=False)
+
+
+# ── Engine 6: ZenRows (optional paid residential proxy) ───────────────────────
 
 def _try_zenrows(url: str) -> CheckResult:
     """ZenRows routes through residential IPs and handles bot-protection at the
@@ -669,21 +850,35 @@ def check_listing(url: str, browser) -> CheckResult:
         if result.price is not None or result.sold is not None:
             return result
 
-    # Engine 2 — Camoufox (patched Firefox, completely different engine fingerprint)
+    # Engine 2 — nodriver (pure CDP Chrome, zero Playwright/Selenium layer)
+    if _HAS_NODRIVER:
+        result = _try_nodriver(url)
+        print(f'    nodriver     → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
+        if result.price is not None or result.sold is not None:
+            return result
+
+    # Engine 3 — Camoufox (patched Firefox, completely different engine fingerprint)
     if _HAS_CAMOUFOX:
         result = _try_camoufox(url)
         print(f'    camoufox     → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
         if result.price is not None or result.sold is not None:
             return result
 
-    # Engine 3 — FlareSolverr (dedicated Cloudflare solver + Patchright session)
+    # Engine 4 — FlareSolverr (dedicated Cloudflare solver + Patchright session)
     if _flaresolverr_available() and _HAS_PATCHRIGHT:
         result = _try_flaresolverr(url, browser)
         print(f'    flaresolverr → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
         if result.price is not None or result.sold is not None:
             return result
 
-    # Engine 4 — ZenRows (optional, residential proxy, last resort)
+    # Engine 5 — ScraperAPI (residential proxy, free tier 1000 credits/month)
+    if SCRAPERAPI_KEY:
+        result = _try_scraperapi(url)
+        print(f'    scraperapi   → price={result.price}  sold={bool(result.sold)}')
+        if result.price is not None or result.sold is not None:
+            return result
+
+    # Engine 6 — ZenRows (residential proxy, paid, final escalation)
     if ZENROWS_API_KEY:
         result = _try_zenrows(url)
         print(f'    zenrows      → price={result.price}  sold={bool(result.sold)}')
@@ -703,9 +898,10 @@ def main():
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
 
     print(f'Engines: curl_cffi={_HAS_CURL_CFFI}  patchright={_HAS_PATCHRIGHT}  '
-          f'camoufox={_HAS_CAMOUFOX}  requests={_HAS_REQUESTS}')
-    print(f'FlareSolverr URL: {FLARESOLVERR_URL}')
-    print(f'ZenRows: {"configured" if ZENROWS_API_KEY else "not configured (optional)"}\n')
+          f'nodriver={_HAS_NODRIVER}  camoufox={_HAS_CAMOUFOX}')
+    print(f'FlareSolverr: {FLARESOLVERR_URL}')
+    print(f'ScraperAPI: {"configured" if SCRAPERAPI_KEY else "not set (optional — scraperapi.com, free tier)"}')
+    print(f'ZenRows:    {"configured" if ZENROWS_API_KEY else "not set (optional — paid)"}\n')
 
     with _pw() as p:
         browser = p.chromium.launch(headless=True)
