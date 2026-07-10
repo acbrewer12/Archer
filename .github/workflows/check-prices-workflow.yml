@@ -2,14 +2,23 @@ name: Check Archer Prices
 
 on:
   schedule:
-    # Runs daily at 13:00 UTC (8am Central). Change the cron expression
-    # to check more/less often — cron syntax is minute hour day month weekday.
+    # Runs daily at 13:00 UTC (8am Central).
     - cron: '0 13 * * *'
-  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab, anytime
+  workflow_dispatch: {}   # trigger manually from the Actions tab anytime
 
 jobs:
   check-prices:
     runs-on: ubuntu-latest
+
+    # FlareSolverr is the third-engine fallback for sites that defeat both
+    # Patchright and Camoufox. It starts automatically alongside the job
+    # and shuts down when the job ends — no setup or teardown needed.
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports:
+          - 8191:8191
+
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -21,11 +30,23 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright gspread google-auth
-          playwright install --with-deps chromium
+          pip install patchright camoufox[geoip] gspread google-auth requests
+          patchright install chromium
+          python -m camoufox fetch
+
+      # Wait for the FlareSolverr container to be ready before we start
+      # checking prices — it takes a few seconds to initialize.
+      - name: Wait for FlareSolverr
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8191/ && echo "FlareSolverr ready" && break
+            echo "Waiting for FlareSolverr... ($i/30)"
+            sleep 2
+          done
 
       - name: Run price check
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          FLARESOLVERR_URL: http://localhost:8191/v1
         run: python check_prices.py
