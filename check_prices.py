@@ -579,11 +579,10 @@ def _try_flaresolverr(url: str, browser) -> CheckResult:
 
 def _try_zenrows(url: str) -> CheckResult:
     """ZenRows routes through residential IPs and handles bot-protection at the
-    infrastructure level — the only reliable free-to-paid escalation for sites
-    that block all datacenter IPs regardless of browser fingerprinting.
-    Only active when ZENROWS_API_KEY is set in environment / GitHub Secrets.
-    Free tier: 1000 credits/month (js_render=true costs 5 credits each, so
-    ~200 JS-rendered checks free per month)."""
+    infrastructure level — the only reliable escalation for sites that block
+    all datacenter IPs regardless of browser fingerprinting. Paid service
+    (~$49/month); one-time free trial credits on sign-up. Only active when
+    ZENROWS_API_KEY is set in environment / GitHub Secrets."""
     if not ZENROWS_API_KEY or not _HAS_REQUESTS:
         return CheckResult(price=None, sold=None,
                            debug='[zenrows] not configured (set ZENROWS_API_KEY secret)',
