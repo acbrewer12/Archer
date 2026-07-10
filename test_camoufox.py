@@ -29,7 +29,9 @@ def write_summary(method, success, detail):
 
 def main():
     with Camoufox(headless=True) as browser:
-        page = browser.new_page()
+        # no_viewport=True: Camoufox's Firefox CDP doesn't support the isMobile
+        # field that Playwright sends with every viewport — skip it entirely.
+        page = browser.new_page(no_viewport=True)
 
         try:
             page.goto(URL, timeout=45000)

@@ -1,0 +1,33 @@
+name: Probe Dealer API
+
+# Manual trigger only — run this once to find a dealer site's inventory API.
+# Pass the listing URL (and optionally the VIN) as inputs.
+on:
+  workflow_dispatch:
+    inputs:
+      listing_url:
+        description: 'Full listing URL to probe'
+        required: true
+        default: 'https://www.jamesonealchryslerdodgejeep.com/inventory/used-2004-gmc-sierra-2500hd-slt-4wd-4d-crew-cab-1gthk23u64f251261/'
+      vin:
+        description: 'VIN (optional — auto-extracted from URL if not provided)'
+        required: false
+        default: ''
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install curl-cffi
+
+      - name: Run API probe
+        run: |
+          python probe_dealer_api.py \
+            "${{ github.event.inputs.listing_url }}" \
+            "${{ github.event.inputs.vin }}"
