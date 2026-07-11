@@ -30,9 +30,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install patchright camoufox[geoip] gspread google-auth requests curl-cffi
+          pip install patchright camoufox[geoip] nodriver gspread google-auth requests curl-cffi
           patchright install chromium
           python -m camoufox fetch
+          # nodriver uses the system Chrome that's pre-installed on ubuntu-latest runners
 
       # Wait for the FlareSolverr container to be ready before we start
       # checking prices — it takes a few seconds to initialize.
@@ -49,4 +50,9 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           FLARESOLVERR_URL: http://localhost:8191/v1
+          # Optional — set these secrets to unlock residential proxy engines.
+          # ScraperAPI: free tier at scraperapi.com (1000 credits/month, no CC).
+          # ZenRows: paid service (~$49/month) for maximum coverage.
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
+          ZENROWS_API_KEY: ${{ secrets.ZENROWS_API_KEY }}
         run: python check_prices.py
