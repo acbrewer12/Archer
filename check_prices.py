@@ -1080,13 +1080,30 @@ def _find_next_page_url(html: str, current_url: str) -> Optional[str]:
     return None
 
 
+def _is_cf_challenge_html(html: str) -> bool:
+    """True when the page looks like a Cloudflare challenge regardless of its title.
+
+    A CF challenge page may show the site's own title (so title-only detection
+    misses it), but always contains multiple CF-specific JS/HTML fingerprints."""
+    signals = [
+        'cf-browser-verification', 'cf-challenge-running', 'cf_chl_opt',
+        'window._cf_', 'cf-please-wait', 'cf_chl_prog', 'jschl-answer',
+        'cdn-cgi/challenge-platform', 'cf-im-under-attack',
+    ]
+    html_lower = html.lower()
+    return sum(1 for s in signals if s in html_lower) >= 2
+
+
 def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) -> tuple:
     """Fetch a multi-listing catalog/category URL and collect all prices across all
     paginated pages.
 
-    Engines tried per page: curl-cffi first (no browser overhead) → Patchright
-    (full JS render) as fallback. Pagination follows rel=next / class=next links
-    up to max_pages pages.
+    Uses ONE persistent Patchright browser context for the entire scrape so that
+    Cloudflare clearance cookies earned on page 1 carry through to pages 2-N.
+    Opening a fresh context per page causes Cloudflare to re-challenge by page 5.
+
+    Falls back to curl-cffi for sites where Patchright is blocked or unavailable.
+    Pagination follows rel=next / class=next / ?page=N up to max_pages pages.
 
     Returns: (prices: list[float], engine: str, page_count: int)
     """
@@ -1096,103 +1113,111 @@ def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) 
     visited     = set()
     page_num    = 0
 
-    while current_url and page_num < max_pages:
-        norm = current_url.rstrip('/')
-        if norm in visited:
-            break
-        visited.add(norm)
-        page_num += 1
+    # Open the single shared Patchright context before the pagination loop.
+    ctx = cat_page = None
+    if _HAS_PATCHRIGHT:
+        try:
+            ctx = browser.new_context(
+                user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                            'AppleWebKit/537.36 (KHTML, like Gecko) '
+                            'Chrome/124.0.0.0 Safari/537.36'),
+                viewport={'width': 1280, 'height': 900},
+            )
+            cat_page = ctx.new_page()
+            engine_used = 'patchright'
+        except Exception:
+            ctx = cat_page = None
 
-        print(f'    catalog p{page_num}: {current_url}')
-        html   = None
-        engine = 'none'
+    try:
+        while current_url and page_num < max_pages:
+            norm = current_url.rstrip('/')
+            if norm in visited:
+                break
+            visited.add(norm)
+            page_num += 1
 
-        # Engine A — Patchright (tried FIRST for catalog pages because product grids
-        # are almost always JavaScript-rendered; curl-cffi only gets static HTML).
-        if _HAS_PATCHRIGHT:
-            ctx = pg = None
-            try:
-                ctx = browser.new_context(
-                    user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                                'Chrome/124.0.0.0 Safari/537.36'),
-                    viewport={'width': 1280, 'height': 900},
-                )
-                pg = ctx.new_page()
-                pg.goto(current_url, wait_until='load', timeout=60000)
-                # Wait for the JS product grid to finish rendering
-                pg.wait_for_timeout(random.randint(3000, 4500))
-                _dismiss_popups(pg)
-                # Scroll to the bottom in chunks to trigger lazy-loaded tiles and
-                # infinite-scroll product loaders
-                for _ in range(6):
-                    pg.mouse.wheel(0, 1200)
-                    pg.wait_for_timeout(random.randint(400, 700))
-                pg.wait_for_timeout(1500)
-                _dismiss_popups(pg)
-                if not _is_blocked(pg):
-                    html   = pg.content()
-                    engine = 'patchright'
-            except Exception:
-                pass
-            finally:
-                if pg:
-                    try: pg.close()
-                    except Exception: pass
-                if ctx:
-                    try: ctx.close()
-                    except Exception: pass
+            print(f'    catalog p{page_num}: {current_url}')
+            html = None
 
-        # Engine B — curl-cffi fallback (for Cloudflare-free or static catalog pages
-        # where Patchright was blocked or unavailable)
-        if html is None and _HAS_CURL_CFFI:
-            for impersonate in ('chrome124', 'chrome120', 'firefox122'):
+            # Navigate within the shared context — cookies (cf_clearance etc.) persist
+            if cat_page is not None:
                 try:
-                    with _cffi.Session(impersonate=impersonate) as s:
-                        resp = s.get(current_url, timeout=30, allow_redirects=True,
-                                     headers={'Accept-Language': 'en-US,en;q=0.9'})
-                    if resp.status_code != 200:
-                        continue
-                    candidate = resp.text
-                    t = re.search(r'<title[^>]*>(.*?)</title>', candidate[:3000],
-                                  re.IGNORECASE | re.DOTALL)
-                    if (t and t.group(1).strip().lower() in _BLOCK_TITLES):
-                        continue
-                    html   = candidate
-                    engine = 'curl-cffi'
+                    cat_page.goto(current_url, wait_until='load', timeout=60000)
+                    cat_page.wait_for_timeout(random.randint(2500, 4000))
+                    _dismiss_popups(cat_page)
+                    # Scroll in chunks to trigger lazy-loaded product tiles
+                    for _ in range(6):
+                        cat_page.mouse.wheel(0, 1200)
+                        cat_page.wait_for_timeout(random.randint(400, 700))
+                    cat_page.wait_for_timeout(1200)
+                    _dismiss_popups(cat_page)
+                    if _is_blocked(cat_page):
+                        print(f'    → p{page_num}: Cloudflare title challenge, stopping')
+                        break
+                    html = cat_page.content()
+                except Exception as e:
+                    print(f'    → patchright error on p{page_num}: {str(e)[:80]}')
                     break
-                except Exception:
-                    continue
 
-        if not html:
-            print(f'    → could not fetch page {page_num}')
-            break
+            # curl-cffi fallback (no persistent context, but works on static/lightly
+            # protected catalog pages when Patchright is unavailable)
+            if html is None and _HAS_CURL_CFFI:
+                for impersonate in ('chrome124', 'chrome120', 'firefox122'):
+                    try:
+                        with _cffi.Session(impersonate=impersonate) as s:
+                            resp = s.get(current_url, timeout=30, allow_redirects=True,
+                                         headers={'Accept-Language': 'en-US,en;q=0.9'})
+                        if resp.status_code != 200:
+                            continue
+                        candidate = resp.text
+                        t = re.search(r'<title[^>]*>(.*?)</title>', candidate[:3000],
+                                      re.IGNORECASE | re.DOTALL)
+                        if t and t.group(1).strip().lower() in _BLOCK_TITLES:
+                            continue
+                        html = candidate
+                        engine_used = 'curl-cffi'
+                        break
+                    except Exception:
+                        continue
 
-        if engine_used == 'none':
-            engine_used = engine
+            if not html:
+                print(f'    → could not fetch page {page_num}')
+                break
 
-        page_prices = _extract_all_prices_from_html(html)
-        if not page_prices:
-            # No prices on this page — stop following pagination rather than
-            # fetching more empty pages.
-            print(f'    → no prices on page {page_num}, stopping pagination')
-            break
+            # Catch CF challenges that use the site's real title (title check alone
+            # won't detect these — look for CF-specific HTML fingerprints instead)
+            if _is_cf_challenge_html(html):
+                print(f'    → p{page_num}: Cloudflare HTML challenge detected, stopping')
+                break
 
-        all_prices.extend(page_prices)
-        sample = ', '.join(f'${p:,.0f}' for p in page_prices[:5])
-        extra  = f' +{len(page_prices) - 5} more' if len(page_prices) > 5 else ''
-        print(f'    → {len(page_prices)} prices [{engine}]: {sample}{extra}')
+            page_prices = _extract_all_prices_from_html(html)
+            if not page_prices:
+                print(f'    → no prices on page {page_num}, stopping pagination')
+                break
 
-        next_url = _find_next_page_url(html, current_url)
-        # Fallback: BigCommerce and some other platforms render pagination via JS
-        # and don't include rel=next in the HTML.  If no link was detected, try
-        # incrementing the ?page=N parameter directly — we'll naturally stop when
-        # the next page comes back empty (no prices → break at top of loop).
-        if not next_url:
-            next_url = _next_page_param_url(current_url)
-        if not next_url or next_url.rstrip('/') in visited:
-            break
-        current_url = next_url
+            all_prices.extend(page_prices)
+            sample = ', '.join(f'${p:,.0f}' for p in page_prices[:5])
+            extra  = f' +{len(page_prices) - 5} more' if len(page_prices) > 5 else ''
+            print(f'    → {len(page_prices)} prices [{engine_used}]: {sample}{extra}')
+
+            # Brief human-like pause before loading the next page
+            if cat_page is not None:
+                cat_page.wait_for_timeout(random.randint(800, 1500))
+
+            next_url = _find_next_page_url(html, current_url)
+            if not next_url:
+                next_url = _next_page_param_url(current_url)
+            if not next_url or next_url.rstrip('/') in visited:
+                break
+            current_url = next_url
+
+    finally:
+        if cat_page:
+            try: cat_page.close()
+            except Exception: pass
+        if ctx:
+            try: ctx.close()
+            except Exception: pass
 
     return all_prices, engine_used, page_num
 
