@@ -550,9 +550,18 @@ def _try_nodriver(url: str) -> CheckResult:
         return CheckResult(price=None, sold=None,
                            debug='[nodriver] not installed',
                            engine='nodriver', blocked=False)
+    # Create the coroutine before asyncio.run() so we can close() it in the
+    # except branch — otherwise Python emits RuntimeWarning: coroutine was never
+    # awaited when asyncio.run() raises before the coroutine starts (e.g. when
+    # Patchright's background thread already holds the event-loop lock).
+    coro = _nodriver_async(url)
     try:
-        return _asyncio.run(_nodriver_async(url))
+        return _asyncio.run(coro)
     except Exception as e:
+        try:
+            coro.close()
+        except Exception:
+            pass
         return CheckResult(price=None, sold=None,
                            debug=f'[nodriver] asyncio error: {str(e)[:100]}',
                            engine='nodriver', blocked=False)
@@ -908,6 +917,10 @@ def _is_catalog_url(url: str) -> bool:
         return False
     # Long numeric product/listing ID at the end of the path
     if re.search(r'/\d{5,}/?$', path):
+        return False
+    # UUID / GUID (e.g. /Inventory/Details/4fa31a40-1bcd-4bf6-bad3-de37b417c8a5)
+    if re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                 path, re.IGNORECASE):
         return False
     # Anything else: treat as potential catalog; if only 1 price is found on the
     # page the result is indistinguishable from a regular single-listing check.
