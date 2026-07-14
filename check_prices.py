@@ -930,9 +930,10 @@ def _is_catalog_url(url: str) -> bool:
 def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
     """Return all prices found in raw HTML that are at or above min_price.
 
-    Returns a list (NOT a set) so that two items at the same price both count
-    toward the average. Deduplication is done at the extraction-method level:
-    once a price is found via one strategy it is not double-counted by another.
+    Prices are deduplicated by value across strategies so the same price
+    embedded in multiple HTML elements isn't counted twice. On catalog pages
+    this means two products at the same price appear as one entry — use
+    _extract_prices_via_js() for accurate per-card counts instead.
 
     Extraction strategies (in order of reliability):
     1. JSON-LD structured data — ItemList/Product with offers.price
@@ -940,8 +941,8 @@ def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
     3. "price": N JSON patterns in script blobs
     4. Standard $-prefixed price text patterns
     """
-    found_set  = set()   # dedup across strategies
-    found_list = []      # preserves count for averaging
+    found_set  = set()   # dedup by value across strategies
+    found_list = []
 
     def _add(p: float):
         if p >= min_price and p not in found_set:
