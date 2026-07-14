@@ -42,7 +42,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qs
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -550,9 +550,18 @@ def _try_nodriver(url: str) -> CheckResult:
         return CheckResult(price=None, sold=None,
                            debug='[nodriver] not installed',
                            engine='nodriver', blocked=False)
+    # Create the coroutine before asyncio.run() so we can close() it in the
+    # except branch — otherwise Python emits RuntimeWarning: coroutine was never
+    # awaited when asyncio.run() raises before the coroutine starts (e.g. when
+    # Patchright's background thread already holds the event-loop lock).
+    coro = _nodriver_async(url)
     try:
-        return _asyncio.run(_nodriver_async(url))
+        return _asyncio.run(coro)
     except Exception as e:
+        try:
+            coro.close()
+        except Exception:
+            pass
         return CheckResult(price=None, sold=None,
                            debug=f'[nodriver] asyncio error: {str(e)[:100]}',
                            engine='nodriver', blocked=False)
@@ -909,54 +918,37 @@ def _is_catalog_url(url: str) -> bool:
     # Long numeric product/listing ID at the end of the path
     if re.search(r'/\d{5,}/?$', path):
         return False
+    # UUID / GUID (e.g. /Inventory/Details/4fa31a40-1bcd-4bf6-bad3-de37b417c8a5)
+    if re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                 path, re.IGNORECASE):
+        return False
     # Anything else: treat as potential catalog; if only 1 price is found on the
     # page the result is indistinguishable from a regular single-listing check.
     return True
 
 
 def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
-    """Return all unique prices found in raw HTML that are at or above min_price,
-    sorted ascending. Prices below min_price (shipping icons, $0 placeholders, etc.)
-    are excluded as noise.
+    """Return all prices found in raw HTML that are at or above min_price.
 
-    Extraction strategies (in order):
-    1. Standard $-prefixed price patterns (existing _PRICE_PATTERNS)
-    2. data-price="..." attributes (WooCommerce, many dealer/ecommerce frameworks)
-    3. JSON "price": value patterns (product data embedded in <script> tags)
-    4. JSON-LD structured data (ItemList, Product with offers)
+    Returns a list (NOT a set) so that two items at the same price both count
+    toward the average. Deduplication is done at the extraction-method level:
+    once a price is found via one strategy it is not double-counted by another.
+
+    Extraction strategies (in order of reliability):
+    1. JSON-LD structured data — ItemList/Product with offers.price
+    2. data-price / data-regular-price / data-sale-price attributes
+    3. "price": N JSON patterns in script blobs
+    4. Standard $-prefixed price text patterns
     """
-    found = set()
+    found_set  = set()   # dedup across strategies
+    found_list = []      # preserves count for averaging
 
-    # Strategy 1: $ prefixed price text
-    for pat in _PRICE_PATTERNS:
-        for m in re.finditer(pat, html):
-            try:
-                p = float(m.group(1).replace(',', ''))
-                if p >= min_price:
-                    found.add(p)
-            except ValueError:
-                pass
+    def _add(p: float):
+        if p >= min_price and p not in found_set:
+            found_set.add(p)
+            found_list.append(p)
 
-    # Strategy 2: data-price / data-regular-price / data-sale-price attributes
-    for m in re.finditer(r'data-(?:regular-|sale-)?price=["\']?([\d]+(?:\.\d{1,2})?)["\']?',
-                         html, re.IGNORECASE):
-        try:
-            p = float(m.group(1))
-            if p >= min_price:
-                found.add(p)
-        except ValueError:
-            pass
-
-    # Strategy 3: JSON "price": N patterns in script tags / data blobs
-    for m in re.finditer(r'"price"\s*:\s*"?([\d]+(?:\.\d{1,2})?)"?', html):
-        try:
-            p = float(m.group(1))
-            if p >= min_price:
-                found.add(p)
-        except ValueError:
-            pass
-
-    # Strategy 4: JSON-LD structured data (handles ItemList with multiple products)
+    # Strategy 1: JSON-LD (most structured; ItemList gives one entry per product)
     for ld in re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
             html, re.DOTALL | re.IGNORECASE):
@@ -973,15 +965,65 @@ def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
                     price_val = offers.get('price') if isinstance(offers, dict) else None
                     if price_val:
                         try:
-                            p = float(str(price_val).replace(',', ''))
-                            if p >= min_price:
-                                found.add(p)
+                            _add(float(str(price_val).replace(',', '')))
                         except (ValueError, TypeError):
                             pass
         except (json.JSONDecodeError, ValueError, AttributeError):
             continue
 
-    return sorted(found)
+    # Strategy 2: data-price attributes (WooCommerce, BigCommerce, dealer platforms)
+    for m in re.finditer(r'data-(?:regular-|sale-)?price=["\']?([\d]+(?:\.\d{1,2})?)["\']?',
+                         html, re.IGNORECASE):
+        try:
+            _add(float(m.group(1)))
+        except ValueError:
+            pass
+
+    # Strategy 3: "price": N JSON patterns in inline script data
+    for m in re.finditer(r'"price"\s*:\s*"?([\d]+(?:\.\d{1,2})?)"?', html):
+        try:
+            _add(float(m.group(1)))
+        except ValueError:
+            pass
+
+    # Strategy 4: $-prefixed visible price text (catches anything the above missed)
+    for pat in _PRICE_PATTERNS:
+        for m in re.finditer(pat, html):
+            try:
+                _add(float(m.group(1).replace(',', '')))
+            except ValueError:
+                pass
+
+    return sorted(found_list)
+
+
+def _next_page_param_url(current_url: str) -> Optional[str]:
+    """Fallback pagination: increment the ?page=N query parameter by 1.
+    If no ?page= param exists, adds ?page=2 (page 1 → page 2 transition).
+    Also handles WordPress /page/N/ path style.
+    Returns None if the URL already looks like it's using a non-standard scheme."""
+    parsed = urlparse(current_url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+
+    if 'page' in params:
+        try:
+            n = int(params['page'][0])
+            params['page'] = [str(n + 1)]
+            q = urlencode({k: v[0] for k, v in params.items()})
+            return urlunparse(parsed._replace(query=q))
+        except (ValueError, IndexError):
+            return None
+
+    # WordPress /page/N/ path style
+    m = re.search(r'/page/(\d+)/?$', parsed.path)
+    if m:
+        new_path = parsed.path[:m.start()] + f'/page/{int(m.group(1)) + 1}/'
+        return urlunparse(parsed._replace(path=new_path))
+
+    # No page param at all — first call goes from page 1 to page 2
+    params['page'] = ['2']
+    q = urlencode({k: v[0] for k, v in params.items()})
+    return urlunparse(parsed._replace(query=q))
 
 
 def _find_next_page_url(html: str, current_url: str) -> Optional[str]:
@@ -1142,6 +1184,12 @@ def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) 
         print(f'    → {len(page_prices)} prices [{engine}]: {sample}{extra}')
 
         next_url = _find_next_page_url(html, current_url)
+        # Fallback: BigCommerce and some other platforms render pagination via JS
+        # and don't include rel=next in the HTML.  If no link was detected, try
+        # incrementing the ?page=N parameter directly — we'll naturally stop when
+        # the next page comes back empty (no prices → break at top of loop).
+        if not next_url:
+            next_url = _next_page_param_url(current_url)
         if not next_url or next_url.rstrip('/') in visited:
             break
         current_url = next_url
