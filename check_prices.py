@@ -917,8 +917,17 @@ def _is_catalog_url(url: str) -> bool:
 def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
     """Return all unique prices found in raw HTML that are at or above min_price,
     sorted ascending. Prices below min_price (shipping icons, $0 placeholders, etc.)
-    are excluded as noise."""
+    are excluded as noise.
+
+    Extraction strategies (in order):
+    1. Standard $-prefixed price patterns (existing _PRICE_PATTERNS)
+    2. data-price="..." attributes (WooCommerce, many dealer/ecommerce frameworks)
+    3. JSON "price": value patterns (product data embedded in <script> tags)
+    4. JSON-LD structured data (ItemList, Product with offers)
+    """
     found = set()
+
+    # Strategy 1: $ prefixed price text
     for pat in _PRICE_PATTERNS:
         for m in re.finditer(pat, html):
             try:
@@ -927,6 +936,51 @@ def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
                     found.add(p)
             except ValueError:
                 pass
+
+    # Strategy 2: data-price / data-regular-price / data-sale-price attributes
+    for m in re.finditer(r'data-(?:regular-|sale-)?price=["\']?([\d]+(?:\.\d{1,2})?)["\']?',
+                         html, re.IGNORECASE):
+        try:
+            p = float(m.group(1))
+            if p >= min_price:
+                found.add(p)
+        except ValueError:
+            pass
+
+    # Strategy 3: JSON "price": N patterns in script tags / data blobs
+    for m in re.finditer(r'"price"\s*:\s*"?([\d]+(?:\.\d{1,2})?)"?', html):
+        try:
+            p = float(m.group(1))
+            if p >= min_price:
+                found.add(p)
+        except ValueError:
+            pass
+
+    # Strategy 4: JSON-LD structured data (handles ItemList with multiple products)
+    for ld in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html, re.DOTALL | re.IGNORECASE):
+        try:
+            data = json.loads(ld)
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                for node in [item] + item.get('itemListElement', []):
+                    if not isinstance(node, dict):
+                        continue
+                    offers = node.get('offers', {})
+                    price_val = offers.get('price') if isinstance(offers, dict) else None
+                    if price_val:
+                        try:
+                            p = float(str(price_val).replace(',', ''))
+                            if p >= min_price:
+                                found.add(p)
+                        except (ValueError, TypeError):
+                            pass
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            continue
+
     return sorted(found)
 
 
@@ -1011,8 +1065,45 @@ def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) 
         html   = None
         engine = 'none'
 
-        # Engine A — curl-cffi (fastest, no browser spin-up needed)
-        if _HAS_CURL_CFFI:
+        # Engine A — Patchright (tried FIRST for catalog pages because product grids
+        # are almost always JavaScript-rendered; curl-cffi only gets static HTML).
+        if _HAS_PATCHRIGHT:
+            ctx = pg = None
+            try:
+                ctx = browser.new_context(
+                    user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                'Chrome/124.0.0.0 Safari/537.36'),
+                    viewport={'width': 1280, 'height': 900},
+                )
+                pg = ctx.new_page()
+                pg.goto(current_url, wait_until='load', timeout=60000)
+                # Wait for the JS product grid to finish rendering
+                pg.wait_for_timeout(random.randint(3000, 4500))
+                _dismiss_popups(pg)
+                # Scroll to the bottom in chunks to trigger lazy-loaded tiles and
+                # infinite-scroll product loaders
+                for _ in range(6):
+                    pg.mouse.wheel(0, 1200)
+                    pg.wait_for_timeout(random.randint(400, 700))
+                pg.wait_for_timeout(1500)
+                _dismiss_popups(pg)
+                if not _is_blocked(pg):
+                    html   = pg.content()
+                    engine = 'patchright'
+            except Exception:
+                pass
+            finally:
+                if pg:
+                    try: pg.close()
+                    except Exception: pass
+                if ctx:
+                    try: ctx.close()
+                    except Exception: pass
+
+        # Engine B — curl-cffi fallback (for Cloudflare-free or static catalog pages
+        # where Patchright was blocked or unavailable)
+        if html is None and _HAS_CURL_CFFI:
             for impersonate in ('chrome124', 'chrome120', 'firefox122'):
                 try:
                     with _cffi.Session(impersonate=impersonate) as s:
@@ -1030,34 +1121,6 @@ def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) 
                     break
                 except Exception:
                     continue
-
-        # Engine B — Patchright (full JS render; handles CF-protected catalog pages)
-        if html is None and _HAS_PATCHRIGHT:
-            ctx = pg = None
-            try:
-                ctx = browser.new_context(
-                    user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                                'Chrome/124.0.0.0 Safari/537.36'),
-                    viewport={'width': 1280, 'height': 900},
-                )
-                pg = ctx.new_page()
-                pg.goto(current_url, wait_until='load', timeout=45000)
-                pg.wait_for_timeout(random.randint(1500, 2500))
-                _dismiss_popups(pg)
-                _human_scroll(pg)
-                if not _is_blocked(pg):
-                    html   = pg.content()
-                    engine = 'patchright'
-            except Exception:
-                pass
-            finally:
-                if pg:
-                    try: pg.close()
-                    except Exception: pass
-                if ctx:
-                    try: ctx.close()
-                    except Exception: pass
 
         if not html:
             print(f'    → could not fetch page {page_num}')
