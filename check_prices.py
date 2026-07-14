@@ -888,6 +888,14 @@ def check_listing(url: str, browser) -> CheckResult:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _parse_urls(cell_value: str) -> list:
+    """Return all http(s) URLs from a cell that may contain comma- or
+    newline-separated values (e.g. two eBay listings for the same part so
+    the checker can average their prices)."""
+    return [u.strip() for u in re.split(r'[,\n]+', cell_value)
+            if u.strip().startswith('http')]
+
+
 def main():
     if not _HAS_PATCHRIGHT:
         raise SystemExit(
@@ -914,42 +922,98 @@ def main():
             all_values = sheet.get_all_values()
             for row_idx in range(cols['header_row'] + 1, len(all_values) + 1):
                 row = all_values[row_idx - 1]
-                url = row[cols['url_col'] - 1] if len(row) >= cols['url_col'] else ''
-                if not url.startswith('http'):
+                url_cell = row[cols['url_col'] - 1] if len(row) >= cols['url_col'] else ''
+                urls = _parse_urls(url_cell)
+                if not urls:
                     continue
 
-                print(f'\n{sheet.title} row {row_idx}: {url}')
-                result = check_listing(url, browser)
+                old_price_str = row[cols['price_col'] - 1] if len(row) >= cols['price_col'] else ''
 
-                if result.sold:
-                    # Keep the last real price — only update status and timestamp
-                    if cols['status_col']:
-                        sheet.update_cell(row_idx, cols['status_col'], result.sold)
-                    if cols['checked_col']:
-                        sheet.update_cell(row_idx, cols['checked_col'],
-                                          f'{now}  {result.sold}')
+                # ── Single URL — original behavior ─────────────────────────
+                if len(urls) == 1:
+                    url = urls[0]
+                    print(f'\n{sheet.title} row {row_idx}: {url}')
+                    result = check_listing(url, browser)
 
-                elif result.price is not None:
-                    old_price = row[cols['price_col'] - 1] if len(row) >= cols['price_col'] else ''
-                    sheet.update_cell(row_idx, cols['price_col'], result.price)
-                    note = f'{now}  [{result.engine}]'
-                    if old_price and old_price not in ('TBD', ''):
-                        try:
-                            if float(str(old_price).replace('$', '').replace(',', '')) != result.price:
-                                note += f'  ⚠ CHANGED from ${old_price}'
-                            else:
+                    if result.sold:
+                        if cols['status_col']:
+                            sheet.update_cell(row_idx, cols['status_col'], result.sold)
+                        if cols['checked_col']:
+                            sheet.update_cell(row_idx, cols['checked_col'],
+                                              f'{now}  {result.sold}')
+
+                    elif result.price is not None:
+                        sheet.update_cell(row_idx, cols['price_col'], result.price)
+                        note = f'{now}  [{result.engine}]'
+                        if old_price_str and old_price_str not in ('TBD', ''):
+                            try:
+                                if float(old_price_str.replace('$', '').replace(',', '')) != result.price:
+                                    note += f'  ⚠ CHANGED from ${old_price_str}'
+                                else:
+                                    note += '  — unchanged'
+                            except ValueError:
                                 note += '  — unchanged'
-                        except ValueError:
-                            note += '  — unchanged'
-                    if cols['checked_col']:
-                        sheet.update_cell(row_idx, cols['checked_col'], note)
-                    if cols['status_col']:
-                        sheet.update_cell(row_idx, cols['status_col'], 'Available')
+                        if cols['checked_col']:
+                            sheet.update_cell(row_idx, cols['checked_col'], note)
+                        if cols['status_col']:
+                            sheet.update_cell(row_idx, cols['status_col'], 'Available')
 
+                    else:
+                        if cols['checked_col']:
+                            sheet.update_cell(row_idx, cols['checked_col'],
+                                              f'{now}  all engines tried — {result.debug}')
+
+                # ── Multiple URLs — check each, write average ───────────────
                 else:
-                    if cols['checked_col']:
-                        sheet.update_cell(row_idx, cols['checked_col'],
-                                          f'{now}  all engines tried — {result.debug}')
+                    print(f'\n{sheet.title} row {row_idx}: {len(urls)} URLs (will average)')
+                    results = []
+                    for url in urls:
+                        print(f'  checking: {url}')
+                        results.append((url, check_listing(url, browser)))
+
+                    # If any URL is sold, flag the whole row
+                    sold_hit = next(((u, r.sold) for u, r in results if r.sold), None)
+                    if sold_hit:
+                        sold_url, sold_reason = sold_hit
+                        if cols['status_col']:
+                            sheet.update_cell(row_idx, cols['status_col'], sold_reason)
+                        if cols['checked_col']:
+                            sheet.update_cell(row_idx, cols['checked_col'],
+                                              f'{now}  {sold_reason}')
+
+                    else:
+                        found = [(u, r) for u, r in results if r.price is not None]
+                        if found:
+                            avg = round(sum(r.price for _, r in found) / len(found), 2)
+                            parts = ' · '.join(
+                                f'${r.price:,.0f} [{r.engine}]' for _, r in found
+                            )
+                            note = (f'{now}  avg ${avg:,.0f} '
+                                    f'({len(found)}/{len(urls)} URLs): {parts}')
+                            if old_price_str and old_price_str not in ('TBD', ''):
+                                try:
+                                    old = float(old_price_str.replace('$', '').replace(',', ''))
+                                    if old != avg:
+                                        note += f'  ⚠ CHANGED from ${old:,.0f}'
+                                    else:
+                                        note += '  — unchanged'
+                                except ValueError:
+                                    pass
+                            sheet.update_cell(row_idx, cols['price_col'], avg)
+                            if cols['checked_col']:
+                                sheet.update_cell(row_idx, cols['checked_col'], note)
+                            if cols['status_col']:
+                                sheet.update_cell(row_idx, cols['status_col'], 'Available')
+
+                        else:
+                            debug = '; '.join(
+                                r.debug for _, r in results if r.debug
+                            )
+                            if cols['checked_col']:
+                                sheet.update_cell(
+                                    row_idx, cols['checked_col'],
+                                    f'{now}  all {len(urls)} URLs failed — {debug[:120]}'
+                                )
 
         browser.close()
 
