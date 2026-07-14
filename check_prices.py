@@ -42,6 +42,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -109,6 +110,9 @@ _PRICE_PATTERNS = [
 
 # Redirect path fragments that indicate a listing was removed
 _SOLD_REDIRECT_MARKERS = ['/search', '/results', '/inventory?', '/not-found', '/404', '/error']
+
+# Safety cap: never follow more than this many pagination pages for a single catalog URL
+MAX_CATALOG_PAGES = 20
 
 # ── Result type ────────────────────────────────────────────────────────────────
 
@@ -888,6 +892,200 @@ def check_listing(url: str, browser) -> CheckResult:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _is_catalog_url(url: str) -> bool:
+    """Heuristic: True when the URL looks like a multi-listing category/search page
+    rather than a single-item detail page.
+
+    Single listings almost always have a VIN, a model year, or a long numeric ID
+    in the path. Category pages have slugs like /used-drivetrains/lsa-drivetrains/
+    with none of those signals."""
+    path = urlparse(url).path.rstrip('/')
+    # VIN (17 alphanumeric, no I/O/Q) → single listing
+    if re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', path, re.IGNORECASE):
+        return False
+    # Model year in path → single listing (e.g. /used-2004-gmc-sierra/)
+    if re.search(r'(?:^|[-/])(?:19|20)\d{2}(?:[-/]|$)', path):
+        return False
+    # Long numeric product/listing ID at the end of the path
+    if re.search(r'/\d{5,}/?$', path):
+        return False
+    # Anything else: treat as potential catalog; if only 1 price is found on the
+    # page the result is indistinguishable from a regular single-listing check.
+    return True
+
+
+def _extract_all_prices_from_html(html: str, min_price: float = 100.0) -> list:
+    """Return all unique prices found in raw HTML that are at or above min_price,
+    sorted ascending. Prices below min_price (shipping icons, $0 placeholders, etc.)
+    are excluded as noise."""
+    found = set()
+    for pat in _PRICE_PATTERNS:
+        for m in re.finditer(pat, html):
+            try:
+                p = float(m.group(1).replace(',', ''))
+                if p >= min_price:
+                    found.add(p)
+            except ValueError:
+                pass
+    return sorted(found)
+
+
+def _find_next_page_url(html: str, current_url: str) -> Optional[str]:
+    """Find the URL of the next pagination page, or None if on the last page.
+
+    Handles rel=next (WordPress/WooCommerce standard), class=next patterns,
+    aria-label=next, and common Next button text as a last resort."""
+    def resolve(href: str) -> Optional[str]:
+        full = urljoin(current_url, href.replace('&amp;', '&'))
+        return full if full.rstrip('/') != current_url.rstrip('/') else None
+
+    # rel="next" (most reliable — semantic HTML standard)
+    for pat in [
+        r'<(?:a|link)[^>]+rel=["\']next["\'][^>]*href=["\']([^"\']+)["\']',
+        r'<(?:a|link)[^>]+href=["\']([^"\']+)["\'][^>]*rel=["\']next["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            r = resolve(m.group(1))
+            if r:
+                return r
+
+    # class="next" / class="page-next" (WooCommerce, many frameworks)
+    for pat in [
+        r'<a[^>]+class=["\'][^"\']*\bnext\b[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*\bnext\b[^"\']*["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            r = resolve(m.group(1))
+            if r:
+                return r
+
+    # aria-label containing "next"
+    for pat in [
+        r'<a[^>]+aria-label=["\'][^"\']*next[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*aria-label=["\'][^"\']*next[^"\']*["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            r = resolve(m.group(1))
+            if r:
+                return r
+
+    # Visible "Next" / "›" / "»" text inside a link (last resort)
+    m = re.search(
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>\s*(?:Next(?:\s+Page)?|›|»)\s*</a>',
+        html, re.IGNORECASE)
+    if m:
+        r = resolve(m.group(1))
+        if r:
+            return r
+
+    return None
+
+
+def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) -> tuple:
+    """Fetch a multi-listing catalog/category URL and collect all prices across all
+    paginated pages.
+
+    Engines tried per page: curl-cffi first (no browser overhead) → Patchright
+    (full JS render) as fallback. Pagination follows rel=next / class=next links
+    up to max_pages pages.
+
+    Returns: (prices: list[float], engine: str, page_count: int)
+    """
+    all_prices  = []
+    engine_used = 'none'
+    current_url = url
+    visited     = set()
+    page_num    = 0
+
+    while current_url and page_num < max_pages:
+        norm = current_url.rstrip('/')
+        if norm in visited:
+            break
+        visited.add(norm)
+        page_num += 1
+
+        print(f'    catalog p{page_num}: {current_url}')
+        html   = None
+        engine = 'none'
+
+        # Engine A — curl-cffi (fastest, no browser spin-up needed)
+        if _HAS_CURL_CFFI:
+            for impersonate in ('chrome124', 'chrome120', 'firefox122'):
+                try:
+                    with _cffi.Session(impersonate=impersonate) as s:
+                        resp = s.get(current_url, timeout=30, allow_redirects=True,
+                                     headers={'Accept-Language': 'en-US,en;q=0.9'})
+                    if resp.status_code != 200:
+                        continue
+                    candidate = resp.text
+                    t = re.search(r'<title[^>]*>(.*?)</title>', candidate[:3000],
+                                  re.IGNORECASE | re.DOTALL)
+                    if (t and t.group(1).strip().lower() in _BLOCK_TITLES):
+                        continue
+                    html   = candidate
+                    engine = 'curl-cffi'
+                    break
+                except Exception:
+                    continue
+
+        # Engine B — Patchright (full JS render; handles CF-protected catalog pages)
+        if html is None and _HAS_PATCHRIGHT:
+            ctx = pg = None
+            try:
+                ctx = browser.new_context(
+                    user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                'Chrome/124.0.0.0 Safari/537.36'),
+                    viewport={'width': 1280, 'height': 900},
+                )
+                pg = ctx.new_page()
+                pg.goto(current_url, wait_until='load', timeout=45000)
+                pg.wait_for_timeout(random.randint(1500, 2500))
+                _dismiss_popups(pg)
+                _human_scroll(pg)
+                if not _is_blocked(pg):
+                    html   = pg.content()
+                    engine = 'patchright'
+            except Exception:
+                pass
+            finally:
+                if pg:
+                    try: pg.close()
+                    except Exception: pass
+                if ctx:
+                    try: ctx.close()
+                    except Exception: pass
+
+        if not html:
+            print(f'    → could not fetch page {page_num}')
+            break
+
+        if engine_used == 'none':
+            engine_used = engine
+
+        page_prices = _extract_all_prices_from_html(html)
+        if not page_prices:
+            # No prices on this page — stop following pagination rather than
+            # fetching more empty pages.
+            print(f'    → no prices on page {page_num}, stopping pagination')
+            break
+
+        all_prices.extend(page_prices)
+        sample = ', '.join(f'${p:,.0f}' for p in page_prices[:5])
+        extra  = f' +{len(page_prices) - 5} more' if len(page_prices) > 5 else ''
+        print(f'    → {len(page_prices)} prices [{engine}]: {sample}{extra}')
+
+        next_url = _find_next_page_url(html, current_url)
+        if not next_url or next_url.rstrip('/') in visited:
+            break
+        current_url = next_url
+
+    return all_prices, engine_used, page_num
+
+
 def _parse_urls(cell_value: str) -> list:
     """Return all http(s) URLs from a cell that may contain comma- or
     newline-separated values (e.g. two eBay listings for the same part so
@@ -929,91 +1127,105 @@ def main():
 
                 old_price_str = row[cols['price_col'] - 1] if len(row) >= cols['price_col'] else ''
 
-                # ── Single URL — original behavior ─────────────────────────
-                if len(urls) == 1:
-                    url = urls[0]
-                    print(f'\n{sheet.title} row {row_idx}: {url}')
-                    result = check_listing(url, browser)
+                # collected: (price, engine) tuples — one per item found, whether
+                # that item came from a single listing or a catalog page.
+                collected          = []
+                any_sold           = None
+                any_debug          = []
+                catalog_page_total = 0  # sum of pages followed across all catalog URLs
 
-                    if result.sold:
-                        if cols['status_col']:
-                            sheet.update_cell(row_idx, cols['status_col'], result.sold)
-                        if cols['checked_col']:
-                            sheet.update_cell(row_idx, cols['checked_col'],
-                                              f'{now}  {result.sold}')
+                for url in urls:
+                    if _is_catalog_url(url):
+                        print(f'\n{sheet.title} row {row_idx}: catalog → {url}')
+                        prices, eng, pages = scrape_catalog_pages(url, browser)
+                        catalog_page_total += pages
+                        if prices:
+                            collected.extend((p, eng) for p in prices)
+                        else:
+                            any_debug.append(f'catalog {url[:60]}: no prices found')
+                    else:
+                        print(f'\n{sheet.title} row {row_idx}: listing → {url}')
+                        result = check_listing(url, browser)
+                        if result.sold:
+                            any_sold = result.sold
+                            break
+                        if result.price is not None:
+                            collected.append((result.price, result.engine))
+                        else:
+                            any_debug.append(result.debug)
 
-                    elif result.price is not None:
-                        sheet.update_cell(row_idx, cols['price_col'], result.price)
-                        note = f'{now}  [{result.engine}]'
+                # ── Write results ──────────────────────────────────────────────
+                if any_sold:
+                    if cols['status_col']:
+                        sheet.update_cell(row_idx, cols['status_col'], any_sold)
+                    if cols['checked_col']:
+                        sheet.update_cell(row_idx, cols['checked_col'],
+                                          f'{now}  {any_sold}')
+
+                elif collected:
+                    prices  = [p for p, _ in collected]
+                    avg     = round(sum(prices) / len(prices), 2)
+                    engines = list(dict.fromkeys(e for _, e in collected))  # unique, ordered
+
+                    if len(collected) == 1 and catalog_page_total == 0:
+                        # Single listing URL → keep original compact note
+                        note = f'{now}  [{engines[0]}]'
                         if old_price_str and old_price_str not in ('TBD', ''):
                             try:
-                                if float(old_price_str.replace('$', '').replace(',', '')) != result.price:
-                                    note += f'  ⚠ CHANGED from ${old_price_str}'
-                                else:
-                                    note += '  — unchanged'
+                                old = float(old_price_str.replace('$', '').replace(',', ''))
+                                note += ('  ⚠ CHANGED from $' + old_price_str
+                                         if old != avg else '  — unchanged')
                             except ValueError:
-                                note += '  — unchanged'
+                                pass
+                        sheet.update_cell(row_idx, cols['price_col'], avg)
+                        if cols['checked_col']:
+                            sheet.update_cell(row_idx, cols['checked_col'], note)
+                        if cols['status_col']:
+                            sheet.update_cell(row_idx, cols['status_col'], 'Available')
+
+                    elif catalog_page_total > 0:
+                        # At least one catalog URL — summarise by item+page count
+                        note = (f'{now}  avg ${avg:,.0f}  '
+                                f'({len(prices)} items / {catalog_page_total} page(s) '
+                                f'via {", ".join(engines)})')
+                        if old_price_str and old_price_str not in ('TBD', ''):
+                            try:
+                                old = float(old_price_str.replace('$', '').replace(',', ''))
+                                note += (f'  ⚠ CHANGED from ${old:,.0f}'
+                                         if old != avg else '  — unchanged')
+                            except ValueError:
+                                pass
+                        sheet.update_cell(row_idx, cols['price_col'], avg)
                         if cols['checked_col']:
                             sheet.update_cell(row_idx, cols['checked_col'], note)
                         if cols['status_col']:
                             sheet.update_cell(row_idx, cols['status_col'], 'Available')
 
                     else:
+                        # Multiple comma-separated listing URLs → per-URL breakdown
+                        parts = ' · '.join(f'${p:,.0f} [{e}]' for p, e in collected)
+                        note  = (f'{now}  avg ${avg:,.0f} '
+                                 f'({len(prices)}/{len(urls)} URLs): {parts}')
+                        if old_price_str and old_price_str not in ('TBD', ''):
+                            try:
+                                old = float(old_price_str.replace('$', '').replace(',', ''))
+                                note += (f'  ⚠ CHANGED from ${old:,.0f}'
+                                         if old != avg else '  — unchanged')
+                            except ValueError:
+                                pass
+                        sheet.update_cell(row_idx, cols['price_col'], avg)
                         if cols['checked_col']:
-                            sheet.update_cell(row_idx, cols['checked_col'],
-                                              f'{now}  all engines tried — {result.debug}')
-
-                # ── Multiple URLs — check each, write average ───────────────
-                else:
-                    print(f'\n{sheet.title} row {row_idx}: {len(urls)} URLs (will average)')
-                    results = []
-                    for url in urls:
-                        print(f'  checking: {url}')
-                        results.append((url, check_listing(url, browser)))
-
-                    # If any URL is sold, flag the whole row
-                    sold_hit = next(((u, r.sold) for u, r in results if r.sold), None)
-                    if sold_hit:
-                        sold_url, sold_reason = sold_hit
+                            sheet.update_cell(row_idx, cols['checked_col'], note)
                         if cols['status_col']:
-                            sheet.update_cell(row_idx, cols['status_col'], sold_reason)
-                        if cols['checked_col']:
-                            sheet.update_cell(row_idx, cols['checked_col'],
-                                              f'{now}  {sold_reason}')
+                            sheet.update_cell(row_idx, cols['status_col'], 'Available')
 
-                    else:
-                        found = [(u, r) for u, r in results if r.price is not None]
-                        if found:
-                            avg = round(sum(r.price for _, r in found) / len(found), 2)
-                            parts = ' · '.join(
-                                f'${r.price:,.0f} [{r.engine}]' for _, r in found
-                            )
-                            note = (f'{now}  avg ${avg:,.0f} '
-                                    f'({len(found)}/{len(urls)} URLs): {parts}')
-                            if old_price_str and old_price_str not in ('TBD', ''):
-                                try:
-                                    old = float(old_price_str.replace('$', '').replace(',', ''))
-                                    if old != avg:
-                                        note += f'  ⚠ CHANGED from ${old:,.0f}'
-                                    else:
-                                        note += '  — unchanged'
-                                except ValueError:
-                                    pass
-                            sheet.update_cell(row_idx, cols['price_col'], avg)
-                            if cols['checked_col']:
-                                sheet.update_cell(row_idx, cols['checked_col'], note)
-                            if cols['status_col']:
-                                sheet.update_cell(row_idx, cols['status_col'], 'Available')
-
-                        else:
-                            debug = '; '.join(
-                                r.debug for _, r in results if r.debug
-                            )
-                            if cols['checked_col']:
-                                sheet.update_cell(
-                                    row_idx, cols['checked_col'],
-                                    f'{now}  all {len(urls)} URLs failed — {debug[:120]}'
-                                )
+                else:
+                    debug = '; '.join(any_debug) or 'all engines tried'
+                    if cols['checked_col']:
+                        sheet.update_cell(
+                            row_idx, cols['checked_col'],
+                            f'{now}  no prices found — {debug[:120]}'
+                        )
 
         browser.close()
 
