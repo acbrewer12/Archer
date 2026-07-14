@@ -1081,73 +1081,71 @@ def _find_next_page_url(html: str, current_url: str) -> Optional[str]:
     return None
 
 
-_CATALOG_PRICE_JS = """
-() => {
-    /* Return one price per product card — preserves items sharing the same price.
-       Priority order:
-       1. itemprop="price" content attr  (BigCommerce, WooCommerce, Shopify schema.org)
+_CATALOG_PRICE_JS = """(function () {
+    /* IIFE — return one price per product card, preserving duplicate prices.
+       Strategy order (first that finds 2+ prices wins):
+       1. itemprop="price" content attr  (BigCommerce/WooCommerce/Shopify schema.org)
        2. data-product-price attribute    (BigCommerce Stencil themes)
        3. data-price attribute            (WooCommerce / generic)
-       4. Innertext of common price selectors, deduped by parent card element */
-    const prices = [];
-    const MIN = 100;
+       4. Common price CSS selectors, one price per card ancestor */
+    var prices = [];
+    var MIN = 100;
 
-    /* Schema.org — most reliable: one element per product */
-    document.querySelectorAll('[itemprop="price"][content]').forEach(el => {
-        const p = parseFloat(el.getAttribute('content'));
+    /* Strategy 1: Schema.org content attribute */
+    document.querySelectorAll('[itemprop="price"][content]').forEach(function(el) {
+        var p = parseFloat(el.getAttribute('content'));
         if (!isNaN(p) && p >= MIN) prices.push(p);
     });
     if (prices.length >= 2) return prices;
 
-    /* BigCommerce Stencil data-product-price */
-    document.querySelectorAll('[data-product-price]').forEach(el => {
-        const txt = el.textContent.replace(/[^0-9.,]/g,'');
-        const p = parseFloat(txt.replace(/,/g,''));
+    /* Strategy 2: BigCommerce Stencil data-product-price */
+    document.querySelectorAll('[data-product-price]').forEach(function(el) {
+        var txt = el.textContent.replace(/[^0-9.,]/g, '');
+        var p = parseFloat(txt.replace(/,/g, ''));
         if (!isNaN(p) && p >= MIN) prices.push(p);
     });
     if (prices.length >= 2) return prices;
 
-    /* Generic data-price */
-    document.querySelectorAll('[data-price]').forEach(el => {
-        const p = parseFloat(el.getAttribute('data-price'));
+    /* Strategy 3: Generic data-price attribute value */
+    document.querySelectorAll('[data-price]').forEach(function(el) {
+        var p = parseFloat(el.getAttribute('data-price'));
         if (!isNaN(p) && p >= MIN) prices.push(p);
     });
     if (prices.length >= 2) return prices;
 
-    /* Last resort: common price class selectors — walk the DOM and grab
-       one price per nearest product-card ancestor to avoid duplicates. */
-    const seen = new WeakSet();
-    const sels = ['.price--main', '.price-value', '.woocommerce-Price-amount',
-                  '.product-price', '.bc-product-card__price', '.price'];
-    for (const sel of sels) {
-        const els = [...document.querySelectorAll(sel)];
+    /* Strategy 4: Common price class selectors — one price per card ancestor */
+    var seen = new WeakSet();
+    var sels = ['.price--main', '.price-value', '.woocommerce-Price-amount',
+                '.product-price', '.bc-product-card__price', '.price--withoutTax',
+                '.price'];
+    for (var si = 0; si < sels.length; si++) {
+        var sel = sels[si];
+        var els = Array.prototype.slice.call(document.querySelectorAll(sel));
         if (els.length < 2) continue;
-        els.forEach(el => {
-            /* Walk up to find the card boundary */
-            let card = el;
-            for (let i = 0; i < 6; i++) {
+        els.forEach(function(el) {
+            var card = el;
+            for (var i = 0; i < 8; i++) {
                 if (!card.parentElement) break;
                 card = card.parentElement;
-                const tag = card.tagName.toLowerCase();
-                const cls = (card.className || '').toLowerCase();
+                var tag = card.tagName.toLowerCase();
+                var cls = (card.className || '').toLowerCase();
                 if (tag === 'article' || tag === 'li' ||
-                    cls.includes('product') || cls.includes('card') ||
-                    cls.includes('item') || cls.includes('listing')) break;
+                    cls.indexOf('product') !== -1 || cls.indexOf('card') !== -1 ||
+                    cls.indexOf('item') !== -1 || cls.indexOf('listing') !== -1) break;
             }
             if (seen.has(card)) return;
             seen.add(card);
-            const txt = el.textContent.replace(/[,$\\s]/g,'');
-            const m = txt.match(/[0-9]+(?:\\.[0-9]{1,2})?/);
+            var txt = el.textContent.replace(/[$,\\s]/g, '');
+            var m = txt.match(/[0-9]+(?:\\.[0-9]{1,2})?/);
             if (m) {
-                const p = parseFloat(m[0]);
+                var p = parseFloat(m[0]);
                 if (!isNaN(p) && p >= MIN) prices.push(p);
             }
         });
         if (prices.length >= 2) return prices;
     }
     return prices;
-}
-"""
+}())"""
 
 
 def _extract_prices_via_js(page) -> list:
@@ -1155,10 +1153,13 @@ def _extract_prices_via_js(page) -> list:
     Uses DOM-level counting so two items at the same price both appear."""
     try:
         result = page.evaluate(_CATALOG_PRICE_JS)
-        if result and isinstance(result, list):
+        if isinstance(result, list) and result:
+            print(f'    [js-extract] {len(result)} prices found via DOM')
             return sorted(float(p) for p in result if p)
-    except Exception:
-        pass
+        print(f'    [js-extract] empty result (type={type(result).__name__}), '
+              f'falling back to HTML extraction')
+    except Exception as e:
+        print(f'    [js-extract] exception: {str(e)[:200]} — falling back to HTML extraction')
     return []
 
 
