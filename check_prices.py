@@ -443,7 +443,81 @@ def _try_curl_cffi(url: str) -> CheckResult:
 
 # ── Engine 1: Patchright (patched Chromium) ───────────────────────────────────
 
-def _try_patchright(url: str, browser) -> CheckResult:
+def _apply_page_options(page, options: dict) -> int:
+    """Select values in <select> dropdowns that match the given {label: value} dict.
+
+    For each entry, finds the <select> whose nearest visible label text contains
+    the key (case-insensitive), then picks the option whose visible text or value
+    attribute matches the value string (also case-insensitive).  Waits briefly
+    after each selection so JS price-update handlers can fire.
+
+    Returns the number of options successfully applied."""
+    if not options:
+        return 0
+    applied = 0
+    try:
+        selects = page.locator('select').all()
+    except Exception:
+        return 0
+
+    for sel_loc in selects:
+        try:
+            label_text = sel_loc.evaluate("""el => {
+                if (el.id) {
+                    const lbl = document.querySelector('label[for="' + el.id + '"]');
+                    if (lbl) return lbl.textContent.trim();
+                }
+                let sib = el.previousElementSibling;
+                while (sib) {
+                    const t = sib.textContent.trim();
+                    if (t) return t;
+                    sib = sib.previousElementSibling;
+                }
+                let p = el.parentElement;
+                for (let i = 0; i < 5; i++) {
+                    if (!p) break;
+                    const lbls = p.querySelectorAll('label');
+                    if (lbls.length) return lbls[0].textContent.trim();
+                    p = p.parentElement;
+                }
+                return el.name || el.id || '';
+            }""") or ''
+        except Exception:
+            label_text = ''
+
+        for opt_name, opt_value in options.items():
+            if opt_name.lower() not in label_text.lower():
+                continue
+            # Try visible text match first, then raw value attribute
+            matched = False
+            for attempt in ({'label': opt_value}, {'value': opt_value}):
+                try:
+                    sel_loc.select_option(**attempt, timeout=3000)
+                    page.wait_for_timeout(1200)
+                    applied += 1
+                    matched = True
+                    break
+                except Exception:
+                    continue
+            if not matched:
+                # Partial text match: find the option whose text contains opt_value
+                try:
+                    opts_text = sel_loc.evaluate(
+                        "el => Array.from(el.options).map(o => o.text.trim())")
+                    for o_text in (opts_text or []):
+                        if opt_value.lower() in o_text.lower():
+                            sel_loc.select_option(label=o_text, timeout=3000)
+                            page.wait_for_timeout(1200)
+                            applied += 1
+                            break
+                except Exception:
+                    pass
+            break  # move on to next select once we've tried this opt_name
+
+    return applied
+
+
+def _try_patchright(url: str, browser, options: dict = None) -> CheckResult:
     """Fresh browser context per URL so state never leaks between listings."""
     ctx = page = None
     try:
@@ -458,6 +532,13 @@ def _try_patchright(url: str, browser) -> CheckResult:
         _dismiss_popups(page)
         _human_scroll(page)
         _dismiss_popups(page)
+        if options:
+            n = _apply_page_options(page, options)
+            print(f'    [options] applied {n}/{len(options)}: {options}')
+            if n:
+                # Give JS time to update the displayed price, then re-scroll
+                page.wait_for_timeout(1500)
+                _human_scroll(page)
         return _page_to_result(page, resp, url, 'patchright')
     except Exception as e:
         return CheckResult(price=None, sold=None,
@@ -858,12 +939,18 @@ def _try_zenrows(url: str) -> CheckResult:
 
 # ── Waterfall ──────────────────────────────────────────────────────────────────
 
-def check_listing(url: str, browser) -> CheckResult:
-    """Try each engine in order; return as soon as price or sold status is found."""
+def check_listing(url: str, browser, options: dict = None) -> CheckResult:
+    """Try each engine in order; return as soon as price or sold status is found.
+
+    options: dict of {label: value} pairs to select in <select> dropdowns before
+    reading the price (e.g. {'Engine Type': 'LS3', 'Transmission': '6-Speed Manual'}).
+    When options are provided curl-cffi is skipped because option selection requires
+    a real browser with JavaScript."""
     result = CheckResult(price=None, sold=None, debug='no engines available', engine='none')
 
-    # Engine 0 — curl-cffi (TLS impersonation, no browser, fastest)
-    if _HAS_CURL_CFFI:
+    # Engine 0 — curl-cffi (TLS impersonation, no browser, fastest).
+    # Skipped when options are present — selecting dropdowns needs a live browser.
+    if _HAS_CURL_CFFI and not options:
         result = _try_curl_cffi(url)
         print(f'    curl-cffi    → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
         if result.price is not None or result.sold is not None:
@@ -872,7 +959,7 @@ def check_listing(url: str, browser) -> CheckResult:
 
     # Engine 1 — Patchright (patched Chromium, no external service needed)
     if _HAS_PATCHRIGHT:
-        result = _try_patchright(url, browser)
+        result = _try_patchright(url, browser, options=options)
         print(f'    patchright   → price={result.price}  sold={bool(result.sold)}  blocked={result.blocked}')
         if result.price is not None or result.sold is not None:
             return result
@@ -1339,11 +1426,29 @@ def scrape_catalog_pages(url: str, browser, max_pages: int = MAX_CATALOG_PAGES) 
 
 
 def _parse_urls(cell_value: str) -> list:
-    """Return all http(s) URLs from a cell that may contain comma- or
-    newline-separated values (e.g. two eBay listings for the same part so
-    the checker can average their prices)."""
-    return [u.strip() for u in re.split(r'[,\n]+', cell_value)
-            if u.strip().startswith('http')]
+    """Parse a cell value into a list of (url, options) tuples.
+
+    Each entry in the cell is a URL, optionally followed by option specs
+    separated by ##:
+
+        https://example.com/product ## Engine Type=LS3 ## Trans=6-Speed Manual
+
+    Multiple entries are comma- or newline-separated.  options is a dict
+    (possibly empty) of {label: value} pairs for dropdown selection."""
+    result = []
+    for raw in re.split(r'[,\n]+', cell_value):
+        raw = raw.strip()
+        if not raw.startswith('http'):
+            continue
+        parts = [p.strip() for p in raw.split('##')]
+        url = parts[0].strip()
+        opts = {}
+        for part in parts[1:]:
+            if '=' in part:
+                k, _, v = part.partition('=')
+                opts[k.strip()] = v.strip()
+        result.append((url, opts))
+    return result
 
 
 def main():
@@ -1386,7 +1491,7 @@ def main():
                 any_debug          = []
                 catalog_page_total = 0  # sum of pages followed across all catalog URLs
 
-                for url in urls:
+                for url, opts in urls:
                     if _is_catalog_url(url):
                         print(f'\n{sheet.title} row {row_idx}: catalog → {url}')
                         prices, eng, pages = scrape_catalog_pages(url, browser)
@@ -1396,8 +1501,9 @@ def main():
                         else:
                             any_debug.append(f'catalog {url[:60]}: no prices found')
                     else:
-                        print(f'\n{sheet.title} row {row_idx}: listing → {url}')
-                        result = check_listing(url, browser)
+                        opt_label = f' [opts: {opts}]' if opts else ''
+                        print(f'\n{sheet.title} row {row_idx}: listing → {url}{opt_label}')
+                        result = check_listing(url, browser, options=opts or None)
                         if result.sold:
                             any_sold = result.sold
                             break
