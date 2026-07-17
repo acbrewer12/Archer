@@ -219,7 +219,21 @@ def _all_texts(page) -> list:
 
 
 def _extract_price_from_page(page) -> Optional[float]:
-    """Four-strategy extraction: JSON-LD → meta tags → rendered text → raw HTML."""
+    """Five-strategy extraction: subtotal label → JSON-LD → meta tags → rendered text → raw HTML."""
+
+    # Strategy 0: cart/checkout subtotal label — search rendered text for
+    # "subtotal" (or "sub total / sub-total") immediately before a price.
+    # This runs before JSON-LD so a cart page returns the order subtotal,
+    # not an individual line-item price.
+    try:
+        for text in _all_texts(page):
+            m = re.search(
+                r'sub[-\s]?total[^$\n]{0,40}\$([\d,]+(?:\.\d{2})?)',
+                text, re.IGNORECASE)
+            if m:
+                return float(m.group(1).replace(',', ''))
+    except Exception:
+        pass
 
     # Strategy 1: JSON-LD structured data (most reliable; many listing sites
     # embed this specifically for search-engine indexing)
@@ -908,7 +922,8 @@ def _is_catalog_url(url: str) -> bool:
     Single listings almost always have a VIN, a model year, or a long numeric ID
     in the path. Category pages have slugs like /used-drivetrains/lsa-drivetrains/
     with none of those signals."""
-    path = urlparse(url).path.rstrip('/')
+    parsed = urlparse(url)
+    path   = parsed.path.rstrip('/')
     # VIN (17 alphanumeric, no I/O/Q) → single listing
     if re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', path, re.IGNORECASE):
         return False
@@ -922,6 +937,15 @@ def _is_catalog_url(url: str) -> bool:
     if re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
                  path, re.IGNORECASE):
         return False
+    # Cart / checkout / order pages — always a single page, never a paginated catalog.
+    # Check both path and query-param names (e.g. cartIdToken, checkoutToken).
+    combined = (path + '&' + parsed.query).lower()
+    if re.search(r'\b(cart|checkout|basket|uceditor|order)\b', combined):
+        return False
+    # Long hex session token in any query parameter value → session-scoped single page
+    for val in parse_qs(parsed.query).values():
+        if val and re.fullmatch(r'[0-9A-Fa-f]{32,}', val[0]):
+            return False
     # Anything else: treat as potential catalog; if only 1 price is found on the
     # page the result is indistinguishable from a regular single-listing check.
     return True
