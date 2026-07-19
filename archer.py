@@ -175,6 +175,7 @@ from blueprints.auth     import bp as _auth_bp
 from blueprints.vehicle  import bp as _vehicle_bp
 from blueprints.build    import bp as _build_bp
 from blueprints.nav      import bp as _nav_bp
+from blueprints.roku     import bp as _roku_bp
 display_app.register_blueprint(_fans_bp)
 display_app.register_blueprint(_modules_bp)
 display_app.register_blueprint(_terminal_bp)
@@ -183,6 +184,7 @@ display_app.register_blueprint(_auth_bp)
 display_app.register_blueprint(_vehicle_bp)
 display_app.register_blueprint(_build_bp)
 display_app.register_blueprint(_nav_bp)
+display_app.register_blueprint(_roku_bp)
 
 @display_app.route('/csrf_token')
 def csrf_token_endpoint():

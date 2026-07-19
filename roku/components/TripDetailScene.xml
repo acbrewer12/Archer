@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TripDetailScene — stats card for a single trip.
+  Receives tripData AA from MainScene (from /roku/drives, not a network fetch).
+  Optionally fires a TelemetryTask to get fault_codes / ethanol / weather.
+  Signals closeRequested when Back is pressed.
+-->
+<component name="TripDetailScene" type="Group">
+    <interface>
+        <field id="serverUrl"      type="string"    value="" />
+        <field id="authToken"      type="string"    value="" />
+        <!-- Drive summary AA passed directly from the drives list -->
+        <field id="tripData"       type="assocarray" />
+        <field id="closeRequested" type="boolean"   value="false" />
+    </interface>
+
+    <children>
+        <Rectangle color="#0d0d0d" width="1920" height="1080" />
+
+        <Label text="Back  ←"
+               translation="[80, 52]"
+               font="font:SmallSystemFont"
+               color="#3a3a3a" />
+
+        <!-- Date + road as subtitle -->
+        <Label id="headerDate"
+               text=""
+               translation="[80, 88]"
+               font="font:LargeBoldSystemFont"
+               color="#e8e8e8" />
+        <Label id="headerRoad"
+               text=""
+               translation="[80, 148]"
+               font="font:MediumSystemFont"
+               color="#7a7a7a" />
+
+        <!-- Two-column stat grid, drawn in BrightScript -->
+        <Label id="col1"
+               text=""
+               translation="[80, 220]"
+               font="font:MediumSystemFont"
+               color="#c0c0c0"
+               width="760"
+               wrap="true" />
+        <Label id="col2"
+               text=""
+               translation="[920, 220]"
+               font="font:MediumSystemFont"
+               color="#c0c0c0"
+               width="760"
+               wrap="true" />
+
+        <!-- Extended data (fault codes, weather) fetched via TelemetryTask -->
+        <Label id="extLabel"
+               text=""
+               translation="[80, 700]"
+               font="font:SmallSystemFont"
+               color="#7a7a7a"
+               width="1760"
+               wrap="true" />
+    </children>
+
+    <script type="text/brightscript" uri="pkg:/components/TripDetailScene.brs" />
+</component>
