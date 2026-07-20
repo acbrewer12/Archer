@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="StatusTask" type="Task" funcName="runStatusTask">
+    <interface>
+        <field id="serverUrl" type="string" value="" />
+        <field id="authToken" type="string" value="" />
+        <!-- Output fields observed by MainScene -->
+        <field id="status"  type="string" value="unknown" />
+        <field id="message" type="string" value="" />
+        <field id="alert"   type="string" value="" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/StatusTask.brs" />
+</component>

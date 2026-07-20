@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TripListScene — browsable list of past trips.
+  Signals:
+    closeRequested (boolean) → parent removes this scene
+    tripSelected   (boolean) → parent reads selectedTrip AA to open detail
+-->
+<component name="TripListScene" type="Group">
+    <interface>
+        <field id="serverUrl"     type="string"    value="" />
+        <field id="authToken"     type="string"    value="" />
+        <field id="closeRequested" type="boolean"  value="false" />
+        <field id="tripSelected"  type="boolean"   value="false" />
+        <!-- Set before tripSelected fires -->
+        <field id="selectedTrip"  type="assocarray" />
+    </interface>
+
+    <children>
+        <Rectangle color="#0a0a0a" width="1920" height="1080" />
+
+        <Label text="TRIP HISTORY"
+               translation="[80, 80]"
+               font="font:LargeBoldSystemFont"
+               color="#e8e8e8" />
+        <Label text="Back  ←"
+               translation="[1760, 80]"
+               font="font:SmallSystemFont"
+               color="#3a3a3a" />
+
+        <Label id="statusLabel"
+               text="Loading…"
+               translation="[80, 160]"
+               font="font:MediumSystemFont"
+               color="#7a7a7a" />
+
+        <LabelList id="tripList"
+                   translation="[80, 160]"
+                   width="1760"
+                   numRows="12"
+                   font="font:MediumSystemFont"
+                   color="#c0c0c0"
+                   focusedColor="#0a0a0a"
+                   itemSize="[1760, 56]"
+                   itemSpacing="[0, 4]"
+                   visible="false" />
+    </children>
+
+    <script type="text/brightscript" uri="pkg:/components/TripListScene.brs" />
+</component>

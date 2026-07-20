@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="TelemetryTask" type="Task" funcName="runTelemetryTask">
+    <interface>
+        <field id="serverUrl" type="string" value="" />
+        <field id="authToken" type="string" value="" />
+        <field id="tripId"    type="integer" value="0" />
+        <!-- Output: assocarray matching /roku/telemetry response -->
+        <field id="tripData" type="assocarray" />
+        <field id="error"    type="string" value="" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/TelemetryTask.brs" />
+</component>

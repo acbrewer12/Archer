@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="TripListTask" type="Task" funcName="runTripListTask">
+    <interface>
+        <field id="serverUrl" type="string" value="" />
+        <field id="authToken" type="string" value="" />
+        <!-- Output: roArray of AAs, each matching /roku/drives entry -->
+        <field id="drives" type="assocarray" />
+        <field id="error"  type="string" value="" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/TripListTask.brs" />
+</component>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MainScene — root scene.  Shows the status monitor first (Tier-3 style).
+  User presses OK to advance to the main menu, from which Trip History opens.
+  All sub-screen creation/destruction is managed in MainScene.brs.
+-->
+<component name="MainScene" type="Scene">
+    <interface>
+        <field id="serverUrl" type="string" value="" />
+        <field id="authToken" type="string" value="" />
+    </interface>
+
+    <children>
+        <Rectangle id="bg" color="#0a0a0a" width="1920" height="1080" translation="[0,0]" />
+
+        <!-- ── Status monitor group (shown first, dismissed with OK) ── -->
+        <Group id="statusGroup">
+            <!-- Accent bar -->
+            <Rectangle color="#00e5ff" width="80" height="3"
+                       translation="[80, 100]" opacity="0.5" />
+
+            <Label id="titleLabel"
+                   text="ARCHER"
+                   translation="[80, 112]"
+                   font="font:HugeSystemFont"
+                   color="#e8e8e8" />
+
+            <!-- Status dot + text on the same row -->
+            <Rectangle id="statusDot"
+                       width="16" height="16" cornerRadius="8"
+                       color="#404040"
+                       translation="[80, 248]" />
+            <Label id="statusLabel"
+                   text="Connecting…"
+                   translation="[108, 241]"
+                   font="font:MediumBoldSystemFont"
+                   color="#7a7a7a" />
+
+            <!-- Primary message line -->
+            <Label id="messageLabel"
+                   text=""
+                   translation="[80, 300]"
+                   font="font:LargeSystemFont"
+                   color="#e8e8e8"
+                   width="1760"
+                   wrap="true" />
+
+            <!-- Alert (only shown when non-empty) -->
+            <Label id="alertLabel"
+                   text=""
+                   translation="[80, 380]"
+                   font="font:MediumBoldSystemFont"
+                   color="#ff4040"
+                   visible="false" />
+
+            <!-- OK hint -->
+            <Label id="hintLabel"
+                   text="Press  OK  to continue"
+                   translation="[80, 1020]"
+                   font="font:SmallSystemFont"
+                   color="#3a3a3a" />
+        </Group>
+
+        <!-- ── Main menu group (hidden until status dismissed) ── -->
+        <Group id="menuGroup" visible="false">
+            <Label text="ARCHER"
+                   translation="[80, 80]"
+                   font="font:LargeBoldSystemFont"
+                   color="#e8e8e8" />
+            <Label text="SELECT"
+                   translation="[80, 148]"
+                   font="font:SmallBoldSystemFont"
+                   color="#00e5ff" />
+            <LabelList id="mainMenu"
+                       translation="[80, 200]"
+                       width="600"
+                       numRows="6"
+                       font="font:LargeSystemFont"
+                       color="#c0c0c0"
+                       focusedColor="#0a0a0a"
+                       focusBitmapUri=""
+                       itemSize="[600, 60]"
+                       itemSpacing="[0, 8]" />
+        </Group>
+    </children>
+
+    <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+</component>
