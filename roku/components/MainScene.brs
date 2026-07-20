@@ -29,6 +29,8 @@ sub init()
     end for
     m.mainMenu.content = menuContent
     m.mainMenu.observeField("itemSelected", "onMenuSelected")
+
+    m.top.observeField("serverUrl", "onServerUrlSet")
 end sub
 
 

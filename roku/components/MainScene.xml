@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <component name="MainScene" type="Scene">
     <interface>
-        <field id="serverUrl" type="string" value="" onChange="onServerUrlSet" />
+        <field id="serverUrl" type="string" value="" />
         <field id="authToken" type="string" value="" />
     </interface>
 
