@@ -1,11 +1,13 @@
 ' StatusTask.brs — polls /roku/status every 30 seconds
-'
-' Sets m.top.status / .message / .alert which MainScene observes.
+
+sub init()
+    m.top.functionName = "runStatusTask"
+end sub
 
 sub runStatusTask()
     http = CreateObject("roUrlTransfer")
     http.SetCertificatesFile("common:/certs/ca-bundle.crt")
-    http.EnablePeerVerification(false)  ' self-signed cert on the Pi is fine
+    http.EnablePeerVerification(false)
     if m.top.authToken <> ""
         http.AddHeader("Authorization", "Bearer " + m.top.authToken)
     end if
@@ -23,7 +25,7 @@ sub runStatusTask()
                 m.top.alert = alert
             else
                 m.top.status  = "error"
-                m.top.message = "Could not parse server response"
+                m.top.message = "Bad response from server"
                 m.top.alert   = ""
             end if
         else

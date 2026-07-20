@@ -1,14 +1,15 @@
 ' TripListScene.brs
 
 sub init()
-    m.tripList   = m.top.findNode("tripList")
+    m.tripList    = m.top.findNode("tripList")
     m.statusLabel = m.top.findNode("statusLabel")
-    m.drives     = []
+    m.drives      = []
 
     m.tripList.observeField("itemSelected", "onItemSelected")
 
-    ' Kick off the fetch task
     m.task = m.top.CreateChild("TripListTask")
+    if m.task = invalid then return
+
     m.task.serverUrl = m.top.serverUrl
     m.task.authToken = m.top.authToken
     m.task.observeField("drives", "onDrivesLoaded")
@@ -17,8 +18,14 @@ sub init()
 end sub
 
 sub onDrivesLoaded()
-    m.drives = m.task.drives
-    if m.drives = invalid or m.drives.count() = 0
+    result = m.task.drives
+    if result = invalid or not result.DoesExist("list")
+        m.statusLabel.text    = "No trips recorded yet."
+        m.statusLabel.visible = true
+        return
+    end if
+    m.drives = result.list
+    if m.drives.count() = 0
         m.statusLabel.text    = "No trips recorded yet."
         m.statusLabel.visible = true
         return
@@ -30,7 +37,7 @@ sub onDrivesLoaded()
         child.title = drive.label
         content.AppendChild(child)
     end for
-    m.tripList.content = content
+    m.tripList.content  = content
     m.statusLabel.visible = false
     m.tripList.visible    = true
     m.tripList.setFocus(true)
@@ -43,8 +50,8 @@ end sub
 sub onItemSelected()
     idx = m.tripList.itemSelected
     if idx >= 0 and idx < m.drives.count()
-        m.top.selectedTrip  = m.drives[idx]
-        m.top.tripSelected  = true
+        m.top.selectedTrip = m.drives[idx]
+        m.top.tripSelected = true
     end if
 end sub
 

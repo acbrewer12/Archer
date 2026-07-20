@@ -82,11 +82,13 @@ sub onTripData()
     ' Fetch extended data (fault codes, weather, ethanol) in background
     if d.DoesExist("id")
         m.task = m.top.CreateChild("TelemetryTask")
-        m.task.serverUrl = m.top.serverUrl
-        m.task.authToken = m.top.authToken
-        m.task.tripId    = d.id
-        m.task.observeField("tripData", "onTelemetryLoaded")
-        m.task.control = "RUN"
+        if m.task <> invalid
+            m.task.serverUrl = m.top.serverUrl
+            m.task.authToken = m.top.authToken
+            m.task.tripId    = d.id
+            m.task.observeField("tripData", "onTelemetryLoaded")
+            m.task.control = "RUN"
+        end if
     end if
 end sub
 

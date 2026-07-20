@@ -41,6 +41,7 @@ sub onServerUrlSet()
     if m.statusTask <> invalid then return
 
     m.statusTask = m.top.CreateChild("StatusTask")
+    if m.statusTask = invalid then return
     m.statusTask.serverUrl = m.top.serverUrl
     m.statusTask.authToken = m.top.authToken
     m.statusTask.observeField("status",  "onStatusUpdate")
