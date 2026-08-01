@@ -208,7 +208,6 @@ def devices_page():
     """Tier 1 only — manage registered devices and generate codes."""
     import time as _time
     import html as _html
-    import json as _json_esc
     a = _a()
     ok, tier = a.require_tier1(request)
     if not ok:
@@ -217,18 +216,21 @@ def devices_page():
     a.cleanup_expired_codes()
     active_codes = [(c, e) for c, e in a.one_time_codes.items() if not e['used']]
 
-    def _js_str(s):
-        # Safe to interpolate inside a single-quoted JS string literal in an
-        # HTML attribute — escapes both JS string delimiters and HTML.
-        return _html.escape(_json_esc.dumps(str(s))[1:-1], quote=True)
-
+    # Values go into data-* attributes (plain HTML-attribute escaping is
+    # sufficient there) and are read back via event delegation in JS below —
+    # deliberately NOT interpolated into an inline onclick="fn('...')" JS
+    # string. HTML-entity decoding of an attribute value happens before the
+    # browser parses an inline handler's JS, so escaping a quote character
+    # as &#x27; does not actually neutralize it there; a value routed through
+    # that pattern would still be able to break out of the JS string once
+    # decoded. data-* + addEventListener has no such gap.
     devices_html = ''.join(f"""
         <div class="device-row">
           <div>
             <div class="d-name">{_html.escape(info['name'])}</div>
             <div class="d-meta">Tier {info['tier']} — {_html.escape(mac)}</div>
           </div>
-          <button onclick="removeDevice('{_js_str(mac)}')" class="d-remove">REMOVE</button>
+          <button data-action="remove-device" data-mac="{_html.escape(mac, quote=True)}" class="d-remove">REMOVE</button>
         </div>""" for mac, info in whitelist.items() if info['tier'] != 1)
 
     codes_html = ''.join(f"""
@@ -238,7 +240,7 @@ def devices_page():
             <div class="c-code">{_html.escape(code)}</div>
             <div class="c-meta">Expires in {max(0,int((entry['expires']-_time.time())/3600))}h</div>
           </div>
-          <button onclick="revokeCode('{_js_str(code)}')" class="d-remove">REVOKE</button>
+          <button data-action="revoke-code" data-code="{_html.escape(code, quote=True)}" class="d-remove">REVOKE</button>
         </div>""" for code, entry in active_codes)
 
     return f"""<!DOCTYPE html>
@@ -333,6 +335,14 @@ async function revokeCode(code) {{
   await fetch('/revoke_code', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code}})}});
   location.reload();
 }}
+// Event delegation reading data-* attributes — values never touch an inline
+// JS string, so no HTML/JS double-decoding escape-breakout is possible.
+document.body.addEventListener('click', (e) => {{
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  if (btn.dataset.action === 'remove-device') removeDevice(btn.dataset.mac);
+  else if (btn.dataset.action === 'revoke-code') revokeCode(btn.dataset.code);
+}});
 </script>
 </body></html>"""
 

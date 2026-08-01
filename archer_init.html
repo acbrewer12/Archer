@@ -127,6 +127,11 @@ const DEFAULT_NEXT = '/';
 // `next` query param. Only a plain relative path is accepted.
 function safeNextPath(raw) {
   if (typeof raw !== 'string' || raw === '') return DEFAULT_NEXT;
+  // Browsers silently strip C0 control characters (tab/newline/CR/etc.) from
+  // a URL during navigation, per the WHATWG URL spec — e.g. "/\t/evil.com"
+  // parses as "//evil.com" even though charAt(1) here is a tab, not '/'.
+  // Reject outright rather than stripping-then-revalidating.
+  if (/[\x00-\x1f\x7f]/.test(raw)) return DEFAULT_NEXT;
   if (raw.charAt(0) !== '/') return DEFAULT_NEXT;
   if (raw.charAt(1) === '/') return DEFAULT_NEXT;
   if (raw.charAt(1) === '\\') return DEFAULT_NEXT;

@@ -65,7 +65,31 @@ if [ -z "$RESOLVED_SHA" ]; then
 fi
 echo "  This will install code at commit: $RESOLVED_SHA"
 echo "  (ref: $REF)"
-if [ "$ASSUME_YES" != "true" ]; then
+
+# ── Signature check — see pi/ota_update.sh's ONE-TIME SETUP comment for how
+# to configure commit signing/trust. Until that's done, this always fails,
+# which is why --yes alone is NOT enough to skip the human confirmation
+# below: an unattended/cron run with no real verification and no human
+# watching would otherwise be able to silently apply anything pushed to
+# $REF, on hardware with real OBD/GPIO/remote-start control.
+SIGNATURE_VERIFIED=false
+if command -v gpg &>/dev/null; then
+    TMP_VERIFY_DIR=$(mktemp -d)
+    if git clone --bare --quiet "$REPO" "$TMP_VERIFY_DIR" 2>/dev/null \
+        && git -C "$TMP_VERIFY_DIR" verify-commit "$RESOLVED_SHA" &>/dev/null; then
+        SIGNATURE_VERIFIED=true
+        echo "  Signature check passed — $RESOLVED_SHA is GPG-signed by a trusted key."
+    fi
+    rm -rf "$TMP_VERIFY_DIR"
+fi
+
+if [ "$SIGNATURE_VERIFIED" != "true" ]; then
+    if [ "$ASSUME_YES" = "true" ]; then
+        echo "  REFUSING: --yes was given but $RESOLVED_SHA is not a trusted GPG-signed"
+        echo "  commit, so this cannot proceed unattended. Either configure commit"
+        echo "  signing (see pi/ota_update.sh) or re-run without --yes to confirm by hand."
+        exit 1
+    fi
     if [ -r /dev/tty ]; then
         printf "  Continue? [y/N] "
         read -r CONFIRM </dev/tty
@@ -75,7 +99,7 @@ if [ "$ASSUME_YES" != "true" ]; then
     case "$CONFIRM" in
         y|Y) ;;
         *)
-            echo "  Aborted. Re-run with --yes to skip this prompt (unattended installs)."
+            echo "  Aborted."
             exit 1
             ;;
     esac
