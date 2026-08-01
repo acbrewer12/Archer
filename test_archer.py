@@ -784,9 +784,16 @@ class TestTierNotifications:
         assert any(n['from'] == 'Bob' for n in d['notifications'])
 
     def test_notifications_list_is_list(self):
-        r = client.get('/tier_notifications')
+        # /tier_notifications requires tier <= 2 (it discloses pending
+        # Tier1<->Tier2 request content, not public data).
+        c = _authed_client(2, 'Passenger')
+        r = c.get('/tier_notifications')
         d = json.loads(r.data)
         assert isinstance(d['notifications'], list)
+
+    def test_notifications_list_rejects_unauthenticated(self):
+        r = client.get('/tier_notifications')
+        assert r.status_code == 403
 
     def test_tier_cancel_updates_status(self):
         c2 = _authed_client(2, 'Passenger')
@@ -972,8 +979,10 @@ class TestDragEndpoints:
 # 22. /build/part endpoints
 # ═══════════════════════════════════════════════════════════════
 class TestBuildPartEndpoints:
+    # /build/part/* routes require Tier 1 (owner-only build tracker editing).
     def test_add_part_returns_ok(self):
-        r = client.post('/build/part/add', json={
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={
             'name': 'Cold Air Intake', 'category': 'intake',
             'hp_gain': 15, 'tq_gain': 12, 'cost': 299.99,
         })
@@ -981,86 +990,111 @@ class TestBuildPartEndpoints:
         assert d['ok'] is True
 
     def test_add_part_returns_part(self):
-        r = client.post('/build/part/add', json={'name': 'Test Part'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Test Part'})
         d = json.loads(r.data)
         assert 'part' in d
         assert d['part']['name'] == 'Test Part'
 
     def test_add_part_has_id(self):
-        r = client.post('/build/part/add', json={'name': 'Headers'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Headers'})
         d = json.loads(r.data)
         assert 'id' in d['part']
 
     def test_update_part_ok(self):
-        r = client.post('/build/part/add', json={'name': 'UpdateMe'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'UpdateMe'})
         pid = json.loads(r.data)['part']['id']
-        r2  = client.post('/build/part/update', json={'id': pid, 'status': 'installed'})
+        r2  = c.post('/build/part/update', json={'id': pid, 'status': 'installed'})
         d   = json.loads(r2.data)
         assert d['ok'] is True
         assert d['part']['status'] == 'installed'
 
     def test_update_nonexistent_part(self):
-        r = client.post('/build/part/update', json={'id': 'nonexistent_id', 'status': 'installed'})
+        c = _authed_client(1)
+        r = c.post('/build/part/update', json={'id': 'nonexistent_id', 'status': 'installed'})
         d = json.loads(r.data)
         assert d['ok'] is False
 
     def test_remove_part_ok(self):
-        r   = client.post('/build/part/add', json={'name': 'RemoveMe'})
+        c   = _authed_client(1)
+        r   = c.post('/build/part/add', json={'name': 'RemoveMe'})
         pid = json.loads(r.data)['part']['id']
-        r2  = client.post('/build/part/remove', json={'id': pid})
+        r2  = c.post('/build/part/remove', json={'id': pid})
         d   = json.loads(r2.data)
         assert d['ok'] is True
 
     def test_remove_part_no_longer_in_list(self):
-        r   = client.post('/build/part/add', json={'name': 'GoneItem'})
+        c   = _authed_client(1)
+        r   = c.post('/build/part/add', json={'name': 'GoneItem'})
         pid = json.loads(r.data)['part']['id']
-        client.post('/build/part/remove', json={'id': pid})
-        r2  = client.post('/build/part/add', json={'name': 'Dummy'})
+        c.post('/build/part/remove', json={'id': pid})
+        r2  = c.post('/build/part/add', json={'name': 'Dummy'})
         parts = json.loads(r2.data)['parts']
         assert not any(p['id'] == pid for p in parts)
 
     def test_add_part_returns_power(self):
-        r = client.post('/build/part/add', json={'name': 'Tune', 'hp_gain': 30})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Tune', 'hp_gain': 30})
         d = json.loads(r.data)
         assert 'power' in d
+
+    def test_non_owner_rejected(self):
+        c = _authed_client(2)
+        r = c.post('/build/part/add', json={'name': 'ShouldFail'})
+        assert r.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════
 # 23. /build/update endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestBuildUpdate:
+    # /build/update requires Tier 1 (owner-only build spec editing).
     def test_returns_ok(self):
-        r = client.post('/build/update', json={'cold_air_intake': True})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={'cold_air_intake': True})
         d = json.loads(r.data)
         assert d['ok'] is True
 
     def test_updates_build_spec(self):
-        client.post('/build/update', json={'cold_air_intake': True})
+        _authed_client(1).post('/build/update', json={'cold_air_intake': True})
         assert archer.build_specs.get('cold_air_intake') is True
 
     def test_returns_power(self):
-        r = client.post('/build/update', json={})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={})
         d = json.loads(r.data)
         assert 'power' in d
 
     def test_returns_build_specs(self):
-        r = client.post('/build/update', json={})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={})
         d = json.loads(r.data)
         assert 'build_specs' in d
+
+    def test_non_owner_rejected(self):
+        c = _authed_client(3)
+        r = c.post('/build/update', json={'cold_air_intake': True})
+        assert r.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════
 # 24. /location/update endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestLocationUpdate:
+    # Patches the network-calling function itself rather than threading.Thread
+    # broadly — flask_limiter's memory storage backend (this route is now
+    # rate-limited) also relies on threading.Timer, a Thread subclass, so a
+    # blanket Thread patch here breaks rate-limit evaluation too.
     def test_returns_ok(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             r = client.post('/location/update', json={'lat': 37.64, 'lon': -91.54})
         d = json.loads(r.data)
         assert d['ok'] is True
 
     def test_stores_lat_lon(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
         r = client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
         d = json.loads(r.data)
@@ -1068,7 +1102,7 @@ class TestLocationUpdate:
         assert d['lon'] == -93.0
 
     def test_name_stored_if_provided(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             r = client.post('/location/update', json={'lat': 1.0, 'lon': 2.0, 'name': 'Test City'})
         d = json.loads(r.data)
         assert d['name'] == 'Test City'
@@ -1394,7 +1428,9 @@ class TestGatekeeperHandshake:
         key  = secrets.token_bytes(32)
         port = self._make_mock_port([b"NOT_ARCHER\n"])
         result = gk.handle_connection(port, [key])
-        assert result is False
+        # handle_connection returns Optional[List[str]] (permission scope on
+        # success, None on any failure) so scoped keys can be enforced.
+        assert result is None
 
     def test_correct_key_passes(self):
         import secrets as _s
@@ -1428,7 +1464,10 @@ class TestGatekeeperHandshake:
         port.readline = _readline
 
         result = gk.handle_connection(port, [key])
-        assert result is True
+        # No key_manager record for this ad-hoc test key → falls back to full
+        # OWNER permissions (legacy-key backward compatibility), not a bare bool.
+        assert result is not None
+        assert 'admin' in result or 'write_all' in result
 
     def test_wrong_key_fails(self):
         import secrets as _s
@@ -1461,7 +1500,7 @@ class TestGatekeeperHandshake:
         port.readline = _readline
 
         result = gk.handle_connection(port, [real_key])
-        assert result is False
+        assert result is None
 
     def test_stale_timestamp_fails(self):
         """A replayed response outside the 30-second window is rejected."""
@@ -1505,7 +1544,7 @@ class TestGatekeeperHandshake:
             mock_time.time.side_effect = [float(stale_ts), float(stale_ts + 60)]
             # Run — second call to time.time() is for the window check
             result = gk.handle_connection(port, [key])
-        assert result is False
+        assert result is None
 
     def test_key_rotation_previous_key_works(self):
         """Connecting with the previous key (index 1) still authenticates."""
@@ -1541,7 +1580,7 @@ class TestGatekeeperHandshake:
 
         # Pass [new_key, old_key] — gatekeeper should fall back to old_key
         result = gk.handle_connection(port, [new_key, old_key])
-        assert result is True
+        assert result is not None
 
 
 # ═══════════════════════════════════════════════════════════════

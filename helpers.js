@@ -36,6 +36,30 @@ function isTruckSsid(ssid) {
 /**
  * Determine the auto-detect truck URL from a NetInfo state object.
  * Returns the candidate URL string, or null if criteria not met.
+ *
+ * KNOWN LIMITATION (rogue-AP spoofing): the only checks gating auto-connect
+ * are (1) the WiFi SSID exactly equals TRUCK_SSID and (2) something at
+ * TRUCK_IP:DEFAULT_PORT answers HTTP 200 on /health (see pingServer() in
+ * archer-app/App.js). Neither proves server identity — SSIDs are trivial to
+ * spoof with a rogue access point, and archer.py's /health route (archer.py,
+ * around line 8823) returns no secret: every field (build_ts, git_hash,
+ * tier, uptime_seconds, obd_status, ...) is either public (git_hash/build_ts
+ * are derivable from this open-source repo) or fully attacker-controlled
+ * runtime telemetry that a fake server can just hardcode. Checking any of
+ * those fields would look like verification without actually being any —
+ * a real attacker who clones this repo can reproduce a byte-identical
+ * /health response. There is currently no shared secret or TLS/cert pinning
+ * between the app and the truck's Pi on this local, zero-config path, so a
+ * malicious AP broadcasting "ARCHER-2500HD" with a server at 192.168.4.1
+ * that answers /health can get its page loaded into this app's JS-enabled,
+ * DOM-storage-enabled WebView.
+ *
+ * Recommended follow-up (not implemented here — bigger than a local fix):
+ * provision a per-device shared secret (e.g. via QR code or NFC pairing
+ * during setup) that the app sends and the real Pi verifies, or move to
+ * TLS with certificate/public-key pinning once the Pi has a stable,
+ * app-known certificate. Until then, treat SSID-based auto-connect as
+ * convenience, not authentication.
  */
 function getTruckUrlFromNetInfo(state) {
   if (!state) return null;

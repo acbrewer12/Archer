@@ -58,6 +58,12 @@ sys.stderr = _TeeWriter(sys.stderr)
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
+if _IS_HF and not os.environ.get('BEAMNG_TOKEN'):
+    print('[SECURITY] WARNING: Running on a public HuggingFace Space with BEAMNG_TOKEN '
+          'unset — /beamng_data will accept telemetry from anyone on the internet with '
+          'no token. This is fine for local BeamNG-simulator testing but should be set '
+          'before exposing this deployment publicly.')
+
 # ── ENV FILE LOADER — picks up API keys from /etc/archer/archer.env ──────────
 def _load_env_file():
     for path in ('/etc/archer/archer.env', os.path.expanduser('~/.archer.env')):
@@ -3804,14 +3810,20 @@ def _ambient_arduino_sync():
         arduino_send(f'AMBIENT:{zone_key.upper()}:{state}:{r},{g},{b},{bri}')
 
 def set_ambient(zone, on, color=None, brightness=None):
+    import re as _re
     if zone == 'all':
         for z in ambient_lighting['zones']:
             ambient_lighting['zones'][z]['on'] = on
         ambient_lighting['master'] = on
     elif zone in ambient_lighting['zones']:
         ambient_lighting['zones'][zone]['on'] = on
-        if color:      ambient_lighting['zones'][zone]['color']      = color
-        if brightness: ambient_lighting['zones'][zone]['brightness'] = brightness
+        if color and isinstance(color, str) and _re.fullmatch(r'#?[0-9a-fA-F]{6}', color):
+            ambient_lighting['zones'][zone]['color'] = color
+        if brightness is not None:
+            try:
+                ambient_lighting['zones'][zone]['brightness'] = max(0, min(100, int(brightness)))
+            except (TypeError, ValueError):
+                pass
     _ambient_arduino_sync()
     save_state()
     return f'Ambient {zone} {"on" if on else "off"}.'
@@ -8413,6 +8425,7 @@ def _resolve_location_from_nws(lat, lon):
         _save_location_cache(lat, lon, fallback)
 
 @display_app.route('/location/update', methods=['POST'])
+@_limiter.limit('20 per minute')
 @csrf_required
 def location_update_route():
     global _nws_station_url, _nws_forecast_url
@@ -8531,11 +8544,17 @@ def device_tier_endpoint():
 
 
 # ── TIER ROUTES ON MAIN APP (for ngrok remote access) ───
+# Each page requires the caller's resolved tier to be at least as privileged as
+# the page it's requesting (tier 1 = owner may view any page; tier 4 may only
+# view its own). Unlike '/', these direct routes previously served the full
+# dashboard HTML to anyone with no auth check at all — fixed to match '/'.
 @display_app.route('/display')
 @display_app.route('/ayden')
 @display_app.route('/tier1')
 def tier1_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) != 1:
+        return _redir('/')
     resp = FR(get_tier_html(1), mimetype='text/html')
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
@@ -8545,19 +8564,25 @@ def tier1_page():
 @display_app.route('/passenger')
 @display_app.route('/tier2')
 def tier2_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 2:
+        return _redir('/')
     return FR(get_tier_html(2), mimetype='text/html')
 
 @display_app.route('/family')
 @display_app.route('/tier3')
 def tier3_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 3:
+        return _redir('/')
     return FR(get_tier_html(3), mimetype='text/html')
 
 @display_app.route('/valet')
 @display_app.route('/tier4')
 def tier4_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 4:
+        return _redir('/')
     return FR(get_tier_html(4), mimetype='text/html')
 
 # ── TERMINAL ACCESS CONTROL ─────────────────────────────
@@ -9016,7 +9041,16 @@ one_time_codes = {}
 # ── MASTER SIGN-IN CODE ───────────────────────────────────────────────────────
 # Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
 # devices are registered so he can always get back in.
-_master_code = os.environ.get('ARCHER_MASTER_CODE', '250022')
+# No hardcoded fallback here on purpose — a fixed default shipped in public
+# source would grant Tier 1 to anyone who reads the repo. If ARCHER_MASTER_CODE
+# isn't set, generate a random one each restart and print it to the server log
+# (console/journalctl access only) rather than baking in a known value.
+_master_code = os.environ.get('ARCHER_MASTER_CODE', '')
+if not _master_code:
+    _master_code = str(secrets.randbelow(900000) + 100000)
+    print(f'[SECURITY] ARCHER_MASTER_CODE not set — generated a random Tier-1 master '
+          f'code for this session: {_master_code}  (view again via journalctl -u archer; '
+          f'set ARCHER_MASTER_CODE in archer.env for a stable code across restarts)')
 _master_code_enabled = True   # toggled from Tier 1 dashboard
 
 def _check_master_auto_enable():
@@ -9102,6 +9136,7 @@ def get_tier_for_mac(mac):
     return whitelist.get(mac.upper())
 
 @display_app.route('/')
+@_limiter.limit('10 per minute; 40 per hour')
 def index():
     """Main entry — MAC first, cookie fallback, registration last."""
     from flask import request as freq, make_response
@@ -9109,7 +9144,7 @@ def index():
 
     # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
     owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
-    if owner_pin and freq.args.get('pin') == owner_pin:
+    if owner_pin and hmac.compare_digest(freq.args.get('pin', ''), owner_pin):
         jwt_val = make_auth_jwt(1, 'Ayden')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
@@ -10009,9 +10044,25 @@ def truck_image():
             return FR(f.read(), mimetype='image/jpeg')
     return FR('', status=404)
 
+# Fields that reveal live location, surveillance/camera state, or valet activity —
+# stripped for Tier 3 (family, read-only) and Tier 4 (valet, speed-only) callers.
+_DISPLAY_DATA_SENSITIVE_FIELDS = (
+    'destination', 'gps_lat', 'gps_lon', 'gps_name',
+    'surveillance', 'cameras', 'valet_events', 'parking_active', 'parking_loc',
+)
+
+def _filter_display_data_for_tier(d, tier):
+    if tier >= 3:
+        for f in _DISPLAY_DATA_SENSITIVE_FIELDS:
+            d.pop(f, None)
+    return d
+
 @display_app.route('/display_data')
 def display_data_endpoint():
     from flask import request as flask_request
+    tier = get_request_tier(flask_request)
+    if tier >= 5:
+        return jsonify({'error': 'Authentication required'}), 403
     session_id  = flask_request.args.get('sid', 'unknown')
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
@@ -10027,13 +10078,16 @@ def display_data_endpoint():
     d['device_tier']       = device_tier
     d['device_registered'] = fingerprint in trusted_devices
     d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
-    return jsonify(d)
+    return jsonify(_filter_display_data_for_tier(d, tier))
 
 
 @display_app.route('/display_data/stream')
 def display_data_stream():
     """SSE push endpoint — replaces /display_data polling in the UI."""
     from flask import request as flask_request
+    tier = get_request_tier(flask_request)
+    if tier >= 5:
+        return Response('', status=403)
     session_id  = flask_request.args.get('sid', 'unknown')
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
@@ -10052,7 +10106,7 @@ def display_data_stream():
                 d['device_tier']       = device_tier
                 d['device_registered'] = fingerprint in trusted_devices
                 d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
-                yield f'data: {json.dumps(d)}\n\n'
+                yield f'data: {json.dumps(_filter_display_data_for_tier(d, tier))}\n\n'
             except Exception:
                 break
             _t.sleep(0.5)
@@ -11066,6 +11120,10 @@ _BEAMNG_BOUNDS = {
 def beamng_data():
     import time as _time
     from flask import request as req
+    # BEAMNG_TOKEN is intentionally optional (local dev/testing convenience —
+    # see archer.env.example) so this stays open with no token configured,
+    # same as before. A startup-time warning above (near _IS_HF) covers the
+    # case this ends up unset on a genuinely public deployment.
     _bt = os.environ.get('BEAMNG_TOKEN', '')
     if _bt:
         import hmac as _hm
@@ -11120,6 +11178,9 @@ def beamng_status():
 @display_app.route('/obd_auth')
 def obd_auth_status():
     """Gatekeeper / OBD auth status page — shows relay state and last auth result."""
+    from flask import request as flask_request
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     connected   = obd2_display.get('connected', False)
     mode        = obd2_display.get('mode', 'default')
     last_update = system_health.get('last_obd_update', 0)
@@ -11149,6 +11210,9 @@ def obd_auth_status():
 @display_app.route('/archer_os')
 def archer_os_status():
     """Archer OS / USB-OS status — shows connection state and build info."""
+    from flask import request as flask_request
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     usb_connected = False
     usb_info      = {}
     if _IS_PI:

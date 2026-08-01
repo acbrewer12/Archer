@@ -63,6 +63,9 @@ def logout():
     a = _a()
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
+        # Only the signed JWT format is trusted for revocation/logging — the
+        # legacy tier:name:hmac format is unsigned and attacker-settable, so
+        # (unlike a prior version of this route) it is not parsed at all here.
         try:
             payload = decode_auth_jwt(cookie_val)
             jti = payload.get('jti', '')
@@ -70,10 +73,7 @@ def logout():
                 a._revoke_token(jti)
             a.log_security('LOGOUT', name=payload.get('name', '?'))
         except ValueError:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                a._revoke_token(parts[2])
-                a.log_security('LOGOUT', name=parts[1])
+            pass
     resp = make_response(jsonify({'ok': True}))
     resp.delete_cookie('archer_auth')
     return resp
@@ -114,11 +114,18 @@ def set_vehicle():
 @csrf_required
 def register_mac():
     """Register a new device using a one-time code."""
+    import re as _re
     from datetime import datetime
     a = _a()
     data = request.json or {}
     code = data.get('code', '').strip()
     mac  = data.get('mac', '').upper()
+    # Reject anything that doesn't look like a real MAC address rather than
+    # storing it verbatim — the whitelist's mac value is later rendered on
+    # the Tier-1 /devices page, so this also closes an XSS vector at the
+    # source in addition to the output-escaping fix on that page.
+    if mac and mac != 'UNKNOWN' and not _re.fullmatch(r'([0-9A-F]{2}:){5}[0-9A-F]{2}', mac):
+        return jsonify({'success': False, 'error': 'Invalid MAC address format'})
 
     if not code:
         return jsonify({'success': False, 'error': 'Missing code'})
@@ -166,6 +173,9 @@ def deregister_mac():
     session is invalidated immediately without waiting for cookie expiry.
     """
     a = _a()
+    ok, _ = a.require_tier1(request)
+    if not ok:
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     data = request.json or {}
     mac  = data.get('mac', '').upper()
     whitelist = a.load_mac_whitelist()
@@ -197,6 +207,8 @@ def registered_devices():
 def devices_page():
     """Tier 1 only — manage registered devices and generate codes."""
     import time as _time
+    import html as _html
+    import json as _json_esc
     a = _a()
     ok, tier = a.require_tier1(request)
     if not ok:
@@ -205,23 +217,28 @@ def devices_page():
     a.cleanup_expired_codes()
     active_codes = [(c, e) for c, e in a.one_time_codes.items() if not e['used']]
 
+    def _js_str(s):
+        # Safe to interpolate inside a single-quoted JS string literal in an
+        # HTML attribute — escapes both JS string delimiters and HTML.
+        return _html.escape(_json_esc.dumps(str(s))[1:-1], quote=True)
+
     devices_html = ''.join(f"""
         <div class="device-row">
           <div>
-            <div class="d-name">{info['name']}</div>
-            <div class="d-meta">Tier {info['tier']} — {mac}</div>
+            <div class="d-name">{_html.escape(info['name'])}</div>
+            <div class="d-meta">Tier {info['tier']} — {_html.escape(mac)}</div>
           </div>
-          <button onclick="removeDevice('{mac}')" class="d-remove">REMOVE</button>
+          <button onclick="removeDevice('{_js_str(mac)}')" class="d-remove">REMOVE</button>
         </div>""" for mac, info in whitelist.items() if info['tier'] != 1)
 
     codes_html = ''.join(f"""
         <div class="code-row">
           <div>
-            <div class="c-name">{entry['name']} — Tier {entry['tier']}</div>
-            <div class="c-code">{code}</div>
+            <div class="c-name">{_html.escape(entry['name'])} — Tier {entry['tier']}</div>
+            <div class="c-code">{_html.escape(code)}</div>
             <div class="c-meta">Expires in {max(0,int((entry['expires']-_time.time())/3600))}h</div>
           </div>
-          <button onclick="revokeCode('{code}')" class="d-remove">REVOKE</button>
+          <button onclick="revokeCode('{_js_str(code)}')" class="d-remove">REVOKE</button>
         </div>""" for code, entry in active_codes)
 
     return f"""<!DOCTYPE html>
@@ -346,6 +363,9 @@ def generate_code_route():
 def revoke_code():
     """Revoke an unused invite code."""
     a = _a()
+    ok, _ = a.require_tier1(request)
+    if not ok:
+        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
     data = request.json or {}
     code = data.get('code', '')
     if code in a.one_time_codes:
@@ -454,6 +474,8 @@ def notify_tier1():
 @bp.route('/tier_notifications')
 def get_tier_notifications():
     a = _a()
+    if a.get_request_tier(request) > 2:
+        return jsonify({'error': 'Not authorized'}), 403
     return jsonify({'notifications': list(a.tier_notifications)})
 
 
@@ -463,6 +485,8 @@ def tier_cancel():
     """Tier 2 cancels a pending request — removes it from queue."""
     from archer_state import _validate_csrf
     a = _a()
+    if a.get_request_tier(request) > 2:
+        return jsonify({'error': 'Not authorized'}), 403
     if not _validate_csrf(request):
         return jsonify({'error': 'CSRF validation failed'}), 403
     data = request.json or {}

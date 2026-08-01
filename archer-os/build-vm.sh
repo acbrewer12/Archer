@@ -385,12 +385,22 @@ nameserver 1.1.1.1
 EOF
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
+# /etc/archer holds both root-only secrets (obd_auth.key, used by the root-run
+# boot-time OBD auth handshake) and files archer.py (running as the unprivileged
+# 'archer' user) must read/write at runtime (archer.env, and hsm.py's master.key
+# created on first run). Group-own it with the sticky bit set (like /tmp) so the
+# archer group can create/read its own files without being able to delete or
+# overwrite root-owned ones such as obd_auth.key.
+mkdir -p "$MOUNT/etc/archer"
+chroot "$MOUNT" chown root:archer /etc/archer
+chroot "$MOUNT" chmod 1770 /etc/archer
+
 # Embed OBD2 auth key if one has been generated (see archer-os/obd-auth/keygen.sh).
 # The key is in .gitignore and must be generated separately and kept secret.
+# Root-owned, no group access — archer.py must never be able to read this;
+# only the root-run boot-time OBD auth handshake needs it.
 KEY_SRC="$(dirname "$0")/obd-auth/obd_auth.key"
 if [ -f "$KEY_SRC" ]; then
-    mkdir -p "$MOUNT/etc/archer"
-    chmod 700 "$MOUNT/etc/archer"
     cp "$KEY_SRC" "$MOUNT/etc/archer/obd_auth.key"
     chmod 600 "$MOUNT/etc/archer/obd_auth.key"
     log "OBD2 auth key installed"
@@ -401,12 +411,15 @@ fi
 # Embed API key config if it exists — contains GEMINI_API_KEY etc.
 # Format: KEY=value, one per line. Never committed to git (.gitignore protected).
 # Create: archer-os/archer.env  with  GEMINI_API_KEY=your_key_here
+# Group-readable by archer (archer.py reads this file directly at startup —
+# see archer.py's own env file loader) but not group-writable, so the sticky
+# bit on /etc/archer still protects it from being overwritten by that same
+# unprivileged process.
 ENV_SRC="$(dirname "$0")/archer.env"
 if [ -f "$ENV_SRC" ]; then
-    mkdir -p "$MOUNT/etc/archer"
-    chmod 700 "$MOUNT/etc/archer"
     cp "$ENV_SRC" "$MOUNT/etc/archer/archer.env"
-    chmod 600 "$MOUNT/etc/archer/archer.env"
+    chroot "$MOUNT" chown root:archer /etc/archer/archer.env
+    chmod 640 "$MOUNT/etc/archer/archer.env"
     log "API key config installed (/etc/archer/archer.env)"
 else
     log "No archer.env found — create archer-os/archer.env with GEMINI_API_KEY=... to embed AI key"

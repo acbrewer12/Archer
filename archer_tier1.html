@@ -3431,8 +3431,8 @@ function showQueueViewer() {
   const items = notifyQueue.map((n, i) => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="flex:1;min-width:0">
-        <div style="color:var(--text2);font-size:11px;font-family:'IBM Plex Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${n.message}</div>
-        <div style="color:var(--label);font-size:9px;font-family:'IBM Plex Mono',monospace;letter-spacing:1px;margin-top:2px">${n.from} — ${n.time}</div>
+        <div style="color:var(--text2);font-size:11px;font-family:'IBM Plex Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(n.message)}</div>
+        <div style="color:var(--label);font-size:9px;font-family:'IBM Plex Mono',monospace;letter-spacing:1px;margin-top:2px">${_escHtml(n.from)} — ${_escHtml(n.time)}</div>
       </div>
       <button onclick="skipQueueItem(${i})" style="background:#0d0d0d;border:1px solid #333;color:#555;border-radius:4px;padding:4px 10px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1px;cursor:pointer;flex-shrink:0;margin-left:10px;transition:all 0.15s;-webkit-tap-highlight-color:rgba(204,0,0,0.2)" onpointerdown="this.style.background='#1a0000';this.style.borderColor='var(--red)';this.style.color='var(--red)'" onpointerup="this.style.background='';this.style.borderColor='';this.style.color=''">SKIP</button>
     </div>`).join('');

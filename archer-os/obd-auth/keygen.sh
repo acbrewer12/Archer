@@ -24,12 +24,13 @@ if [ -f "$KEY_FILE" ]; then
     [ "$confirm" = "y" ] || { echo "Aborted."; exit 0; }
 fi
 
+umask 077
 openssl rand -hex 32 > "$KEY_FILE"
 chmod 600 "$KEY_FILE"
 
 echo ""
-echo "  Key generated: $KEY_FILE"
-echo "  $(cat "$KEY_FILE")"
+echo "  Key generated: $KEY_FILE (mode 600)"
+echo "  Fingerprint (sha256, NOT the key itself): $(sha256sum "$KEY_FILE" | cut -d' ' -f1)"
 echo ""
 echo "  Next steps:"
 echo "  1. Deploy to Pi (while on same network as the Pi):"

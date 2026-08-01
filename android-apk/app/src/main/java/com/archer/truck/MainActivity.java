@@ -45,7 +45,11 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setGeolocationEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        // COMPATIBILITY_MODE blocks active mixed content (scripts, iframes) served over
+        // plain HTTP inside an HTTPS page while still allowing legacy passive content
+        // (images). ALWAYS_ALLOW had no real justification here and let an on-path
+        // attacker inject executable HTTP content into an otherwise-HTTPS session.
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setUserAgentString(s.getUserAgentString() + " ArcherAndroid/2.0");
 
@@ -56,14 +60,27 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler,
                     android.net.http.SslError error) {
-                // Only bypass SSL for the Pi's own self-signed cert — never for other domains
-                android.net.Uri errUri = android.net.Uri.parse(error.getUrl());
-                android.net.Uri piUri  = android.net.Uri.parse(ARCHER_URL);
-                if (errUri.getHost() != null && errUri.getHost().equals(piUri.getHost())) {
-                    handler.proceed();
-                } else {
-                    handler.cancel();
-                }
+                // Fail closed on every certificate error. This used to compare only the
+                // erroring URL's hostname string against ARCHER_URL's hostname and then
+                // call handler.proceed() unconditionally — meaning ANY cert (expired,
+                // wrong CA, or actively attacker-supplied) was accepted as long as the
+                // hostname matched, which defeats TLS validation entirely for anyone who
+                // can intercept traffic to that host (e.g. ARP spoofing on the truck's
+                // own hotspot).
+                //
+                // The production ARCHER_URL is https://aydencatman-archer.hf.space (see
+                // gradle.properties / build-apk.yml), which carries a real CA-signed cert,
+                // so this handler should not fire in normal use. Local-Pi builds can
+                // optionally serve HTTPS with a self-signed cert (archer.py
+                // _get_tls_context(), gated by USE_TLS) that is generated fresh per
+                // device — there is no stable certificate or public key checked into this
+                // repo to pin against, so real certificate/public-key pinning isn't
+                // implementable here yet. If self-signed local-Pi HTTPS needs to keep
+                // working, install that Pi's cert as a user-trusted CA on the device, or
+                // add proper pinning once there's a stable cert to pin (e.g. provisioned
+                // via a QR/NFC pairing flow, matching the note in helpers.js about
+                // ARCHER-2500HD auto-connect trust).
+                handler.cancel();
             }
         });
 

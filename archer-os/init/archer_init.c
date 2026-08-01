@@ -421,6 +421,38 @@ static int get_uid_gid(const char *username, uid_t *uid, gid_t *gid)
     return -1;  /* not found */
 }
 
+/* ── verify a file is safe to execute with root privileges ─────────
+ *
+ * We are PID 1, running as root. /opt/archer (application code, including
+ * the venv's python3 interpreter) is owned by the unprivileged 'archer'
+ * user — see build.sh's `chown -R archer:archer /opt/archer`. That means
+ * anything under /opt/archer must be treated as untrusted input when we
+ * are about to run it *before* dropping privileges: if the 'archer'
+ * account is ever compromised locally, a rewritten script or interpreter
+ * there would otherwise get executed as root on the next boot.
+ *
+ * "Safe" means: owned by root (uid 0) and not writable by group or other.
+ * Fail closed — anything that doesn't pass this check must not run as
+ * root; the caller should skip it rather than trust it blindly.
+ */
+static int is_safe_to_run_as_root(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) < 0) {
+        WARN("privilege check: stat() failed on a file we were about to run as root");
+        return 0;
+    }
+    if (st.st_uid != 0) {
+        WARN("privilege check: file is not owned by root — refusing to run it as root");
+        return 0;
+    }
+    if (st.st_mode & (S_IWGRP | S_IWOTH)) {
+        WARN("privilege check: file is group/world writable — refusing to run it as root");
+        return 0;
+    }
+    return 1;
+}
+
 /* ── start all services ──────────────────────────────────────────── */
 
 static void start_services(void)
@@ -499,7 +531,14 @@ static void start_services(void)
     }
 
     /* 4b. Getty on tty2 — maintenance shell, always accessible via Ctrl+Alt+F2.
-     *     Also autologin as archer so you don't need a password to debug. */
+     *     Deliberately NOT autologin: tty1 is the public-facing kiosk display,
+     *     but tty2 is a full shell, and anyone with physical keyboard access to
+     *     the head unit can hit Ctrl+Alt+F2. Autologin here would hand out an
+     *     authenticated shell as 'archer' to anyone standing at the truck, no
+     *     password required. Require a normal login prompt instead — the
+     *     'archer' account has no password set by default (see build.sh), so
+     *     until an operator explicitly runs `passwd archer`, tty2 is unusable,
+     *     which is the safe default. */
     {
         pid_t pid = fork();
         if (pid == 0) {
@@ -514,7 +553,6 @@ static void start_services(void)
             ioctl(STDIN_FILENO, TIOCSCTTY, 1);
             char *argv[] = {
                 "/sbin/agetty",
-                "--autologin", "archer",
                 "--noclear",
                 "tty2", "linux", NULL
             };
@@ -523,7 +561,7 @@ static void start_services(void)
         }
         pid_getty2 = pid;
         if (pid_getty2 > 0)
-            LOG("getty started on tty2 (maintenance)");
+            LOG("getty started on tty2 (maintenance, password login required)");
     }
 
     /* Small delay: let NetworkManager initialize before Archer tries to use the network */
@@ -532,39 +570,55 @@ static void start_services(void)
     /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
      *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
      *    Non-blocking: if the Pi isn't present or auth fails, Archer still starts
-     *    (just without OBD data). Result written to /run/archer_obd_auth for archer.py. */
+     *    (just without OBD data). Result written to /run/archer_obd_auth for archer.py.
+     *
+     *    This runs as root — before we drop to the unprivileged 'archer' user —
+     *    because it needs to read the root-only shared key at
+     *    /etc/archer/obd_auth.key. That means we must NOT blindly trust the
+     *    interpreter/script we're about to run: both live under /opt/archer,
+     *    which is owned by 'archer' (see build.sh). Verify they are root-owned
+     *    and not group/world-writable first; fail closed (skip auth, boot
+     *    continues without OBD data) if that check doesn't pass. */
     {
+        const char *obd_auth_script = "/opt/archer/archer-os/obd-auth/obd_auth_client.py";
         char *argv[] = {
             ARCHER_VENV,
-            "/opt/archer/archer-os/obd-auth/obd_auth_client.py",
+            (char *)obd_auth_script,
             NULL
         };
-        pid_t pid = fork();
-        if (pid == 0) {
-            int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
-            if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
-            execv(ARCHER_VENV, argv);
-            _exit(1);
-        }
-        if (pid > 0) {
-            /* Wait up to 10 seconds — don't stall boot forever */
-            int waited = 0;
-            int auth_status = -1;
-            while (waited < 10) {
-                pid_t r = waitpid(pid, &auth_status, WNOHANG);
-                if (r == pid) break;
-                sleep(1); waited++;
-            }
-            if (waited >= 10) {
-                WARN("OBD2 auth: timeout — killing auth process");
-                kill(pid, SIGKILL);
-                waitpid(pid, NULL, 0);
-            }
-            int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
+
+        if (!is_safe_to_run_as_root(ARCHER_VENV) || !is_safe_to_run_as_root(obd_auth_script)) {
+            ERR("OBD2 auth: skipped — interpreter or script is not root-owned/is writable by 'archer'");
             int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
-            if (ok) LOG("OBD2 authentication successful — port unlocked");
-            else    WARN("OBD2 authentication skipped or failed");
+            if (fd >= 0) { dprintf(fd, "0\n"); close(fd); }
+        } else {
+            pid_t pid = fork();
+            if (pid == 0) {
+                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+                execv(ARCHER_VENV, argv);
+                _exit(1);
+            }
+            if (pid > 0) {
+                /* Wait up to 10 seconds — don't stall boot forever */
+                int waited = 0;
+                int auth_status = -1;
+                while (waited < 10) {
+                    pid_t r = waitpid(pid, &auth_status, WNOHANG);
+                    if (r == pid) break;
+                    sleep(1); waited++;
+                }
+                if (waited >= 10) {
+                    WARN("OBD2 auth: timeout — killing auth process");
+                    kill(pid, SIGKILL);
+                    waitpid(pid, NULL, 0);
+                }
+                int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
+                int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
+                if (ok) LOG("OBD2 authentication successful — port unlocked");
+                else    WARN("OBD2 authentication skipped or failed");
+            }
         }
     }
 
@@ -870,7 +924,8 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
                 int tty = open("/dev/tty2", O_RDWR | O_NOCTTY);
                 if (tty >= 0) { dup2(tty, 0); dup2(tty, 1); dup2(tty, 2); close(tty); }
                 setsid(); ioctl(0, TIOCSCTTY, 1);
-                char *a[] = { "/sbin/agetty", "--autologin", "archer", "--noclear", "tty2", "linux", NULL };
+                /* No --autologin here — see the tty2 spawn in start_services() for why. */
+                char *a[] = { "/sbin/agetty", "--noclear", "tty2", "linux", NULL };
                 execv("/sbin/agetty", a); _exit(1);
             }
             pid_getty2 = pid;

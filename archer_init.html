@@ -116,6 +116,25 @@ const STATUS = {
 // Track rendered rows by check id
 const rows = {};
 
+// Default post-boot landing page — used whenever `next` is missing or unsafe.
+const DEFAULT_NEXT = '/';
+
+// Validate that a candidate `next` target is a same-origin relative path
+// before ever navigating to it. Rejects absolute URLs, protocol-relative
+// URLs (e.g. "//evil.example.com"), and anything carrying a scheme (e.g.
+// "https://evil.example.com", "javascript:..."), so the one-time boot
+// token (_bt) can never be sent to a third-party origin via a crafted
+// `next` query param. Only a plain relative path is accepted.
+function safeNextPath(raw) {
+  if (typeof raw !== 'string' || raw === '') return DEFAULT_NEXT;
+  if (raw.charAt(0) !== '/') return DEFAULT_NEXT;
+  if (raw.charAt(1) === '/') return DEFAULT_NEXT;
+  if (raw.charAt(1) === '\\') return DEFAULT_NEXT;
+  if (raw.indexOf('\\') !== -1) return DEFAULT_NEXT;
+  if (/^\/[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return DEFAULT_NEXT;
+  return raw;
+}
+
 function setProgress(pct) {
   barEl.style.width = Math.min(100, pct) + '%';
 }
@@ -210,7 +229,7 @@ async function runBootChecks() {
 
         bannerEl.classList.add('show');
         await new Promise(r => setTimeout(r, fails > 0 ? 2000 : 1000));
-        const next  = new URLSearchParams(location.search).get('next') || '/';
+        const next  = safeNextPath(new URLSearchParams(location.search).get('next'));
         const token = finalData.token || '';
         const sep   = next.includes('?') ? '&' : '?';
         window.location.href = token ? next + sep + '_bt=' + token : next;
@@ -224,7 +243,7 @@ async function runBootChecks() {
   }
 
   // Timeout fallback
-  const next = new URLSearchParams(location.search).get('next') || '/';
+  const next = safeNextPath(new URLSearchParams(location.search).get('next'));
   window.location.href = next;
 }
 

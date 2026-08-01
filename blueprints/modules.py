@@ -8,9 +8,17 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, Response, redirect, request
 
-from archer_state import sim_flags
+from archer_state import sim_flags, _limiter, csrf_required
 
 bp = Blueprint('modules', __name__)
+
+
+def _require_tier1(req):
+    """Modules/simulator mutation routes are Tier-1-only testing tools —
+    they write directly into the live truck_state dict shown on every
+    dashboard, inject/clear fault codes, and toggle modules offline."""
+    import archer as _a
+    return _a.get_request_tier(req) == 1
 
 # ── SIMULATOR SCENARIOS ───────────────────────────────────────────────────────
 SIM_SCENARIOS = {
@@ -100,8 +108,12 @@ def modules_status():
 
 
 @bp.route('/modules/update', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def modules_update():
     """Update truck_state values from modules page controls."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     updated = {}
@@ -124,8 +136,12 @@ def modules_update():
 
 
 @bp.route('/modules/fault/inject', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def modules_fault_inject():
     """Inject a DTC into the active faults list."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     code   = data.get('code', '').upper().strip()
@@ -150,8 +166,12 @@ def modules_fault_inject():
 
 
 @bp.route('/modules/fault/clear', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def modules_fault_clear():
     """Clear active faults — all or single code."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     code = data.get('code')
@@ -167,8 +187,12 @@ def modules_fault_clear():
 
 
 @bp.route('/modules/drive_cycle', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def modules_drive_cycle():
     """Apply a named drive cycle scenario to truck_state."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     name = data.get('name', '').lower()
@@ -182,8 +206,12 @@ def modules_drive_cycle():
 
 
 @bp.route('/modules/module/toggle', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def modules_module_toggle():
     """Toggle a module online/offline."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     mod = data.get('module', '').upper()
@@ -232,8 +260,12 @@ def gatekeeper_status_route():
 # ── SIM CONTROL ───────────────────────────────────────────────────────────────
 
 @bp.route('/sim/set', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def sim_set():
     """Set individual truck_state values from simulator sliders."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     allowed    = {'rpm', 'speed', 'boost', 'ethanol', 'oil_temp', 'coolant_temp', 'battery_main', 'battery_aux', 'exhaust'}
@@ -252,17 +284,25 @@ def sim_set():
 
 
 @bp.route('/sim/random', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def sim_random_toggle():
     """Explicitly enable or disable simulated random noise.
     Body: {"enabled": true} or {"enabled": false}"""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     data = request.get_json() or {}
     sim_flags['random_enabled'] = bool(data.get('enabled', True))
     return jsonify({'ok': True, 'sim_random_enabled': sim_flags['random_enabled']})
 
 
 @bp.route('/sim/scenario', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
 def sim_scenario():
     """Apply a preset driving scenario to truck_state."""
+    if not _require_tier1(request):
+        return jsonify({'error': 'Tier 1 required'}), 403
     import archer as _a
     data = request.get_json() or {}
     name = data.get('name', '').lower()

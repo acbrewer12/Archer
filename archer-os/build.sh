@@ -232,6 +232,17 @@ chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
 rm -f "$MOUNT/etc/resolv.conf"
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
+# /etc/archer holds both root-only secrets (obd_auth.key, used by the root-run
+# boot-time OBD auth handshake) and archer.py's own HSM master key / env file,
+# which archer.py (running as the unprivileged 'archer' user via archer.service)
+# must be able to create/read/write at runtime. Group-own it with the sticky
+# bit set (like /tmp) so the archer group can create files (needed for hsm.py
+# to persist master.key across restarts) without being able to delete or
+# overwrite files it doesn't own, such as root's obd_auth.key.
+mkdir -p "$MOUNT/etc/archer"
+chroot "$MOUNT" chown root:archer /etc/archer
+chroot "$MOUNT" chmod 1770 /etc/archer
+
 # ── 7. Compile and install Archer custom init (PID 1) ────────────
 step "Compiling archer_init (custom PID 1 — replaces systemd)..."
 # Compile statically on the build host — no deps needed in the target image
@@ -259,6 +270,12 @@ chroot "$MOUNT" systemctl disable ssh 2>/dev/null || true
 
 # ── 8. Boot splash + GRUB ───────────────────────────────────────
 step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
+# REQUIRED MANUAL STEP: config/grub.cfg sets a GRUB superuser password on
+# the edit/command-line menu (so physical/USB access can't bypass boot via
+# init=/bin/sh), but ships with a CHANGE_ME_RUN_grub-mkpasswd-pbkdf2
+# placeholder hash. Before shipping an image, run `grub-mkpasswd-pbkdf2`
+# and replace the placeholder in config/grub.cfg with the real hash it
+# prints — otherwise GRUB edit mode is left unprotected.
 cp "$(dirname "$0")/config/grub.cfg" "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
 

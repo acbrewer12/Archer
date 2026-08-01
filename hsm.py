@@ -72,7 +72,11 @@ def get_or_create_secret() -> str:
         if saved:
             print('[HSM] Generated new master key — saved to', _HSM_KEY_PATH)
         else:
-            print('[HSM] WARNING: Could not write master key — using ephemeral secret')
+            print(f'[SECURITY] WARNING: Could not write {_HSM_KEY_PATH} — falling back to an '
+                  f'EPHEMERAL secret for this process only. Every session, CSRF token, and '
+                  f'issued JWT will be invalidated on the next restart. This usually means '
+                  f'{os.path.dirname(_HSM_KEY_PATH)} is not writable by this process\'s user — '
+                  f'check its ownership/permissions.')
             return secrets.token_hex(32)
 
     return _derive_secret(key)
