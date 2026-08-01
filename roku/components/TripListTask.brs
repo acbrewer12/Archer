@@ -7,7 +7,7 @@ end sub
 sub runTripListTask()
     http = CreateObject("roUrlTransfer")
     http.SetCertificatesFile("common:/certs/ca-bundle.crt")
-    http.EnablePeerVerification(false)
+    ' Peer verification left ON (Roku default) — see StatusTask.brs for why.
     http.SetUrl(m.top.serverUrl + "/roku/drives")
     if m.top.authToken <> ""
         http.AddHeader("Authorization", "Bearer " + m.top.authToken)

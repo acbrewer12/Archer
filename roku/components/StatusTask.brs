@@ -7,7 +7,10 @@ end sub
 sub runStatusTask()
     http = CreateObject("roUrlTransfer")
     http.SetCertificatesFile("common:/certs/ca-bundle.crt")
-    http.EnablePeerVerification(false)
+    ' Peer verification left ON (Roku default) — server.txt defaults to plain
+    ' http:// so this has no effect on the documented setup, but if the owner
+    ' points it at an https:// server (e.g. via Tailscale/Caddy), the bearer
+    ' token below should never go out over an unverified TLS connection.
     if m.top.authToken <> ""
         http.AddHeader("Authorization", "Bearer " + m.top.authToken)
     end if
