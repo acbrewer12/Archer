@@ -34,7 +34,7 @@ jobs:
 
       # ── 3. Android SDK ────────────────────────────────────────────────────
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
 
       - name: Install SDK Platform + Build Tools
         run: |
@@ -94,8 +94,10 @@ jobs:
 
       # ── 7. Patch Archer URL ───────────────────────────────────────────────
       - name: Set Archer URL
+        env:
+          ARCHER_URL: ${{ inputs.archer_url }}
         run: |
-          URL="${{ github.event.inputs.archer_url }}"
+          URL="$ARCHER_URL"
           if [ -z "$URL" ]; then
             URL="https://aydencatman-archer.hf.space"
           fi
@@ -104,6 +106,19 @@ jobs:
             -exec sed -i "s|ARCHER_URL_PLACEHOLDER|$URL|g" {} +
 
       # ── 7. Build debug APK (auto-signed, sideloadable) ────────────────────
+      # TODO(security): This publishes a *debug* build (android:debuggable="true")
+      # as the public "Archer.apk" GitHub Release download. android-apk/app/build.gradle
+      # already defines a `release` buildType, but it has no `signingConfig` — switching
+      # this step to `gradle assembleRelease` as-is would produce an UNSIGNED APK that
+      # cannot be sideloaded/installed. Before switching to assembleRelease:
+      #   1. Generate a release keystore and wire it into a `signingConfigs.release`
+      #      block in android-apk/app/build.gradle (store secrets like keystore
+      #      contents/passwords in repo secrets, decoded via env: here, same pattern
+      #      as GOOGLE_SERVICES_JSON above).
+      #   2. Point `buildTypes.release.signingConfig` at it.
+      #   3. Then change this step to `gradle assembleRelease` and update the
+      #      "Rename APK" / "Publish to GitHub Release" / Firebase upload steps below
+      #      to reference outputs/apk/release/... instead of outputs/apk/debug/....
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --project-dir android-apk
 
@@ -130,7 +145,7 @@ jobs:
       #      Skipped automatically if FIREBASE_APP_ID secret is not configured.
       - name: Upload to Firebase App Distribution
         if: env.FIREBASE_APP_ID != ''
-        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        uses: wzieba/Firebase-Distribution-Github-Action@bd494989dd4bec0343f78adee87fe66e48279ad6 # v1
         with:
           appId: ${{ secrets.FIREBASE_APP_ID }}
           serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
