@@ -385,6 +385,23 @@ nameserver 1.1.1.1
 EOF
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
+# archer_init.c runs the OBD2 auth handshake as root and refuses to exec
+# anything that isn't root-owned/non-writable first (fail-closed check added
+# after a prior security fix). The chown -R above just re-owned this script
+# to 'archer' along with the rest of /opt/archer, which would make that
+# check always fail and silently disable OBD2 auth on every boot. Re-root
+# it specifically.
+#
+# NOTE: /opt/archer/.venv/bin/python3 is NOT re-chowned here on purpose —
+# `python3 -m venv` creates it as a symlink to the system python3 outside
+# /opt/archer, and chown -R re-owns the symlink itself but not its target
+# (verified empirically), while archer_init.c's check uses stat(), which
+# follows the symlink and already sees the untouched, root-owned system
+# interpreter. If venv creation ever changes to --copies, this needs the
+# same treatment as the line below.
+chroot "$MOUNT" chown root:root /opt/archer/archer-os/obd-auth/obd_auth_client.py
+chroot "$MOUNT" chmod 644 /opt/archer/archer-os/obd-auth/obd_auth_client.py
+
 # /etc/archer holds both root-only secrets (obd_auth.key, used by the root-run
 # boot-time OBD auth handshake) and files archer.py (running as the unprivileged
 # 'archer' user) must read/write at runtime (archer.env, and hsm.py's master.key
