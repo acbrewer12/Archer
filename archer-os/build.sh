@@ -20,7 +20,7 @@ MOUNT="$WORK/mnt"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 BUILD_START=$(date +%s)
 STEP_CURRENT=0
-STEP_TOTAL=10
+STEP_TOTAL=12
 
 log() { echo -e "${BOLD}[ARCHER OS]${NC} $1"; }
 die() { echo -e "${RED}ERROR: $1${NC}"; exit 1; }
@@ -166,7 +166,43 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus openssh-server
+    network-manager avahi-daemon dbus openssh-server isc-dhcp-client sudo
+
+# X11 kiosk — pre-register Xorg permissions so the setuid-registration step
+# doesn't abort the build in restricted build environments (WSL2 etc.).
+# Tell dpkg not to set setuid on Xorg (0755 instead of 4755) — archer user
+# has NOPASSWD sudo below so X starts via that instead.
+mkdir -p "$MOUNT/var/lib/dpkg"
+chroot "$MOUNT" bash -c "dpkg-statoverride --add root root 0755 /usr/bin/Xorg 2>/dev/null; true"
+echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    --no-install-recommends \
+    xorg xinit chromium x11-xserver-utils 2>&1 || \
+    log "WARNING: X11/Chromium install had errors (kiosk may not work)"
+rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
+# Allow non-root users to start X
+mkdir -p "$MOUNT/etc/X11"
+cat > "$MOUNT/etc/X11/Xwrapper.config" <<'XWRAP'
+allowed_users=anybody
+needs_root_rights=yes
+XWRAP
+
+# Force fbdev driver so Xorg works with our custom kernel (no udevd to load DRM modules).
+# fbdev uses the kernel framebuffer — available at boot via CONFIG_FB_VESA=y / CONFIG_FB_EFI=y.
+mkdir -p "$MOUNT/etc/X11/xorg.conf.d"
+cat > "$MOUNT/etc/X11/xorg.conf.d/10-fbdev.conf" <<'XORGCONF'
+Section "Device"
+    Identifier  "Archer Display"
+    Driver      "fbdev"
+    Option      "fbdev" "/dev/fb0"
+EndSection
+
+Section "Screen"
+    Identifier  "Archer Screen"
+    Device      "Archer Display"
+    DefaultDepth 24
+EndSection
+XORGCONF
 
 rm -f "$MOUNT/usr/sbin/policy-rc.d"
 
@@ -201,6 +237,15 @@ plugins=keyfile
 wifi.scan-rand-mac-address=no
 EOF
 
+# Tell NetworkManager to leave wired ethernet alone.
+# archer_init brings up ethernet directly with dhclient (no D-Bus dependency).
+# NM still handles WiFi and USB tethering.
+mkdir -p "$MOUNT/etc/NetworkManager/conf.d"
+cat > "$MOUNT/etc/NetworkManager/conf.d/01-unmanaged-ethernet.conf" <<EOF
+[keyfile]
+unmanaged-devices=type:ethernet
+EOF
+
 # Auto-login as archer on tty1 (no password prompt)
 mkdir -p "$MOUNT/etc/systemd/system/getty@tty1.service.d"
 cat > "$MOUNT/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<EOF
@@ -212,7 +257,19 @@ EOF
 # ── 6. Archer user + files ───────────────────────────────────────
 step "Setting up Archer user, cloning repo, installing Python deps..."
 chroot "$MOUNT" useradd -m -s /bin/bash archer
-chroot "$MOUNT" usermod -aG audio,video,dialout archer
+# sudo: NOPASSWD below lets the non-setuid Xorg above start via sudo, and
+# kiosk.sh's error-page fallback uses sudo for dmesg/chvt. input: needed for
+# X to read input devices without a setuid Xorg.
+chroot "$MOUNT" usermod -aG audio,video,dialout,sudo,input archer
+
+# Give archer passwordless sudo — required by the kiosk pipeline above, not
+# general console convenience (deliberately NOT setting a root password the
+# way build-vm.sh does for VM debugging; a predictable, source-committed
+# root password is a real regression to ship on production truck hardware,
+# and nothing the kiosk needs actually depends on one).
+mkdir -p "$MOUNT/etc/sudoers.d"
+echo "archer ALL=(ALL) NOPASSWD:ALL" > "$MOUNT/etc/sudoers.d/archer"
+chmod 440 "$MOUNT/etc/sudoers.d/archer"
 
 mkdir -p "$MOUNT/opt/archer"
 if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC/.git" ]; then
@@ -229,7 +286,13 @@ chroot "$MOUNT" python3 -m venv /opt/archer/.venv
 chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
     flask edge-tts SpeechRecognition requests pyserial
 
-rm -f "$MOUNT/etc/resolv.conf"
+# Leave a fallback resolv.conf — dhclient will overwrite it with DHCP-provided
+# DNS at boot. Without this, DNS fails on first boot because NM doesn't
+# manage ethernet (see the unmanaged-ethernet config above).
+cat > "$MOUNT/etc/resolv.conf" <<EOF
+nameserver 8.8.8.8
+nameserver 1.1.1.1
+EOF
 chroot "$MOUNT" chown -R archer:archer /opt/archer
 
 # archer_init.c runs the OBD2 auth handshake as root (it needs to read the
@@ -263,7 +326,133 @@ mkdir -p "$MOUNT/etc/archer"
 chroot "$MOUNT" chown root:archer /etc/archer
 chroot "$MOUNT" chmod 1770 /etc/archer
 
-# ── 7. Compile and install Archer custom init (PID 1) ────────────
+# ── 7. Kiosk launch pipeline ──────────────────────────────────────
+# archer_init.c's tty1 flow is documented as "autologin as archer →
+# .bash_profile → startx → kiosk" (see init/archer_init.c) — none of this
+# existed here before, so a production image booted to a bare shell on
+# tty1 with the Flask backend running invisibly, never showing a dashboard.
+#
+# CAVEAT not resolved by this step: the fbdev Xorg driver below needs
+# CONFIG_FB_VESA/CONFIG_FB_EFI kernel support (see the comment on the driver
+# config). This build installs the stock Debian linux-image-amd64 package,
+# not the custom-tuned kernel from kernel/archer.config that build-vm.sh
+# uses — whether the stock kernel has those options enabled is not verified
+# here. If the kiosk pipeline doesn't actually render anything, that's the
+# first thing to check, and is very likely why the custom kernel work
+# exists in the first place (tracked separately).
+step "Setting up kiosk launch pipeline (X11 + Chromium)..."
+
+# Kiosk launch script — waits for Flask, then opens Chromium fullscreen
+cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
+#!/bin/bash
+# GPU modules are loaded by archer_init (root) before this script runs.
+# Create Xorg + Chromium profile directories — root is now rw thanks to
+# archer_init's remount. A missing/unwritable profile dir can make Chromium
+# hang silently on a fresh boot instead of erroring out.
+mkdir -p /home/archer/.local/share/xorg      2>/dev/null || true
+mkdir -p /home/archer/.config/archer-chrome  2>/dev/null || true
+touch /home/archer/.Xauthority 2>/dev/null || true
+
+# Wait up to 45s for Flask to be ready. Pure-bash TCP probe — curl is not
+# guaranteed to be present this early (and isn't worth the dependency here).
+for i in $(seq 1 45); do
+    { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null && { exec 3<&- 3>&-; break; }
+    sleep 1
+done
+# Disable screensaver / power management
+xset s off -dpms 2>/dev/null || true
+
+URL="http://127.0.0.1:5000/dashboard"
+LOG=/tmp/archer-chromium.log
+: > "$LOG"
+
+CHROME_FLAGS=(
+    --kiosk
+    --no-sandbox
+    --disable-infobars
+    --no-first-run
+    --disable-translate
+    --disable-extensions
+    --disable-pinch
+    --disable-session-crashed-bubble
+    --overscroll-history-navigation=0
+    --force-device-scale-factor=1
+    --autoplay-policy=no-user-gesture-required
+    --user-data-dir=/home/archer/.config/archer-chrome
+    # The fbdev framebuffer has no real GPU/DRI — letting Chromium try GPU
+    # compositing crashes its GPU process and leaves a blank black window.
+    # Force software rendering/compositing instead.
+    --disable-gpu
+    --disable-gpu-compositing
+    --use-gl=swiftshader
+)
+
+# Try launching the dashboard a few times. Each attempt is bounded by
+# `timeout` — if Chromium launches but its renderer hangs without ever
+# painting (a blank black window that never exits), waiting on it directly
+# would block forever and we'd never reach the on-screen fallback below.
+for attempt in 1 2 3; do
+    echo "=== launch attempt $attempt: $(date) ===" >> "$LOG"
+    timeout 35 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="$URL" >>"$LOG" 2>&1
+    echo "--- chromium exited with code $? (124 = hung / timed out) ---" >> "$LOG"
+    sleep 2
+done
+
+# All attempts failed — render the captured logs directly in a Chromium
+# window so the failure is visible on the monitor without a VT switch.
+ERR_HTML=/tmp/archer-kiosk-error.html
+{
+    echo "<html><body style='background:#000;color:#3f3;font:14px monospace;white-space:pre-wrap;padding:24px'>"
+    echo "ARCHER KIOSK — Chromium failed to load the dashboard after 3 attempts.<br><br>"
+    echo "--- dmesg (full kernel boot log — scrolls too fast to read live, readable here) ---<br>"
+    sudo /usr/bin/dmesg 2>/dev/null | sed 's/&/\&amp;/g;s/</\&lt;/g'
+    echo "<br><br>--- /run/archer_init.log ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' /run/archer_init.log 2>/dev/null
+    echo "<br><br>--- /tmp/archer-x.log ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' /tmp/archer-x.log 2>/dev/null
+    echo "<br><br>--- $LOG ---<br>"
+    sed 's/&/\&amp;/g;s/</\&lt;/g' "$LOG" 2>/dev/null
+    echo "</body></html>"
+} > "$ERR_HTML"
+timeout 60 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="file://$ERR_HTML" >>"$LOG" 2>&1
+echo "--- error-page chromium exited with code $? — handing back to shell ---" >> "$LOG"
+KIOSK
+chmod +x "$MOUNT/opt/archer/kiosk.sh"
+
+# .bash_profile — on tty1 (physical display), start X kiosk automatically
+cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
+# tty1 = kiosk display (dashboard). tty2 = maintenance shell (Ctrl+Alt+F2).
+if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
+    # Don't exec — keep bash alive so if X exits we drop to a shell instead
+    # of dying and triggering an infinite getty restart loop.
+    startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    # If X crashed mid-startup it can leave the console stuck in graphics
+    # mode (KD_GRAPHICS) — these messages would be invisible otherwise.
+    sudo /usr/bin/chvt 1 2>/dev/null
+    printf '\033c'
+    echo "[archer] X/kiosk exited. See /tmp/archer-x.log and /tmp/archer-chromium.log"
+    echo "[archer] Switch to maintenance shell: Ctrl+Alt+F2"
+fi
+BASHPROFILE
+chroot "$MOUNT" chown archer:archer /home/archer/.bash_profile
+
+# Pre-create Xorg directories with correct ownership so X can write its log.
+# Without these, Xorg fails immediately before even loading any driver.
+chroot "$MOUNT" bash -c "
+    mkdir -p /home/archer/.local/share/xorg
+    touch /home/archer/.Xauthority
+    chown -R archer:archer /home/archer/.local
+    chown archer:archer /home/archer/.Xauthority
+    chmod 600 /home/archer/.Xauthority
+"
+
+# .xinitrc fallback (used if startx is called without an argument)
+cat > "$MOUNT/home/archer/.xinitrc" <<'XINITRC'
+exec /opt/archer/kiosk.sh
+XINITRC
+chroot "$MOUNT" chown archer:archer /home/archer/.xinitrc
+
+# ── 8. Compile and install Archer custom init (PID 1) ────────────
 step "Compiling archer_init (custom PID 1 — replaces systemd)..."
 # Compile statically on the build host — no deps needed in the target image
 gcc -static -Os -Wall -std=c11 -D_GNU_SOURCE \
@@ -275,7 +464,7 @@ chmod 755 "$MOUNT/sbin/archer_init"
 # This is set below in the GRUB config step — kept here as a note
 log "archer_init installed at /sbin/archer_init ($(stat -c%s "$MOUNT/sbin/archer_init") bytes)"
 
-# ── 8. Archer systemd service ────────────────────────────────────
+# ── 9. Archer systemd service ────────────────────────────────────
 step "Installing Archer systemd service and enabling services..."
 # We still install the systemd service as a fallback (if init= is removed from cmdline)
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
@@ -288,7 +477,7 @@ chroot "$MOUNT" systemctl enable avahi-daemon
 # Disable unneeded services for speed
 chroot "$MOUNT" systemctl disable ssh 2>/dev/null || true
 
-# ── 8. Boot splash + GRUB ───────────────────────────────────────
+# ── 10. Boot splash + GRUB ──────────────────────────────────────
 step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
 # config/grub.cfg sets a GRUB superuser password on the edit/command-line
 # menu (so physical/USB access can't bypass boot via init=/bin/sh) — a real
@@ -316,7 +505,7 @@ chroot "$MOUNT" grub-install --target=i386-pc \
     "$LOOP" 2>/dev/null
 chroot "$MOUNT" update-grub 2>/dev/null
 
-# ── 9. MOTD / status screen ─────────────────────────────────────
+# ── 11. MOTD / status screen ────────────────────────────────────
 cat > "$MOUNT/etc/motd" <<'EOF'
 
   ╔═══════════════════════════════════════╗
@@ -329,10 +518,10 @@ cat > "$MOUNT/etc/motd" <<'EOF'
 
 EOF
 
-# ── 9. MOTD already done above, this is step 9 ──────────────────
+# ── 11. step() call for the MOTD block above ─────────────────────
 step "Writing MOTD and finalizing filesystem..."
 
-# ── 10. Cleanup + unmount ────────────────────────────────────────
+# ── 12. Cleanup + unmount ───────────────────────────────────────
 umount "$MOUNT/dev/pts" 2>/dev/null || true
 umount "$MOUNT/dev"     2>/dev/null || true
 umount "$MOUNT/sys"     2>/dev/null || true
