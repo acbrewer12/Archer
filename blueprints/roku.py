@@ -53,7 +53,15 @@ def roku_status():
     """Return a one-line status summary + optional alert string."""
     a    = _a()
     ts   = a.truck_state
-    mode = getattr(a, 'obd2_display', {}).get('mode', 'DISCONNECTED')
+    # NOTE: obd2_display['mode'] is only ever 'live'/'default' in archer.py —
+    # never 'REAL_OBD'/'EMULATED'/'BEAMNG'/'DISCONNECTED', so checking it here
+    # meant this always fell through to 'offline'. Use the same live-computed
+    # expression get_display_data() uses for its 'obd_mode' field instead.
+    beamng_connected = a.beamng_state.get('connected')
+    mode = (
+        'BEAMNG' if beamng_connected
+        else (('EMULATED' if a.USE_EMULATOR else 'REAL_OBD') if ts['rpm'] > 0 else 'DISCONNECTED')
+    )
 
     speed   = ts.get('speed', 0) or 0
     rpm     = ts.get('rpm', 0) or 0
