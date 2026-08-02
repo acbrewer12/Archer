@@ -484,11 +484,58 @@ step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
 # grub-mkpasswd-pbkdf2 hash is already in place there, not a placeholder.
 # If the password is ever rotated, regenerate with `grub-mkpasswd-pbkdf2`
 # and replace the hash in config/grub.cfg before shipping the next image.
-cp "$(dirname "$0")/config/grub.cfg" "$MOUNT/etc/grub.d/40_archer"
+#
+# Two bugs fixed here, found while starting the custom-kernel work (kept as
+# its own pass since both are pre-existing and unrelated to whether that
+# work happens at all — see git history):
+#
+# 1. config/grub.cfg's "Archer OS" entry referenced generic, unsuffixed
+#    /boot/vmlinuz and /boot/initrd.img — nothing anywhere in this build
+#    pipeline ever creates files with those exact names (every installed
+#    kernel, here or from a future custom-kernel build, only ever lands
+#    version-suffixed). That entry could never have actually booted.
+#    Fixed by substituting the real installed kernel's version into the
+#    __ARCHER_KERNEL_VERSION__ placeholder below before installing the file.
+#
+# 2. GRUB_DEFAULT=0 does not reliably select this entry. grub-mkconfig
+#    concatenates /etc/grub.d/ scripts in filename order — 10_linux (which
+#    auto-generates an entry for every kernel in /boot) runs before this
+#    file (40_archer), so its entry becomes position 0, not this one. Per
+#    the GRUB manual (node "Authentication and authorisation"):
+#    grub-mkconfig has no built-in authentication support at all, so
+#    10_linux's entries can never be marked --unrestricted — meaning once
+#    superusers is set (as this file does), EVERY auto-generated entry
+#    requires the password just to boot, not just to edit. Verified this
+#    ordering directly: installed the exact grub-pc-bin/grub-efi-amd64-bin
+#    packages this script uses in a real chroot and ran the actual
+#    grub-mkconfig against it. Fixed by giving the entry a stable --id
+#    (archer-os, in config/grub.cfg) and setting GRUB_DEFAULT to that id
+#    instead of a position.
+#
+# NOT verified, flagged rather than guessed at (same reason as the fbdev/
+# CONFIG_FB_VESA caveat a few steps up — this sandbox can't reach
+# deb.debian.org to check, and there's no real hardware to boot-test
+# against): whether initramfs-tools (or another initrd generator) actually
+# gets installed as a side effect of installing linux-image-amd64 via
+# debootstrap here — this script never installs one explicitly, unlike
+# build-vm.sh's explicit `apt-get install dracut` + dracut invocation for
+# its custom kernel. If /boot/initrd.img-<version> doesn't exist after
+# debootstrap, the substitution below will point the Archer OS entry at a
+# real but missing file. Worth being one of the first things checked once
+# real hardware exists — same as the fbdev question, cheap to answer by
+# just booting it and seeing whether the initrd loads, and currently
+# unanswerable from here.
+ARCHER_KERNEL_VER=$(basename "$(ls "$MOUNT"/boot/vmlinuz-* 2>/dev/null | head -1)" | sed 's/^vmlinuz-//')
+if [ -z "$ARCHER_KERNEL_VER" ]; then
+    die "No /boot/vmlinuz-* found after debootstrap — cannot configure GRUB to boot it"
+fi
+log "Stock kernel installed: ${ARCHER_KERNEL_VER}"
+sed "s/__ARCHER_KERNEL_VERSION__/${ARCHER_KERNEL_VER}/g" \
+    "$(dirname "$0")/config/grub.cfg" > "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
 
 cat > "$MOUNT/etc/default/grub" <<EOF
-GRUB_DEFAULT=0
+GRUB_DEFAULT=archer-os
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
