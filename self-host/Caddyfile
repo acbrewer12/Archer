@@ -1,0 +1,52 @@
+# Archer Caddyfile - two genuinely different access patterns, handled differently
+#
+# There is only ONE archer.py process and ONE port (verified against the
+# current source: exactly one Flask() instance and one .run() call, at the
+# bottom of archer.py). Tiers 1-4 are NOT separate servers on separate
+# ports - they're all routes on the same app, and get_request_tier()
+# resolves which dashboard a visitor sees from their MAC/JWT/PIN. So every
+# family member hits the SAME url below; no tier-specific subdomains needed.
+#
+# PRIVATE (family): Tailscale-only, reachable as a *.ts.net MagicDNS name -
+# never touches the public internet, no port-forwarding, no exposed attack
+# surface. Basic auth added as a second layer - not strictly required for
+# Tailscale-only traffic, but cheap insurance against a leaked/forwarded
+# Tailscale invite being the only thing standing between a stranger and
+# Archer's own tier auth.
+#
+# PUBLIC (fan page): genuinely internet-facing, needs real Let's Encrypt
+# HTTPS, no auth in front of it - archer.py's own routing already treats
+# /fans as the one public-by-design route and gates everything else with
+# its tier system, exactly like the existing HuggingFace Space deployment
+# does today with no network-level gating at all.
+#
+# Replace every placeholder below (marked with <>) with real values once
+# Tailscale/DNS are set up.
+
+# --- PRIVATE: family access (phone, watch, Roku) ---
+<your-tailscale-machine-name>.<your-tailnet-name>.ts.net {
+    # 7860 confirmed from archer.py: `port = int(os.environ.get('PORT', 7860))`,
+    # and matches the Dockerfile's `PORT=7860 python3 archer.py`. Override with
+    # self-host/archer.service's PORT env var if you ever change it — keep
+    # this port number in sync with that file if you do.
+    reverse_proxy 127.0.0.1:7860
+
+    basicauth /* {
+        # Generate with: caddy hash-password
+        # This protects against a leaked Tailscale invite being enough
+        # on its own to reach Archer - a second, independent factor
+        ayden <REPLACE_WITH_BCRYPT_HASH>
+    }
+}
+
+# --- PUBLIC: fan page, genuinely internet-facing ---
+# Requires: real domain name, DNS A record pointing at this server's
+# public IP, and ports 80/443 actually forwarded on the router - none
+# of which apply to the private block above.
+<your-public-domain.com> {
+    reverse_proxy 127.0.0.1:7860
+    # No basicauth here on purpose - this is meant to be public. archer.py's
+    # own tier system (owner PIN / MAC whitelist / JWT) is what protects
+    # everything past the public /fans page, the same as it already does
+    # for anyone hitting the public HuggingFace Space today.
+}

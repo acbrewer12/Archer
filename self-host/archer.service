@@ -1,0 +1,34 @@
+[Unit]
+Description=Archer - Truck AI System Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Update these two paths to match the real install location and user
+# once this is running on the actual home server
+User=ayden
+WorkingDirectory=/home/ayden/Archer
+ExecStart=/usr/bin/python3 /home/ayden/Archer/archer.py
+
+# Confirmed from archer.py: `port = int(os.environ.get('PORT', 7860))` and
+# matches the Dockerfile (`PORT=7860 python3 archer.py`). Set explicitly here
+# rather than relying on the default so this file is self-documenting — if
+# you ever change it, also update self-host/Caddyfile's reverse_proxy port.
+Environment=PORT=7860
+
+# Restart automatically if it crashes, but not in a tight bad loop if
+# something's fundamentally broken - waits 10s between attempts, gives
+# up after 5 failures within 5 minutes rather than hammering forever
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Sends stdout/stderr to the systemd journal - view with:
+# journalctl -u archer -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
