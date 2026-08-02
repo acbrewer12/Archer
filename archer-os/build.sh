@@ -270,12 +270,11 @@ chroot "$MOUNT" systemctl disable ssh 2>/dev/null || true
 
 # ── 8. Boot splash + GRUB ───────────────────────────────────────
 step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
-# REQUIRED MANUAL STEP: config/grub.cfg sets a GRUB superuser password on
-# the edit/command-line menu (so physical/USB access can't bypass boot via
-# init=/bin/sh), but ships with a CHANGE_ME_RUN_grub-mkpasswd-pbkdf2
-# placeholder hash. Before shipping an image, run `grub-mkpasswd-pbkdf2`
-# and replace the placeholder in config/grub.cfg with the real hash it
-# prints — otherwise GRUB edit mode is left unprotected.
+# config/grub.cfg sets a GRUB superuser password on the edit/command-line
+# menu (so physical/USB access can't bypass boot via init=/bin/sh) — a real
+# grub-mkpasswd-pbkdf2 hash is already in place there, not a placeholder.
+# If the password is ever rotated, regenerate with `grub-mkpasswd-pbkdf2`
+# and replace the hash in config/grub.cfg before shipping the next image.
 cp "$(dirname "$0")/config/grub.cfg" "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
 
