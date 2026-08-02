@@ -102,4 +102,20 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20250107")
+
+    // Required by ArcherTileService.kt — neither was declared before that
+    // file landed, and both are real compile errors without them (checked:
+    // androidx.wear.tiles's own ListenableFuture usage only pulls in the
+    // lightweight com.google.guava:listenablefuture stub, which has no
+    // Futures class — the tile service needs the real thing).
+    // com.google.guava:guava — version confirmed live against Maven Central
+    // (33.6.0-android is the current latest -android release as of this
+    // writing, not a guess).
+    implementation("com.google.guava:guava:33.6.0-android")
+    // androidx.concurrent:concurrent-futures — only on Google's Maven repo,
+    // which this sandbox's network policy blocks outright (confirmed via
+    // the proxy status endpoint, not a transient failure), so this version
+    // could NOT be verified live. 1.2.0 is the version I'm confident is a
+    // real stable release; double check for anything newer before building.
+    implementation("androidx.concurrent:concurrent-futures:1.2.0")
 }
