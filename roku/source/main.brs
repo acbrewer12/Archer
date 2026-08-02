@@ -11,8 +11,11 @@ sub Main()
         return
     end if
 
-    ' Read config — edit these files before sideloading
-    url   = ReadAsciiFile("pkg:/config/server.txt").Trim()
+    ' Read config — edit config/server.txt and config/token.txt before
+    ' sideloading. GetArcherBaseUrl() (source/Config.brs) falls back to the
+    ' HF Space URL if server.txt is ever missing/empty rather than leaving
+    ' scene.serverUrl blank.
+    url   = GetArcherBaseUrl()
     token = ReadAsciiFile("pkg:/config/token.txt").Trim()
 
     scene.serverUrl = url
