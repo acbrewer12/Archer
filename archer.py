@@ -8612,12 +8612,46 @@ def _revoke_by_name(name: str, tier: int):
     # Revoke all JWT sessions for this name+tier issued before now
     _revoked_names[f'{name}:{tier}'] = time.time()
 
-def get_request_tier(request):
-    """Resolve the tier for any request using HS256 JWT cookie or device fingerprint.
+def is_unauthenticated_visitor(request):
+    """True when the request carries neither an archer_auth nor archer_fp cookie.
 
-    Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
-    Only accepts signed JWTs — the old tier:name:hmac cookie format is disabled
-    to prevent downgrade attacks.  Revoked tokens/names are checked immediately.
+    A caller in this state has never signed in and was never issued a device
+    fingerprint by this server — there is nothing to resolve a tier from.
+    Routes that serve live vehicle data (currently /display_data and
+    /display_data/stream) check this FIRST and send these callers to the
+    public fan page instead of running them through get_request_tier(),
+    which would otherwise silently bucket them alongside real tier-4
+    (valet) devices. Not used inside get_request_tier() itself, since that
+    function also backs routes — /register_device among them — where
+    redirecting to the fan page would not make sense.
+    """
+    return not request.cookies.get('archer_auth') and not request.cookies.get('archer_fp')
+
+def get_request_tier(request):
+    """Resolve the tier for a request that presented some credential.
+
+    Returns tier int:
+      1-4 = owner/passenger/family/valet, decoded from a valid archer_auth
+            JWT cookie. Only accepts signed JWTs — the old tier:name:hmac
+            cookie format is disabled to prevent downgrade attacks.
+      5   = a credential was presented but rejected: invalid/tampered/expired
+            JWT, or a token/name revoked since it was issued. This is NOT
+            returned just because no credential was presented at all — a
+            request with no archer_auth cookie falls through to the
+            fingerprint branch below and resolves to a real tier (1-4) via
+            get_device_tier(), same as an unrecognized fingerprint does.
+            Callers that want to distinguish "no credential presented"
+            from "some tier" should check is_unauthenticated_visitor()
+            before calling this function, not rely on getting 5 back.
+    Revoked tokens/names are checked immediately.
+
+    The archer_fp cookie branch is effectively legacy: nothing in this
+    codebase sets an archer_fp cookie today (in-cabin device fingerprints
+    live only in browser localStorage and get sent as a query param, which
+    this function deliberately never reads, to prevent URL-based privilege
+    escalation) — so in practice this branch is reached via a missing
+    fingerprint, not a present one, and always resolves through
+    get_device_tier(None) to tier 4.
     """
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
@@ -10059,7 +10093,9 @@ def _filter_display_data_for_tier(d, tier):
 
 @display_app.route('/display_data')
 def display_data_endpoint():
-    from flask import request as flask_request
+    from flask import request as flask_request, redirect as _redir
+    if is_unauthenticated_visitor(flask_request):
+        return _redir('/fans')
     tier = get_request_tier(flask_request)
     if tier >= 5:
         return jsonify({'error': 'Authentication required'}), 403
@@ -10085,6 +10121,11 @@ def display_data_endpoint():
 def display_data_stream():
     """SSE push endpoint — replaces /display_data polling in the UI."""
     from flask import request as flask_request
+    if is_unauthenticated_visitor(flask_request):
+        # EventSource treats any non-200 response as a terminal failure (no
+        # auto-retry) as long as it isn't text/event-stream — a redirect to
+        # an HTML fan page isn't something an SSE connection can follow.
+        return Response('', status=403)
     tier = get_request_tier(flask_request)
     if tier >= 5:
         return Response('', status=403)

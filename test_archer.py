@@ -147,58 +147,85 @@ class TestGetRequestTier:
 # 2. /display_data endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestDisplayData:
+    # /display_data now requires a real credential (archer_auth or archer_fp
+    # cookie) — a caller with neither is bounced to /fans instead of getting
+    # data, so these use an authenticated client. Visitor behavior is covered
+    # separately in TestDisplayDataVisitorRedirect.
     def test_returns_200_json(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         assert r.status_code == 200
         d = json.loads(r.data)
         assert isinstance(d, dict)
 
     def test_required_fields_present(self):
-        r  = client.get('/display_data')
+        r  = _authed_client(1).get('/display_data')
         d  = json.loads(r.data)
         for field in ('rpm', 'speed', 'boost', 'oil_temp', 'battery', 'ethanol'):
             assert field in d, f'Missing field: {field}'
 
     def test_numeric_values(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert isinstance(d['rpm'],     (int, float))
         assert isinstance(d['speed'],   (int, float))
         assert isinstance(d['battery'], (int, float))
 
     def test_sensor_data_nested(self):
-        r  = client.get('/display_data')
+        r  = _authed_client(1).get('/display_data')
         d  = json.loads(r.data)
         assert 'sensor_data' in d
         assert isinstance(d['sensor_data'], dict)
 
     def test_spike_history_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'spike_history' in d
         assert isinstance(d['spike_history'], dict)
 
     def test_connected_clients_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'connected_clients' in d
         assert isinstance(d['connected_clients'], int)
 
     def test_device_tier_present(self):
-        r = client.get('/display_data?fp=test-fp-001')
+        r = _authed_client(1).get('/display_data?fp=test-fp-001')
         d = json.loads(r.data)
         assert 'device_tier' in d
         assert isinstance(d['device_tier'], int)
 
     def test_drive_mode_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'drive_mode' in d
 
     def test_coolant_temp_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'coolant' in d
+
+
+class TestDisplayDataVisitorRedirect:
+    """A caller with no archer_auth/archer_fp cookie never enters the tier
+    system — /display_data sends them to the fan page instead of resolving
+    a fallback tier; /display_data/stream can't be redirected like a page,
+    so it rejects cleanly instead."""
+    def test_no_cookie_redirects_to_fans(self):
+        r = client.get('/display_data', follow_redirects=False)
+        assert r.status_code == 302
+        assert '/fans' in r.headers['Location']
+
+    def test_no_cookie_redirects_even_with_fp_query_param(self):
+        # The fp query param is informational only for this route — it was
+        # never trusted for tier resolution, and doesn't count as a credential.
+        r = client.get('/display_data?fp=test-fp-001', follow_redirects=False)
+        assert r.status_code == 302
+        assert '/fans' in r.headers['Location']
+
+    def test_stream_no_cookie_rejected_cleanly(self):
+        c = archer.display_app.test_client()
+        r = c.get('/display_data/stream?sid=visitor-sse&fp=fp1')
+        assert r.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1768,7 +1795,7 @@ class TestSetVehicleEndpoint:
 
     def test_display_data_reflects_set_vehicle(self):
         self._post({'make': 'GMC', 'model': 'Sierra 2500HD'})
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert d['vehicle_make'] == 'GMC'
         assert d['vehicle_model'] == 'Sierra 2500HD'
@@ -1863,47 +1890,47 @@ class TestDisplayDataOBDFields:
     """Verify the 7 new OBD PID fields appear in display_data response."""
 
     def test_maf_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'maf' in d
 
     def test_timing_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'timing' in d
 
     def test_engine_load_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'engine_load' in d
 
     def test_stft_b1_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'stft_b1' in d
 
     def test_ltft_b1_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'ltft_b1' in d
 
     def test_stft_b2_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'stft_b2' in d
 
     def test_ltft_b2_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'ltft_b2' in d
 
     def test_obd_mode_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'obd_mode' in d
 
     def test_vehicle_name_fields_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'vehicle_make' in d
         assert 'vehicle_model' in d
@@ -2246,12 +2273,14 @@ class TestDisplayDataSSE:
 
     def test_stream_returns_event_stream_content_type(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse&fp=fp1',
                    headers={'Accept': 'text/event-stream'}) as r:
             assert 'text/event-stream' in r.content_type
 
     def test_stream_yields_data_line(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse2&fp=fp1',
                    headers={'Accept': 'text/event-stream'}) as r:
             chunk = next(r.iter_encoded(), b'')
@@ -2263,6 +2292,7 @@ class TestDisplayDataSSE:
 
     def test_stream_includes_device_tier(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse3&fp=fp_unregistered',
                    headers={'Accept': 'text/event-stream'}) as r:
             chunk = next(r.iter_encoded(), b'')
