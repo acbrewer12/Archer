@@ -8624,7 +8624,21 @@ def is_unauthenticated_visitor(request):
     (valet) devices. Not used inside get_request_tier() itself, since that
     function also backs routes — /register_device among them — where
     redirecting to the fan page would not make sense.
+
+    Loopback requests (127.0.0.1 / ::1) are exempt — this is what the
+    in-VM kiosk display looks like to Flask, since nothing mints it an
+    archer_auth cookie at boot. A connection that arrives from anywhere
+    else, including through a port-forward or an ngrok tunnel, can never
+    present as loopback here: kernels drop externally-arriving packets
+    that claim a 127.0.0.1/::1 source, so this only ever matches a process
+    running on the same machine as the server. An exempted loopback caller
+    still isn't handed a tier directly — it falls through to
+    get_request_tier()'s existing fingerprint branch same as before, which
+    resolves it to tier 4 (the same "untrusted device" default every other
+    unrecognized fingerprint gets), so sensitive fields stay filtered.
     """
+    if request.remote_addr in ('127.0.0.1', '::1'):
+        return False
     return not request.cookies.get('archer_auth') and not request.cookies.get('archer_fp')
 
 def get_request_tier(request):

@@ -206,26 +206,51 @@ class TestDisplayData:
 
 
 class TestDisplayDataVisitorRedirect:
-    """A caller with no archer_auth/archer_fp cookie never enters the tier
-    system — /display_data sends them to the fan page instead of resolving
-    a fallback tier; /display_data/stream can't be redirected like a page,
-    so it rejects cleanly instead."""
+    """A caller with no archer_auth/archer_fp cookie AND no loopback address
+    never enters the tier system — /display_data sends them to the fan page
+    instead of resolving a fallback tier; /display_data/stream can't be
+    redirected like a page, so it rejects cleanly instead. Werkzeug's test
+    client defaults REMOTE_ADDR to 127.0.0.1, so these explicitly override
+    it to a real, non-loopback address to actually exercise the visitor
+    path rather than the loopback exception (see TestDisplayDataLoopback)."""
+    _REMOTE = {'REMOTE_ADDR': '203.0.113.5'}
+
     def test_no_cookie_redirects_to_fans(self):
-        r = client.get('/display_data', follow_redirects=False)
+        r = client.get('/display_data', follow_redirects=False, environ_overrides=self._REMOTE)
         assert r.status_code == 302
         assert '/fans' in r.headers['Location']
 
     def test_no_cookie_redirects_even_with_fp_query_param(self):
         # The fp query param is informational only for this route — it was
         # never trusted for tier resolution, and doesn't count as a credential.
-        r = client.get('/display_data?fp=test-fp-001', follow_redirects=False)
+        r = client.get('/display_data?fp=test-fp-001', follow_redirects=False, environ_overrides=self._REMOTE)
         assert r.status_code == 302
         assert '/fans' in r.headers['Location']
 
     def test_stream_no_cookie_rejected_cleanly(self):
         c = archer.display_app.test_client()
-        r = c.get('/display_data/stream?sid=visitor-sse&fp=fp1')
+        r = c.get('/display_data/stream?sid=visitor-sse&fp=fp1', environ_overrides=self._REMOTE)
         assert r.status_code == 403
+
+
+class TestDisplayDataLoopback:
+    """The in-VM kiosk display has no archer_auth cookie (nothing mints it
+    one at boot) and talks to the server over 127.0.0.1 — it must not be
+    treated as a visitor, or its own dashboard breaks. Loopback callers
+    still get no special tier (no cookie means the existing fingerprint
+    fallback still applies, landing on tier 4), just not the /fans bounce."""
+    def test_loopback_no_cookie_gets_data_not_redirect(self):
+        r = client.get('/display_data', follow_redirects=False)
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert 'rpm' in d
+
+    def test_loopback_stream_no_cookie_not_rejected(self):
+        c = archer.display_app.test_client()
+        with c.get('/display_data/stream?sid=loopback-sse&fp=fp1',
+                   headers={'Accept': 'text/event-stream'}) as r:
+            assert r.status_code == 200
+            assert 'text/event-stream' in r.content_type
 
 
 # ═══════════════════════════════════════════════════════════════
