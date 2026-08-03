@@ -20,7 +20,7 @@ MOUNT="$WORK/mnt"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 BUILD_START=$(date +%s)
 STEP_CURRENT=0
-STEP_TOTAL=12
+STEP_TOTAL=14
 
 log() { echo -e "${BOLD}[ARCHER OS]${NC} $1"; }
 die() { echo -e "${RED}ERROR: $1${NC}"; exit 1; }
@@ -332,14 +332,20 @@ chroot "$MOUNT" chmod 1770 /etc/archer
 # existed here before, so a production image booted to a bare shell on
 # tty1 with the Flask backend running invisibly, never showing a dashboard.
 #
-# CAVEAT not resolved by this step: the fbdev Xorg driver below needs
+# RESOLVED, not just flagged: the fbdev Xorg driver below needs
 # CONFIG_FB_VESA/CONFIG_FB_EFI kernel support (see the comment on the driver
-# config). This build installs the stock Debian linux-image-amd64 package,
-# not the custom-tuned kernel from kernel/archer.config that build-vm.sh
-# uses — whether the stock kernel has those options enabled is not verified
-# here. If the kiosk pipeline doesn't actually render anything, that's the
-# first thing to check, and is very likely why the custom kernel work
-# exists in the first place (tracked separately).
+# config). At the time this kiosk pipeline first landed, this build only
+# ever installed the stock Debian linux-image-amd64 kernel, and whether
+# stock Debian has those options enabled was unverified and unverifiable
+# from this sandbox. The custom-kernel step further down in this script
+# now builds and boots kernel/archer.config instead, which was read
+# directly and confirmed to set CONFIG_FB=y, CONFIG_FB_VESA=y,
+# CONFIG_FB_EFI=y, CONFIG_FRAMEBUFFER_CONSOLE=y, and CONFIG_VT=y — exactly
+# what this driver needs. The stock kernel's own support for these options
+# remains genuinely unverified (still can't reach deb.debian.org from
+# here), but that no longer matters for whether the kiosk renders, since
+# the stock kernel isn't what boots by default anymore — only relevant if
+# someone deliberately falls back to testing it later.
 step "Setting up kiosk launch pipeline (X11 + Chromium)..."
 
 # Kiosk launch script — waits for Flask, then opens Chromium fullscreen
@@ -464,7 +470,96 @@ chmod 755 "$MOUNT/sbin/archer_init"
 # This is set below in the GRUB config step — kept here as a note
 log "archer_init installed at /sbin/archer_init ($(stat -c%s "$MOUNT/sbin/archer_init") bytes)"
 
-# ── 9. Archer systemd service ────────────────────────────────────
+# ── 9. Custom kernel (CAN bus, 1000Hz timer, USB-serial tuning) ──
+# Previously only build-vm.sh built this — production shipped the stock
+# Debian kernel instead, with the fbdev/CONFIG_FB_VESA question from the
+# kiosk step above left open specifically because of that gap. This is the
+# tuning kernel/archer.config exists for in the first place.
+#
+# Deliberately does NOT remove the stock kernel installed by debootstrap
+# above — both coexist in /boot. Three reasons: (1) it's the only way to
+# ever actually answer the open fbdev/initrd questions on real hardware —
+# removing it would foreclose testing "does the stock kernel work too?"
+# permanently, not just defer it; (2) update-grub's auto-generated entries
+# for it still exist as a real (if password-gated, per the prior GRUB fix)
+# recovery path if the custom kernel fails to boot; (3) build-kernel.sh
+# itself never touches or removes it — introducing removal logic here
+# would be new, untested surface area on top of an already-higher-risk
+# change, for no requirement that asked for it.
+step "Building Archer custom kernel (CAN bus, 1000Hz timer, universal drivers)..."
+chmod +x "$(dirname "$0")/kernel/build-kernel.sh"
+bash "$(dirname "$0")/kernel/build-kernel.sh" "$MOUNT"
+# Same detection pattern build-vm.sh already uses — the -archer suffix is
+# unique to kernel/build-kernel.sh's own KERNEL_RELEASE="${KERNEL_VERSION}-archer",
+# so this can't accidentally match the stock kernel now sitting alongside it.
+ARCHER_KERNEL_VER=$(ls "$MOUNT/lib/modules/" 2>/dev/null | grep -- '-archer$' | tail -1)
+if [ -z "$ARCHER_KERNEL_VER" ]; then
+    die "Custom kernel build did not produce a -archer kernel under /lib/modules — check the [KERNEL] output above"
+fi
+log "Custom kernel: ${ARCHER_KERNEL_VER}"
+
+step "Generating initramfs for both kernels with dracut..."
+cp /etc/resolv.conf "$MOUNT/etc/resolv.conf"
+# Debian's dracut package Conflicts: initramfs-tools, and its postinst
+# registers a dpkg trigger that unconditionally runs a bare-defaults dracut
+# pass (no --no-hostonly, no --add) against EVERY kernel version already
+# present under /boot — not just the one this script cares about. Since the
+# custom-kernel step above runs first, both the stock and the custom kernel
+# are already in /boot by the time this apt-get install runs, so that
+# trigger fires for both, silently, as a side effect of installing a
+# package. Found by extracting and reading the real dracut .deb's
+# postinst/trigger scripts — not documented anywhere GRUB/dracut normally
+# advertise.
+#
+# The explicit --force call below overwrites the custom kernel's trigger-
+# generated initrd with a correctly-flagged, verified one either way, so
+# that kernel was never actually at risk. The stock kernel's trigger-
+# generated initrd was the real gap: no check, no log line, generated with
+# whatever narrower/host-specific dracut defaults the trigger uses rather
+# than the generic --no-hostonly config this build wants for hardware it
+# hasn't tested against — the opposite of "safe recovery fallback." Now
+# explicitly regenerated and verified with the same generic flags as the
+# custom kernel, immediately below.
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq dracut
+rm -f "$MOUNT/etc/resolv.conf"
+
+# Generic mode: packs all common hardware modules — same reasoning as
+# build-vm.sh, this image needs to boot on whatever the actual head-unit
+# hardware turns out to be, not one specific tested machine.
+chroot "$MOUNT" dracut \
+    --force \
+    --no-hostonly \
+    --add "base rootfs-block shutdown" \
+    "/boot/initrd.img-${ARCHER_KERNEL_VER}" \
+    "$ARCHER_KERNEL_VER" \
+    2>&1 | tail -3
+if [ ! -f "$MOUNT/boot/initrd.img-${ARCHER_KERNEL_VER}" ]; then
+    die "dracut did not produce /boot/initrd.img-${ARCHER_KERNEL_VER}"
+fi
+INITRD_SIZE=$(( $(stat -c%s "$MOUNT/boot/initrd.img-${ARCHER_KERNEL_VER}") / 1024 / 1024 ))
+log "initrd.img-${ARCHER_KERNEL_VER} (${INITRD_SIZE} MB)"
+
+# Stock kernel (the fallback path — see the custom-kernel step's comment on
+# why it's kept). Detected by excluding the -archer suffix, mirroring how
+# ARCHER_KERNEL_VER itself is detected above.
+STOCK_KERNEL_VER=$(ls "$MOUNT/lib/modules/" 2>/dev/null | grep -v -- '-archer$' | tail -1)
+if [ -z "$STOCK_KERNEL_VER" ]; then
+    die "No stock kernel found under /lib/modules alongside the custom one — debootstrap's linux-image-amd64 install may have failed silently"
+fi
+chroot "$MOUNT" dracut \
+    --force \
+    --no-hostonly \
+    --add "base rootfs-block shutdown" \
+    "/boot/initrd.img-${STOCK_KERNEL_VER}" \
+    "$STOCK_KERNEL_VER" \
+    2>&1 | tail -3
+if [ ! -f "$MOUNT/boot/initrd.img-${STOCK_KERNEL_VER}" ]; then
+    die "dracut did not produce /boot/initrd.img-${STOCK_KERNEL_VER} for the stock fallback kernel"
+fi
+STOCK_INITRD_SIZE=$(( $(stat -c%s "$MOUNT/boot/initrd.img-${STOCK_KERNEL_VER}") / 1024 / 1024 ))
+log "Stock fallback kernel: ${STOCK_KERNEL_VER} — initrd.img-${STOCK_KERNEL_VER} (${STOCK_INITRD_SIZE} MB)"
+
+# ── 10. Archer systemd service ────────────────────────────────────
 step "Installing Archer systemd service and enabling services..."
 # We still install the systemd service as a fallback (if init= is removed from cmdline)
 cp "$(dirname "$0")/overlay/etc/systemd/system/archer.service" \
@@ -477,7 +572,7 @@ chroot "$MOUNT" systemctl enable avahi-daemon
 # Disable unneeded services for speed
 chroot "$MOUNT" systemctl disable ssh 2>/dev/null || true
 
-# ── 10. Boot splash + GRUB ──────────────────────────────────────
+# ── 11. Boot splash + GRUB ──────────────────────────────────────
 step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
 # config/grub.cfg sets a GRUB superuser password on the edit/command-line
 # menu (so physical/USB access can't bypass boot via init=/bin/sh) — a real
@@ -485,51 +580,46 @@ step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
 # If the password is ever rotated, regenerate with `grub-mkpasswd-pbkdf2`
 # and replace the hash in config/grub.cfg before shipping the next image.
 #
-# Two bugs fixed here, found while starting the custom-kernel work (kept as
-# its own pass since both are pre-existing and unrelated to whether that
-# work happens at all — see git history):
+# Two bugs previously fixed here (pre-existing, unrelated to whether the
+# custom-kernel step above happens at all — see git history):
 #
 # 1. config/grub.cfg's "Archer OS" entry referenced generic, unsuffixed
 #    /boot/vmlinuz and /boot/initrd.img — nothing anywhere in this build
 #    pipeline ever creates files with those exact names (every installed
-#    kernel, here or from a future custom-kernel build, only ever lands
-#    version-suffixed). That entry could never have actually booted.
-#    Fixed by substituting the real installed kernel's version into the
-#    __ARCHER_KERNEL_VERSION__ placeholder below before installing the file.
+#    kernel only ever lands version-suffixed). That entry could never have
+#    actually booted. Fixed by substituting the real kernel version into
+#    the __ARCHER_KERNEL_VERSION__ placeholder below before installing the
+#    file — ARCHER_KERNEL_VER is set above by the custom-kernel step, and
+#    reused here rather than re-detected, on purpose: re-detecting from
+#    /boot/vmlinuz-* here would now be ambiguous, since the stock kernel
+#    from debootstrap and the custom -archer kernel both sit in /boot side
+#    by side (see the custom-kernel step's comment for why the stock one
+#    is deliberately kept rather than removed).
 #
 # 2. GRUB_DEFAULT=0 does not reliably select this entry. grub-mkconfig
 #    concatenates /etc/grub.d/ scripts in filename order — 10_linux (which
-#    auto-generates an entry for every kernel in /boot) runs before this
-#    file (40_archer), so its entry becomes position 0, not this one. Per
-#    the GRUB manual (node "Authentication and authorisation"):
-#    grub-mkconfig has no built-in authentication support at all, so
-#    10_linux's entries can never be marked --unrestricted — meaning once
-#    superusers is set (as this file does), EVERY auto-generated entry
-#    requires the password just to boot, not just to edit. Verified this
-#    ordering directly: installed the exact grub-pc-bin/grub-efi-amd64-bin
-#    packages this script uses in a real chroot and ran the actual
-#    grub-mkconfig against it. Fixed by giving the entry a stable --id
-#    (archer-os, in config/grub.cfg) and setting GRUB_DEFAULT to that id
-#    instead of a position.
+#    auto-generates an entry for every kernel in /boot, now two of them)
+#    runs before this file (40_archer), so its entry becomes position 0,
+#    not this one. Per the GRUB manual (node "Authentication and
+#    authorisation"): grub-mkconfig has no built-in authentication support
+#    at all, so 10_linux's entries can never be marked --unrestricted —
+#    meaning once superusers is set, EVERY auto-generated entry requires
+#    the password just to boot, not just to edit. Verified this ordering
+#    directly: installed the exact grub-pc-bin/grub-efi-amd64-bin packages
+#    this script uses in a real chroot and ran the actual grub-mkconfig
+#    against it. Fixed by giving the entry a stable --id (archer-os, in
+#    config/grub.cfg) and setting GRUB_DEFAULT to that id instead of a
+#    position.
 #
-# NOT verified, flagged rather than guessed at (same reason as the fbdev/
-# CONFIG_FB_VESA caveat a few steps up — this sandbox can't reach
-# deb.debian.org to check, and there's no real hardware to boot-test
-# against): whether initramfs-tools (or another initrd generator) actually
-# gets installed as a side effect of installing linux-image-amd64 via
-# debootstrap here — this script never installs one explicitly, unlike
-# build-vm.sh's explicit `apt-get install dracut` + dracut invocation for
-# its custom kernel. If /boot/initrd.img-<version> doesn't exist after
-# debootstrap, the substitution below will point the Archer OS entry at a
-# real but missing file. Worth being one of the first things checked once
-# real hardware exists — same as the fbdev question, cheap to answer by
-# just booting it and seeing whether the initrd loads, and currently
-# unanswerable from here.
-ARCHER_KERNEL_VER=$(basename "$(ls "$MOUNT"/boot/vmlinuz-* 2>/dev/null | head -1)" | sed 's/^vmlinuz-//')
-if [ -z "$ARCHER_KERNEL_VER" ]; then
-    die "No /boot/vmlinuz-* found after debootstrap — cannot configure GRUB to boot it"
-fi
-log "Stock kernel installed: ${ARCHER_KERNEL_VER}"
+# RESOLVED, not just flagged: whether the stock kernel has a working initrd
+# for its own fallback 10_linux entry to actually boot with. It doesn't get
+# one from debootstrap alone (no initramfs generator installed explicitly),
+# but the custom-kernel step's dracut pass now explicitly generates and
+# verifies one for it too — not relying on dracut's own postinst trigger,
+# which (per that step's comment) fires for every kernel in /boot as a side
+# effect but with different, less portable defaults and no verification of
+# its own. Both kernels now have a checked, consistently-configured initrd.
+log "GRUB will boot: ${ARCHER_KERNEL_VER} (stock kernel kept in /boot as a verified fallback, not GRUB's default)"
 sed "s/__ARCHER_KERNEL_VERSION__/${ARCHER_KERNEL_VER}/g" \
     "$(dirname "$0")/config/grub.cfg" > "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
@@ -552,7 +642,7 @@ chroot "$MOUNT" grub-install --target=i386-pc \
     "$LOOP" 2>/dev/null
 chroot "$MOUNT" update-grub 2>/dev/null
 
-# ── 11. MOTD / status screen ────────────────────────────────────
+# ── 12. MOTD / status screen ────────────────────────────────────
 cat > "$MOUNT/etc/motd" <<'EOF'
 
   ╔═══════════════════════════════════════╗
@@ -565,10 +655,9 @@ cat > "$MOUNT/etc/motd" <<'EOF'
 
 EOF
 
-# ── 11. step() call for the MOTD block above ─────────────────────
 step "Writing MOTD and finalizing filesystem..."
 
-# ── 12. Cleanup + unmount ───────────────────────────────────────
+# ── 13. Cleanup + unmount ───────────────────────────────────────
 umount "$MOUNT/dev/pts" 2>/dev/null || true
 umount "$MOUNT/dev"     2>/dev/null || true
 umount "$MOUNT/sys"     2>/dev/null || true
