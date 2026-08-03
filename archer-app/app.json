@@ -10,6 +10,7 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
+        "ACCESS_FINE_LOCATION",
         "WAKE_LOCK",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
