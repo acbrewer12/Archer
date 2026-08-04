@@ -431,7 +431,18 @@ cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
 if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
     # Don't exec — keep bash alive so if X exits we drop to a shell instead
     # of dying and triggering an infinite getty restart loop.
-    startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    #
+    # sudo is required here, not optional — found by actually booting the
+    # VM variant of this image: Xorg's setuid bit is deliberately stripped
+    # above (0755 instead of 4755, see the dpkg-statoverride comment)
+    # specifically so it doesn't rely on setuid working, with the archer
+    # user's NOPASSWD sudo meant to take its place — but this line called
+    # `startx` plain, so Xorg ran as an ordinary unprivileged user and
+    # failed immediately with "_XSERVTransmkdir: ERROR: euid != 0"
+    # (confirmed via /tmp/archer-x.log on a real boot), cascading into a
+    # generic "no screens found" that had nothing to do with the
+    # framebuffer itself.
+    sudo startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
     # If X crashed mid-startup it can leave the console stuck in graphics
     # mode (KD_GRAPHICS) — these messages would be invisible otherwise.
     sudo /usr/bin/chvt 1 2>/dev/null
