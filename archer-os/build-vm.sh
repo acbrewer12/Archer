@@ -365,9 +365,15 @@ if [ -n "$ARCHER_LOCAL_SRC" ] && [ -d "$ARCHER_LOCAL_SRC/.git" ]; then
     git -C "$ARCHER_LOCAL_SRC" archive HEAD | tar -x -C "$MOUNT/opt/archer"
 else
     log "Cloning from GitHub..."
+    # /opt/archer already has kiosk.sh in it (written earlier, above) —
+    # `git clone` refuses to target a non-empty directory, so clone into a
+    # scratch dir and merge its contents in instead of cloning in place.
+    rm -rf "$MOUNT/opt/archer.clone"
     git clone \
         --branch "$ARCHER_BRANCH" --depth 1 \
-        "$ARCHER_REPO" "$MOUNT/opt/archer"
+        "$ARCHER_REPO" "$MOUNT/opt/archer.clone"
+    cp -a "$MOUNT/opt/archer.clone/." "$MOUNT/opt/archer/"
+    rm -rf "$MOUNT/opt/archer.clone"
 fi
 
 # pip needs network — copy host resolv.conf temporarily so pip can reach PyPI
