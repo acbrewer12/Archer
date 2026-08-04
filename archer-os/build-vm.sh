@@ -494,12 +494,21 @@ step "Installing GRUB bootloader (UEFI + Legacy BIOS)..."
 # going blank ~28s after "Booting the kernel..." with zero clues why, because
 # loglevel=0 silences EVERYTHING including panics/hangs. Once boot is
 # confirmed reaching the kiosk reliably, switch this back to "quiet".
+#
+# vga=791 (1024x768, 16-bit) — found missing by actually booting this image
+# in QEMU: CONFIG_FB_VESA=y being compiled into the kernel only means the
+# driver exists, not that it activates. Under legacy BIOS boot (what QEMU's
+# default SeaBIOS does without -bios ovmf), vesafb needs an explicit vga=
+# mode number or it never creates /dev/fb0 at all, which made Xorg's fbdev
+# driver fail with "no screens found" — confirmed via /proc/cmdline and
+# dmesg on a real boot, not assumed. Also applied to build.sh, since it has
+# the identical gap for the same reason on real hardware booting legacy BIOS.
 cat > "$MOUNT/etc/default/grub" <<EOF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=7 ignore_loglevel init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="loglevel=7 ignore_loglevel vga=791 init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 EOF
 

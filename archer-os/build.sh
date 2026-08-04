@@ -624,12 +624,20 @@ sed "s/__ARCHER_KERNEL_VERSION__/${ARCHER_KERNEL_VER}/g" \
     "$(dirname "$0")/config/grub.cfg" > "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
 
+# vga=791 (1024x768, 16-bit) — found missing by actually booting the VM
+# variant of this image: CONFIG_FB_VESA=y being compiled in (see the
+# "RESOLVED" comment above the kiosk pipeline) only means the driver exists,
+# not that it activates. Under legacy BIOS boot, vesafb needs an explicit
+# vga= mode number or it never creates /dev/fb0 at all, which made Xorg's
+# fbdev driver fail with "no screens found" — confirmed via /proc/cmdline
+# and dmesg on a real boot, not assumed. CONFIG_FB_EFI (UEFI boot) doesn't
+# need this — vga= is simply unused/harmless on that path.
 cat > "$MOUNT/etc/default/grub" <<EOF
 GRUB_DEFAULT=archer-os
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 vga=791 init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 GRUB_TERMINAL=console
 EOF
