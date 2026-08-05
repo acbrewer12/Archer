@@ -825,13 +825,26 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
     /* Load kernel modules that are =m (not built-in) but needed before udevd.
      * Network drivers: e1000 covers older VMware E1000 adapters.
      * GPU drivers: vmwgfx for VMware SVGA, then real-hardware drivers.
-     * Failures are silently ignored — built-in drivers are already active. */
+     * Failures are silently ignored — built-in drivers are already active.
+     *
+     * simpledrm deliberately isn't in this list — found by actually booting
+     * this image: it used to be here as "drm_simpledrm", which was simply
+     * the wrong module name (the real one is "simpledrm"), so this modprobe
+     * call was silently failing every boot regardless. It's now
+     * CONFIG_DRM_SIMPLEDRM=y (built in, see kernel/archer.config) instead
+     * of fixing the name here, because loading it this late would have
+     * been too late anyway — CONFIG_FB_EFI/CONFIG_FB_VESA are also built
+     * in and would have already claimed the boot framebuffer by the time
+     * this function runs, locking simpledrm out entirely (only one driver
+     * can bind to it). GRUB_CMDLINE_LINUX_DEFAULT now passes
+     * video=efifb:off video=vesafb:off so simpledrm gets it instead, at
+     * the same early boot stage those would have. */
     {
         static const char *const mods[] = {
             /* network */
             "e1000", "e1000e", "vmxnet3", "r8169",
             /* gpu — try vmwgfx first, fall back to real-hardware drivers */
-            "vmwgfx", "drm_simpledrm", "i915", "amdgpu", "nouveau",
+            "vmwgfx", "i915", "amdgpu", "nouveau",
             NULL
         };
         for (int i = 0; mods[i]; i++) {

@@ -168,9 +168,17 @@ mkdir -p "$MOUNT/var/lib/dpkg"
 # archer user has NOPASSWD sudo so X starts via sudo wrapper instead
 chroot "$MOUNT" bash -c "dpkg-statoverride --add root root 0755 /usr/bin/Xorg 2>/dev/null; true"
 echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
+# xserver-xorg-legacy is required, not optional — found by actually booting
+# this image: without it, /usr/lib/xorg/Xorg.wrap doesn't exist, so
+# /usr/bin/Xorg's own dispatcher script falls through to exec'ing the real
+# Xorg binary directly with none of Xwrapper.config's settings (below)
+# applied. Plain `startx` then runs Xorg as whatever user invoked it,
+# failing immediately with "_XSERVTransmkdir: ERROR: euid != 0" — sudo
+# startx (see .bash_profile below) covers this too, but installing the
+# actual package this config already assumes exists is the real fix.
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
-    xorg xinit chromium x11-xserver-utils 2>&1 || \
+    xorg xinit xserver-xorg-legacy chromium x11-xserver-utils 2>&1 || \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 # Allow non-root users to start X
@@ -180,14 +188,21 @@ allowed_users=anybody
 needs_root_rights=yes
 XWRAP
 
-# Force fbdev driver so Xorg works with our custom kernel (no udevd to load DRM modules).
-# fbdev uses the kernel framebuffer — available at boot via CONFIG_FB_VESA=y / CONFIG_FB_EFI=y.
+# modesetting driver, not fbdev — found by actually booting this image:
+# even with a genuinely valid kernel framebuffer active (confirmed via
+# dmesg), Xorg's old xf86-video-fbdev driver still failed with "no screens
+# found" against it — a real fbdev-driver/efifb compatibility gap, not
+# something fixable from this config file (permissions, PCI/GPU auto-bind
+# matching, and the fbdev device path were all ruled out first). modesetting
+# is Xorg's modern, generally more robust driver, and works against the
+# CONFIG_DRM_SIMPLEDRM=y device (see kernel/archer.config and the
+# video=efifb:off/video=vesafb:off GRUB parameters below) instead of the
+# kernel's raw /dev/fb0.
 mkdir -p "$MOUNT/etc/X11/xorg.conf.d"
-cat > "$MOUNT/etc/X11/xorg.conf.d/10-fbdev.conf" <<'XORGCONF'
+cat > "$MOUNT/etc/X11/xorg.conf.d/10-modesetting.conf" <<'XORGCONF'
 Section "Device"
     Identifier  "Archer Display"
-    Driver      "fbdev"
-    Option      "fbdev" "/dev/fb0"
+    Driver      "modesetting"
 EndSection
 
 Section "Screen"
@@ -267,9 +282,10 @@ CHROME_FLAGS=(
     --force-device-scale-factor=1
     --autoplay-policy=no-user-gesture-required
     --user-data-dir=/home/archer/.config/archer-chrome
-    # The fbdev framebuffer has no real GPU/DRI — letting Chromium try GPU
-    # compositing crashes its GPU process and leaves a blank black window.
-    # Force software rendering/compositing instead.
+    # simpledrm (see kernel/archer.config) provides mode-setting only, not
+    # real GPU/DRI acceleration — letting Chromium try GPU compositing
+    # crashes its GPU process and leaves a blank black window. Force
+    # software rendering/compositing instead.
     --disable-gpu
     --disable-gpu-compositing
     --use-gl=swiftshader
@@ -513,12 +529,34 @@ step "Installing GRUB bootloader (UEFI + Legacy BIOS)..."
 # driver fail with "no screens found" — confirmed via /proc/cmdline and
 # dmesg on a real boot, not assumed. Also applied to build.sh, since it has
 # the identical gap for the same reason on real hardware booting legacy BIOS.
+#
+# video=efifb:off video=vesafb:off — this VM actually boots UEFI (confirmed
+# via /proc/fb reporting "EFI VGA" and /sys/firmware/efi existing, despite
+# no -bios ovmf being passed to QEMU explicitly), so efifb — not vesafb —
+# was the one holding the framebuffer. Its data was completely valid
+# (confirmed via dmesg: real address, 1536k, correct 1024x768x16 mode) but
+# Xorg's old xf86-video-fbdev driver still failed with "no screens found"
+# against it — ruled out permissions (Xorg runs as root, see the sudo
+# startx comment below), PCI/GPU auto-bind matching (AutoAddGPU/
+# AutoEnableDevices "false" made no difference), and the config file
+# (explicit Option "fbdev" "/dev/fb0" made no difference either) before
+# concluding this is a real fbdev-driver/efifb compatibility gap, not
+# something fixable from the config side. These two parameters stop
+# efifb/vesafb from claiming the boot framebuffer at all, so the
+# CONFIG_DRM_SIMPLEDRM=y driver (see kernel/archer.config) gets it instead
+# — built in rather than a module specifically because there's no udev
+# here to modprobe anything, so it needs to already be active at the same
+# early boot stage efifb/vesafb would have claimed it, with no gap where
+# nothing's bound (a module-loaded-after-boot simpledrm was tried live and
+# left the console completely blind, both ttys, since nothing else took
+# over rendering it — don't repeat that by making these two changes
+# independently of the kernel config change above).
 cat > "$MOUNT/etc/default/grub" <<EOF
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=7 ignore_loglevel vga=791 init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="loglevel=7 ignore_loglevel vga=791 video=efifb:off video=vesafb:off init=/sbin/archer_init"
 GRUB_CMDLINE_LINUX=""
 EOF
 
