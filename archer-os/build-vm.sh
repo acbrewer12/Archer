@@ -179,7 +179,7 @@ echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
     xorg xinit xserver-xorg-legacy chromium x11-xserver-utils fontconfig \
-    openbox tint2 pcmanfm lxterminal 2>&1 || \
+    openbox tint2 pcmanfm lxterminal desktop-file-utils 2>&1 || \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 
@@ -327,16 +327,30 @@ chmod +x "$MOUNT/opt/archer/kiosk.sh"
 
 # Dashboard launcher — run from openbox's autostart, the root-menu
 # "Dashboard" item, and the Ctrl+Alt+D keybind (see rc.xml below).
-# Chromium reuses its existing window automatically on repeat launches
-# against the same --user-data-dir, so calling this again from the menu
-# to "get back to the dashboard" is safe, not a duplicate-window bug.
+# Chromium does NOT reuse its window on repeat launches against the same
+# --user-data-dir (its process singleton hands the command line to the
+# running instance, which for --app= opens a NEW app window) — so the
+# script itself guards against that with a pgrep check.
 cat > "$MOUNT/opt/archer/desktop-dashboard.sh" <<'DASHSCRIPT'
 #!/bin/bash
 mkdir -p /home/archer/.config/archer-chrome 2>/dev/null || true
 
 URL="http://127.0.0.1:5000/dashboard"
 LOG=/tmp/archer-chromium.log
-: > "$LOG"
+
+# Chromium's process singleton does NOT raise/focus an existing window when
+# re-invoked — for --app= it opens ANOTHER app window. So the menu item and
+# Ctrl+Alt+D would each stack up a duplicate dashboard (and a duplicate
+# taskbar button) every time they're used, which is exactly what someone
+# will do repeatedly when the screen looks wrong. Bail out if it's already
+# running; the existing window is reachable via the taskbar or Alt+Tab.
+if pgrep -f -- '--user-data-dir=/home/archer/.config/archer-chrome' >/dev/null 2>&1; then
+    exit 0
+fi
+
+# Deliberately NOT truncating $LOG here: a still-running Chromium holds it
+# open in append mode, so truncating would blow away the very output needed
+# to diagnose why the first window misbehaved.
 
 CHROME_FLAGS=(
     --app="$URL"
@@ -523,6 +537,11 @@ cat > "$MOUNT/home/archer/.config/openbox/rc.xml" <<'RCXML'
       <command>pcmanfm</command>
     </action>
   </keybind>
+  <!-- Per-window menu (Move/Resize/layer/Send to/Close) — otherwise
+       unreachable from the keyboard entirely. -->
+  <keybind key="A-space">
+    <action name="ShowMenu"><menu>client-menu</menu></action>
+  </keybind>
 </keyboard>
 
 <mouse>
@@ -554,6 +573,49 @@ cat > "$MOUNT/home/archer/.config/openbox/rc.xml" <<'RCXML'
     </mousebind>
     <mousebind button="Left" action="DoubleClick">
       <action name="ToggleMaximizeFull"/>
+    </mousebind>
+    <mousebind button="Right" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+    </mousebind>
+  </context>
+
+  <!-- Without a Client context openbox never grabs button presses on a
+       window's body, so tapping a background window does nothing at all:
+       no focus, no raise. With followMouse=no the only other ways to focus
+       are the ~20px titlebar and the taskbar — a bad trade on a touchscreen
+       head unit where tapping the window IS the primary gesture. Verbatim
+       from stock /etc/xdg/openbox/rc.xml; the press still passes through to
+       the application. -->
+  <context name="Client">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Middle" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Right" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+  </context>
+
+  <!-- titleLayout NLIMC renders an icon button; without this context it is
+       dead. This is also the only pointer route to the per-window menu
+       (Move/Resize/layer/Send to/Close). -->
+  <context name="Icon">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+    </mousebind>
+    <mousebind button="Right" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+      <action name="ShowMenu"><menu>client-menu</menu></action>
     </mousebind>
   </context>
 

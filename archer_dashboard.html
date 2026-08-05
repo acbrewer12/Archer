@@ -121,7 +121,16 @@ html, body {
 #body {
   display:grid;
   grid-template-columns:195px 1fr 215px;
-  height:calc(100vh - 38px - 130px - 42px);
+  /* 38px topbar + 42px nav. The 130px that used to be subtracted here was
+     reserved for #graphs — but #graphs lives in .tab-panel #panel-live while
+     #body lives in #panel-dashboard, and tab switching sets every other
+     .tab-panel to display:none, so the two are never on screen together.
+     That 130px was a dead band of bare background under the nav bar.
+     Reclaiming it also gives back the ~56px that the openbox titlebar plus
+     the 34px tint2 panel now take in the windowed desktop — without it,
+     every panel here is overflow:hidden with no scrollbar, so the bottom of
+     each one would simply be clipped and unreachable. */
+  height:calc(100vh - 38px - 42px);
 }
 
 /* ── LEFT PANEL ──────────────────────────────────────────── */
