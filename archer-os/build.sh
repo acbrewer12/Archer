@@ -185,7 +185,7 @@ echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 # actual package this config already assumes exists is the real fix.
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
-    xorg xinit xserver-xorg-legacy chromium x11-xserver-utils \
+    xorg xinit xserver-xorg-legacy chromium x11-xserver-utils fontconfig \
     openbox tint2 pcmanfm lxterminal 2>&1 || \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
@@ -407,14 +407,38 @@ done
 # Disable screensaver / power management
 xset s off -dpms 2>/dev/null || true
 
+# .bash_profile launches this via `sudo startx`, so this script and every
+# process it spawns runs as ROOT with HOME=/root — verified empirically
+# with a real NOPASSWD-sudo test user, not assumed (sudo's env_reset
+# resets HOME to the target user's home). openbox and tint2 both discover
+# their config via $HOME/.config, so without this they would read
+# /root/.config/... , find nothing, and silently fall back to stock
+# defaults: no taskbar, no dashboard, no theme, generic Debian root menu.
+# Point HOME at the archer config tree the build actually wrote.
+export HOME=/home/archer
+export XDG_CONFIG_HOME=/home/archer/.config
+
 # Solid black before anything else draws — no flash of X's default gray
 # root window while openbox/tint2/chromium are still starting up.
 xsetroot -solid "#050508" 2>/dev/null || true
 
 # openbox blocks here for the life of the session — this is startx's
-# client (see .bash_profile). It sources ~/.config/openbox/autostart on
-# its own; nothing else needs to launch it separately.
-exec openbox
+# client (see .bash_profile).
+#
+# --startup is REQUIRED, not optional: the bare `openbox` binary does NOT
+# run ~/.config/openbox/autostart by itself. Only openbox-session does,
+# and it does so precisely by passing --startup — its own source reads
+#   exec /usr/bin/openbox --startup ".../openbox-autostart OPENBOX"
+# under the comment "Run Openbox, and have it run the autostart stuff".
+# Without this, tint2 and the dashboard never launch at all and the
+# screen is an empty desktop. We invoke our own autostart directly
+# rather than the distro's openbox-autostart helper, which hardcodes an
+# arch-specific path and ends by exec'ing a Python XDG-autostart script
+# that needs PyXDG (not installed here, --no-install-recommends).
+# --config-file is belt-and-braces alongside the HOME export above.
+exec openbox \
+    --config-file /home/archer/.config/openbox/rc.xml \
+    --startup "sh /home/archer/.config/openbox/autostart"
 KIOSK
 chmod +x "$MOUNT/opt/archer/kiosk.sh"
 
@@ -461,7 +485,10 @@ chmod +x "$MOUNT/opt/archer/desktop-dashboard.sh"
 # openbox autostart — sourced automatically by openbox on session start.
 mkdir -p "$MOUNT/home/archer/.config/openbox"
 cat > "$MOUNT/home/archer/.config/openbox/autostart" <<'AUTOSTART'
-tint2 &
+# Explicit -c path rather than relying on $HOME discovery — this whole
+# session runs as root via `sudo startx` (see kiosk.sh), so belt-and-braces
+# alongside the HOME export there.
+tint2 -c /home/archer/.config/tint2/tint2rc &
 sleep 1
 /opt/archer/desktop-dashboard.sh &
 AUTOSTART
@@ -666,7 +693,7 @@ cat > "$MOUNT/home/archer/.config/openbox/rc.xml" <<'RCXML'
 </mouse>
 
 <menu>
-  <file>menu.xml</file>
+  <file>/home/archer/.config/openbox/menu.xml</file>
   <hideDelay>200</hideDelay>
   <middle>no</middle>
   <submenuShowDelay>100</submenuShowDelay>
