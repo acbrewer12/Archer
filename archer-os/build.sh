@@ -185,9 +185,27 @@ echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 # actual package this config already assumes exists is the real fix.
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
-    xorg xinit xserver-xorg-legacy chromium x11-xserver-utils 2>&1 || \
+    xorg xinit xserver-xorg-legacy chromium x11-xserver-utils \
+    openbox tint2 pcmanfm lxterminal 2>&1 || \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
+
+# Archer wordmark font (Orbitron) and the sign-in/technical-readout font
+# (Share Tech Mono), both real Google Fonts (SIL Open Font License) —
+# fetched directly rather than via fonts.googleapis.com (that CSS-based
+# @font-face path only works for pages Chromium renders; native desktop
+# chrome like openbox's window titles and tint2's taskbar need the actual
+# .ttf files installed as system fonts to reference them at all). Pulled
+# from Google's own font repo mirror on GitHub rather than fonts.google.com
+# directly, since that's what this build environment can actually reach.
+mkdir -p "$MOUNT/usr/share/fonts/truetype/archer"
+curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf" \
+    -o "$MOUNT/usr/share/fonts/truetype/archer/Orbitron.ttf" || \
+    log "WARNING: Orbitron font download failed — desktop chrome will fall back to a default font"
+curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/sharetechmono/ShareTechMono-Regular.ttf" \
+    -o "$MOUNT/usr/share/fonts/truetype/archer/ShareTechMono-Regular.ttf" || \
+    log "WARNING: Share Tech Mono font download failed — desktop chrome will fall back to a default font"
+chroot "$MOUNT" fc-cache -f >/dev/null 2>&1 || true
 # Allow non-root users to start X
 mkdir -p "$MOUNT/etc/X11"
 cat > "$MOUNT/etc/X11/Xwrapper.config" <<'XWRAP'
@@ -363,15 +381,21 @@ chroot "$MOUNT" chmod 1770 /etc/archer
 # someone deliberately falls back to testing it later.
 step "Setting up kiosk launch pipeline (X11 + Chromium)..."
 
-# Kiosk launch script — waits for Flask, then opens Chromium fullscreen
+# Desktop session — real openbox window manager + tint2 taskbar +
+# pcmanfm/lxterminal, replacing the old single-app --kiosk Chromium
+# lock-in. kiosk.sh keeps its name (referenced by .bash_profile/.xinitrc
+# below) but is now the desktop session launcher, not the app launcher —
+# it waits for Flask, then hands off to openbox; openbox itself sources
+# ~/.config/openbox/autostart, which launches tint2 and the dashboard.
 cat > "$MOUNT/opt/archer/kiosk.sh" <<'KIOSK'
 #!/bin/bash
-# GPU modules are loaded by archer_init (root) before this script runs.
-# Create Xorg + Chromium profile directories — root is now rw thanks to
-# archer_init's remount. A missing/unwritable profile dir can make Chromium
-# hang silently on a fresh boot instead of erroring out.
+# Create Xorg / desktop config directories — root is now rw thanks to
+# archer_init's remount. A missing/unwritable profile dir can make
+# Chromium hang silently on a fresh boot instead of erroring out.
 mkdir -p /home/archer/.local/share/xorg      2>/dev/null || true
 mkdir -p /home/archer/.config/archer-chrome  2>/dev/null || true
+mkdir -p /home/archer/.config/openbox        2>/dev/null || true
+mkdir -p /home/archer/.config/tint2          2>/dev/null || true
 touch /home/archer/.Xauthority 2>/dev/null || true
 
 # Wait up to 45s for Flask to be ready. Pure-bash TCP probe — curl is not
@@ -383,12 +407,33 @@ done
 # Disable screensaver / power management
 xset s off -dpms 2>/dev/null || true
 
+# Solid black before anything else draws — no flash of X's default gray
+# root window while openbox/tint2/chromium are still starting up.
+xsetroot -solid "#050508" 2>/dev/null || true
+
+# openbox blocks here for the life of the session — this is startx's
+# client (see .bash_profile). It sources ~/.config/openbox/autostart on
+# its own; nothing else needs to launch it separately.
+exec openbox
+KIOSK
+chmod +x "$MOUNT/opt/archer/kiosk.sh"
+
+# Dashboard launcher — run from openbox's autostart, the root-menu
+# "Dashboard" item, and the Ctrl+Alt+D keybind (see rc.xml below).
+# Chromium reuses its existing window automatically on repeat launches
+# against the same --user-data-dir, so calling this again from the menu
+# to "get back to the dashboard" is safe, not a duplicate-window bug.
+cat > "$MOUNT/opt/archer/desktop-dashboard.sh" <<'DASHSCRIPT'
+#!/bin/bash
+mkdir -p /home/archer/.config/archer-chrome 2>/dev/null || true
+
 URL="http://127.0.0.1:5000/dashboard"
 LOG=/tmp/archer-chromium.log
 : > "$LOG"
 
 CHROME_FLAGS=(
-    --kiosk
+    --app="$URL"
+    --start-maximized
     --no-sandbox
     --disable-infobars
     --no-first-run
@@ -408,38 +453,430 @@ CHROME_FLAGS=(
     --disable-gpu-compositing
     --use-gl=swiftshader
 )
+echo "=== launch: $(date) ===" >> "$LOG"
+exec /usr/bin/chromium "${CHROME_FLAGS[@]}" >>"$LOG" 2>&1
+DASHSCRIPT
+chmod +x "$MOUNT/opt/archer/desktop-dashboard.sh"
 
-# Try launching the dashboard a few times. Each attempt is bounded by
-# `timeout` — if Chromium launches but its renderer hangs without ever
-# painting (a blank black window that never exits), waiting on it directly
-# would block forever and we'd never reach the on-screen fallback below.
-for attempt in 1 2 3; do
-    echo "=== launch attempt $attempt: $(date) ===" >> "$LOG"
-    timeout 35 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="$URL" >>"$LOG" 2>&1
-    echo "--- chromium exited with code $? (124 = hung / timed out) ---" >> "$LOG"
-    sleep 2
-done
+# openbox autostart — sourced automatically by openbox on session start.
+mkdir -p "$MOUNT/home/archer/.config/openbox"
+cat > "$MOUNT/home/archer/.config/openbox/autostart" <<'AUTOSTART'
+tint2 &
+sleep 1
+/opt/archer/desktop-dashboard.sh &
+AUTOSTART
+chmod +x "$MOUNT/home/archer/.config/openbox/autostart"
 
-# All attempts failed — render the captured logs directly in a Chromium
-# window so the failure is visible on the monitor without a VT switch.
-ERR_HTML=/tmp/archer-kiosk-error.html
-{
-    echo "<html><body style='background:#000;color:#3f3;font:14px monospace;white-space:pre-wrap;padding:24px'>"
-    echo "ARCHER KIOSK — Chromium failed to load the dashboard after 3 attempts.<br><br>"
-    echo "--- dmesg (full kernel boot log — scrolls too fast to read live, readable here) ---<br>"
-    sudo /usr/bin/dmesg 2>/dev/null | sed 's/&/\&amp;/g;s/</\&lt;/g'
-    echo "<br><br>--- /run/archer_init.log ---<br>"
-    sed 's/&/\&amp;/g;s/</\&lt;/g' /run/archer_init.log 2>/dev/null
-    echo "<br><br>--- /tmp/archer-x.log ---<br>"
-    sed 's/&/\&amp;/g;s/</\&lt;/g' /tmp/archer-x.log 2>/dev/null
-    echo "<br><br>--- $LOG ---<br>"
-    sed 's/&/\&amp;/g;s/</\&lt;/g' "$LOG" 2>/dev/null
-    echo "</body></html>"
-} > "$ERR_HTML"
-timeout 60 /usr/bin/chromium "${CHROME_FLAGS[@]}" --app="file://$ERR_HTML" >>"$LOG" 2>&1
-echo "--- error-page chromium exited with code $? — handing back to shell ---" >> "$LOG"
-KIOSK
-chmod +x "$MOUNT/opt/archer/kiosk.sh"
+# openbox main config — every element name and section ordering checked
+# directly against openbox's real rc.xsd schema (not assumed), including
+# which sections require strict element order (xsd:sequence) vs allow any
+# order (xsd:all). Onyx is a long-stable, bundled-by-default dark theme
+# for window decorations; Orbitron/Share Tech Mono match the dashboard's
+# own wordmark/technical-readout fonts (see kernel/archer.config's font
+# install step above) so the native desktop chrome and the
+# Chromium-rendered dashboard read as the same product.
+cat > "$MOUNT/home/archer/.config/openbox/rc.xml" <<'RCXML'
+<?xml version="1.0" encoding="UTF-8"?>
+
+<openbox_config xmlns="http://openbox.org/3.4/rc"
+		xmlns:xi="http://www.w3.org/2001/XInclude">
+
+<resistance>
+  <strength>10</strength>
+  <screen_edge_strength>20</screen_edge_strength>
+</resistance>
+
+<focus>
+  <focusNew>yes</focusNew>
+  <followMouse>no</followMouse>
+  <focusLast>yes</focusLast>
+  <underMouse>no</underMouse>
+  <focusDelay>200</focusDelay>
+  <raiseOnFocus>no</raiseOnFocus>
+</focus>
+
+<placement>
+  <policy>Smart</policy>
+  <center>yes</center>
+  <monitor>Primary</monitor>
+  <primaryMonitor>1</primaryMonitor>
+</placement>
+
+<theme>
+  <name>Onyx</name>
+  <titleLayout>NLIMC</titleLayout>
+  <keepBorder>yes</keepBorder>
+  <animateIconify>yes</animateIconify>
+  <font place="ActiveWindow">
+    <name>Orbitron</name>
+    <size>9</size>
+    <weight>bold</weight>
+    <slant>normal</slant>
+  </font>
+  <font place="InactiveWindow">
+    <name>Orbitron</name>
+    <size>9</size>
+    <weight>bold</weight>
+    <slant>normal</slant>
+  </font>
+  <font place="MenuHeader">
+    <name>Orbitron</name>
+    <size>9</size>
+    <weight>bold</weight>
+    <slant>normal</slant>
+  </font>
+  <font place="MenuItem">
+    <name>Share Tech Mono</name>
+    <size>10</size>
+    <weight>normal</weight>
+    <slant>normal</slant>
+  </font>
+  <font place="ActiveOnScreenDisplay">
+    <name>Share Tech Mono</name>
+    <size>9</size>
+    <weight>bold</weight>
+    <slant>normal</slant>
+  </font>
+  <font place="InactiveOnScreenDisplay">
+    <name>Share Tech Mono</name>
+    <size>9</size>
+    <weight>normal</weight>
+    <slant>normal</slant>
+  </font>
+</theme>
+
+<desktops>
+  <number>1</number>
+  <firstdesk>1</firstdesk>
+  <names>
+    <name>Dashboard</name>
+  </names>
+</desktops>
+
+<resize>
+  <drawContents>yes</drawContents>
+  <popupShow>Nonpixel</popupShow>
+  <popupPosition>Center</popupPosition>
+</resize>
+
+<margins>
+  <top>0</top>
+  <bottom>0</bottom>
+  <left>0</left>
+  <right>0</right>
+</margins>
+
+<dock>
+  <position>TopLeft</position>
+  <floatingX>0</floatingX>
+  <floatingY>0</floatingY>
+  <noStrut>no</noStrut>
+  <stacking>Above</stacking>
+  <direction>Vertical</direction>
+  <autoHide>no</autoHide>
+  <hideDelay>300</hideDelay>
+  <showDelay>300</showDelay>
+  <moveButton>Middle</moveButton>
+</dock>
+
+<keyboard>
+  <chainQuitKey>C-g</chainQuitKey>
+
+  <keybind key="A-Tab">
+    <action name="NextWindow"/>
+  </keybind>
+  <keybind key="A-S-Tab">
+    <action name="PreviousWindow"/>
+  </keybind>
+  <keybind key="A-F4">
+    <action name="Close"/>
+  </keybind>
+  <keybind key="A-F9">
+    <action name="Iconify"/>
+  </keybind>
+  <keybind key="A-F10">
+    <action name="ToggleMaximizeFull"/>
+  </keybind>
+
+  <keybind key="C-A-t">
+    <action name="Execute">
+      <command>lxterminal</command>
+    </action>
+  </keybind>
+  <keybind key="C-A-d">
+    <action name="Execute">
+      <command>/opt/archer/desktop-dashboard.sh</command>
+    </action>
+  </keybind>
+  <keybind key="C-A-f">
+    <action name="Execute">
+      <command>pcmanfm</command>
+    </action>
+  </keybind>
+</keyboard>
+
+<mouse>
+  <dragThreshold>8</dragThreshold>
+  <doubleClickTime>200</doubleClickTime>
+  <screenEdgeWarpTime>400</screenEdgeWarpTime>
+  <screenEdgeWarpMouse>false</screenEdgeWarpMouse>
+
+  <context name="Frame">
+    <mousebind button="A-Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="A-Left" action="Drag">
+      <action name="Move"/>
+    </mousebind>
+    <mousebind button="A-Right" action="Drag">
+      <action name="Resize"/>
+    </mousebind>
+  </context>
+
+  <context name="Titlebar">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Left" action="Drag">
+      <action name="Move"/>
+    </mousebind>
+    <mousebind button="Left" action="DoubleClick">
+      <action name="ToggleMaximizeFull"/>
+    </mousebind>
+  </context>
+
+  <context name="Desktop">
+    <mousebind button="Right" action="Press">
+      <action name="ShowMenu">
+        <menu>root-menu</menu>
+      </action>
+    </mousebind>
+    <mousebind button="Middle" action="Press">
+      <action name="ShowMenu">
+        <menu>client-list-combined-menu</menu>
+      </action>
+    </mousebind>
+  </context>
+
+  <context name="Close"><mousebind button="Left" action="Click"><action name="Close"/></mousebind></context>
+  <context name="Maximize"><mousebind button="Left" action="Click"><action name="ToggleMaximizeFull"/></mousebind></context>
+  <context name="Iconify"><mousebind button="Left" action="Click"><action name="Iconify"/></mousebind></context>
+</mouse>
+
+<menu>
+  <file>menu.xml</file>
+  <hideDelay>200</hideDelay>
+  <middle>no</middle>
+  <submenuShowDelay>100</submenuShowDelay>
+  <showIcons>yes</showIcons>
+  <manageDesktops>no</manageDesktops>
+</menu>
+
+<applications>
+  <application class="Chromium*">
+    <maximized>yes</maximized>
+    <focus>yes</focus>
+    <desktop>1</desktop>
+  </application>
+</applications>
+
+</openbox_config>
+RCXML
+
+# openbox right-click root menu — element names/order checked against
+# openbox's real menu.xsd. Restart/Power Off use the same PID-1 signal
+# protocol archer_init.c implements (SIGUSR1 = reboot, SIGUSR2 = poweroff)
+# — the same mechanism used throughout tonight's manual VM testing.
+cat > "$MOUNT/home/archer/.config/openbox/menu.xml" <<'MENUXML'
+<?xml version="1.0" encoding="UTF-8"?>
+
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+
+<menu id="root-menu" label="ARCHER">
+  <item label="Dashboard">
+    <action name="Execute">
+      <command>/opt/archer/desktop-dashboard.sh</command>
+    </action>
+  </item>
+  <item label="Terminal">
+    <action name="Execute">
+      <command>lxterminal</command>
+    </action>
+  </item>
+  <item label="Files">
+    <action name="Execute">
+      <command>pcmanfm</command>
+    </action>
+  </item>
+  <separator/>
+  <item label="Reload Desktop">
+    <action name="Execute">
+      <command>openbox --reconfigure</command>
+    </action>
+  </item>
+  <separator label="Power"/>
+  <item label="Restart Archer OS">
+    <action name="Execute">
+      <command>sudo kill -USR1 1</command>
+    </action>
+  </item>
+  <item label="Power Off">
+    <action name="Execute">
+      <command>sudo kill -USR2 1</command>
+    </action>
+  </item>
+</menu>
+
+</openbox_menu>
+MENUXML
+
+# tint2 taskbar theme — every directive cross-checked against this exact
+# tint2 version's own shipped example configs
+# (/etc/xdg/tint2/tint2rc and /usr/share/tint2/horizontal-dark-opaque.tint2rc
+# inside the tint2 .deb), not assumed. tint2 only supports one
+# task_font_color for all states (no active/urgent/iconified variants —
+# confirmed absent from both real examples), so state is conveyed via
+# background_id (background/border color per numbered background block)
+# instead. Colors match archer_dashboard.html's own :root CSS variables.
+mkdir -p "$MOUNT/home/archer/.config/tint2"
+cat > "$MOUNT/home/archer/.config/tint2/tint2rc" <<'TINT2RC'
+#---- Generated for Archer OS -----
+#-------------------------------------
+# Background 1: panel body
+rounded = 0
+border_width = 0
+border_sides = TBLR
+background_color = #050508 100
+border_color = #16162a 100
+background_color_hover = #050508 100
+border_color_hover = #16162a 100
+background_color_pressed = #050508 100
+border_color_pressed = #16162a 100
+
+# Background 2: default task, iconified task
+rounded = 4
+border_width = 1
+border_sides = TBLR
+background_color = #0a0a12 100
+border_color = #1e1e35 100
+background_color_hover = #0d0d16 100
+border_color_hover = #009ab5 100
+background_color_pressed = #0d0d16 100
+border_color_pressed = #00e5ff 100
+
+# Background 3: active task
+rounded = 4
+border_width = 1
+border_sides = TBLR
+background_color = #0d0d16 100
+border_color = #00e5ff 100
+background_color_hover = #0d0d16 100
+border_color_hover = #00e5ff 100
+background_color_pressed = #0d0d16 100
+border_color_pressed = #00e5ff 100
+
+# Background 4: urgent task
+rounded = 4
+border_width = 1
+border_sides = TBLR
+background_color = #1a0000 100
+border_color = #ff3333 100
+background_color_hover = #1a0000 100
+border_color_hover = #ff3333 100
+background_color_pressed = #1a0000 100
+border_color_pressed = #ff3333 100
+
+#-------------------------------------
+# Panel
+panel_items = TSC
+panel_size = 100% 34
+panel_margin = 0 0
+panel_padding = 6 0 6
+panel_background_id = 1
+panel_dock = 0
+panel_position = bottom center horizontal
+panel_layer = top
+panel_monitor = all
+autohide = 0
+strut_policy = follow_size
+disable_transparency = 0
+mouse_effects = 1
+font_shadow = 0
+mouse_hover_icon_asb = 100 0 10
+mouse_pressed_icon_asb = 100 0 0
+
+#-------------------------------------
+# Taskbar
+taskbar_mode = single_desktop
+taskbar_hide_if_empty = 0
+taskbar_padding = 4 2 4
+taskbar_background_id = 0
+taskbar_active_background_id = 0
+taskbar_name = 0
+taskbar_distribute_size = 0
+taskbar_sort_order = none
+task_align = left
+
+#-------------------------------------
+# Task
+task_text = 1
+task_icon = 1
+task_centered = 1
+urgent_nb_of_blink = 8
+task_maximum_size = 200 32
+task_padding = 8 2 4
+task_font = Share Tech Mono 9
+task_tooltip = 1
+task_thumbnail = 0
+task_font_color = #dde4e8 100
+task_background_id = 2
+task_active_background_id = 3
+task_urgent_background_id = 4
+task_iconified_background_id = 2
+mouse_left = toggle_iconify
+mouse_middle = none
+mouse_right = close
+mouse_scroll_up = prev_task
+mouse_scroll_down = next_task
+
+#-------------------------------------
+# System tray (notification area)
+systray_padding = 4 4 4
+systray_background_id = 0
+systray_sort = ascending
+systray_icon_size = 20
+systray_icon_asb = 100 0 0
+systray_monitor = 1
+systray_name_filter =
+
+#-------------------------------------
+# Clock
+time1_format = %H:%M
+time1_font = Orbitron bold 10
+time2_format = %a %b %d
+time2_font = Share Tech Mono 8
+time1_timezone =
+time2_timezone =
+clock_font_color = #00e5ff 100
+clock_padding = 8 0
+clock_background_id = 0
+clock_tooltip =
+clock_tooltip_timezone =
+clock_lclick_command =
+clock_rclick_command =
+clock_mclick_command =
+clock_uwheel_command =
+clock_dwheel_command =
+
+#-------------------------------------
+# Battery — no battery on a truck head unit
+battery_tooltip = 0
+battery_low_status = 0
+TINT2RC
+
+chroot "$MOUNT" chown -R archer:archer /home/archer/.config
 
 # .bash_profile — on tty1 (physical display), start X kiosk automatically
 cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
