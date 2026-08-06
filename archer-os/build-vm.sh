@@ -185,6 +185,29 @@ DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     log "WARNING: X11/Chromium install had errors (kiosk may not work)"
 rm -f "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 
+# ── WiFi firmware ────────────────────────────────────────────────────
+# The image already had everything to drive WiFi EXCEPT the firmware:
+# kernel/archer.config compiles CONFIG_IWLWIFI/ATH9K/BRCMFMAC, and
+# NetworkManager manages wireless (only ethernet is excluded, see the
+# unmanaged-devices conf below). But Debian 12 moved firmware blobs out of
+# main into a separate "non-free-firmware" component, and debootstrap only
+# configures main — so those chipsets fail at probe time and no wireless
+# interface ever appears, regardless of what UI is installed. That is why
+# this image was ethernet-only.
+#
+# These are pure data packages with no dependencies at all (verified), so
+# they add nothing to the no-systemd / no-dbus-session constraints here.
+cat > "$MOUNT/etc/apt/sources.list" <<SOURCES
+deb http://deb.debian.org/debian $DEBIAN_RELEASE main contrib non-free-firmware
+deb http://security.debian.org/debian-security $DEBIAN_RELEASE-security main contrib non-free-firmware
+SOURCES
+chroot "$MOUNT" apt-get update -qq 2>&1 | tail -2 || true
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    --no-install-recommends \
+    firmware-iwlwifi firmware-realtek firmware-atheros \
+    firmware-brcm80211 firmware-misc-nonfree 2>&1 || \
+    log "WARNING: WiFi firmware install failed — wireless will not work"
+
 # Archer wordmark font (Orbitron) and the sign-in/technical-readout font
 # (Share Tech Mono), both real Google Fonts (SIL Open Font License) —
 # fetched directly rather than via fonts.googleapis.com (that CSS-based
@@ -200,6 +223,14 @@ curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orb
 curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/sharetechmono/ShareTechMono-Regular.ttf" \
     -o "$MOUNT/usr/share/fonts/truetype/archer/ShareTechMono-Regular.ttf" || \
     log "WARNING: Share Tech Mono font download failed — desktop chrome will fall back to a default font"
+# Rajdhani is archer_dashboard.html's body font. Installing it locally is
+# what lets that page stop blocking on fonts.googleapis.com at load time —
+# fontconfig resolves the family by name with no network involved.
+for _rw in Regular SemiBold Bold; do
+    curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/rajdhani/Rajdhani-${_rw}.ttf" \
+        -o "$MOUNT/usr/share/fonts/truetype/archer/Rajdhani-${_rw}.ttf" || \
+        log "WARNING: Rajdhani ${_rw} download failed — dashboard will fall back to a default font"
+done
 chroot "$MOUNT" fc-cache -f >/dev/null 2>&1 || true
 
 # Allow non-root users to start X
@@ -740,6 +771,11 @@ cat > "$MOUNT/home/archer/.config/openbox/menu.xml" <<'MENUXML'
       <command>pcmanfm</command>
     </action>
   </item>
+  <item label="WiFi">
+    <action name="Execute">
+      <command>lxterminal -e nmtui</command>
+    </action>
+  </item>
   <separator/>
   <item label="Reload Desktop">
     <action name="Execute">
@@ -886,6 +922,7 @@ launcher_tooltip = 1
 launcher_item_app = /usr/share/applications/archer-dashboard.desktop
 launcher_item_app = /usr/share/applications/archer-terminal.desktop
 launcher_item_app = /usr/share/applications/archer-files.desktop
+launcher_item_app = /usr/share/applications/archer-wifi.desktop
 
 #-------------------------------------
 # System tray (notification area)
@@ -1038,6 +1075,16 @@ Icon=utilities-terminal
 Terminal=false
 Categories=System;
 DESKTOP2
+cat > "$MOUNT/usr/share/applications/archer-wifi.desktop" <<'DESKTOP4'
+[Desktop Entry]
+Type=Application
+Name=WiFi
+Comment=Connect to a wireless network
+Exec=lxterminal -e nmtui
+Icon=network-wireless
+Terminal=false
+Categories=System;
+DESKTOP4
 cat > "$MOUNT/usr/share/applications/archer-files.desktop" <<'DESKTOP3'
 [Desktop Entry]
 Type=Application

@@ -4,8 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ARCHER OS</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<!-- Webfonts are loaded NON-BLOCKING on purpose. As a plain
+     <link rel="stylesheet"> this was render-blocking: the browser refused to
+     paint anything until the request to fonts.googleapis.com either finished
+     or timed out. On the truck head unit — which normally has no internet at
+     all — that meant a multi-second stall on every dashboard load, which is
+     exactly the "dashboard is lagging when loading" symptom.
+
+     media="print" makes the browser fetch the sheet at low priority without
+     blocking render; onload flips it to "all" so the fonts apply the moment
+     they do arrive. The page paints immediately either way.
+
+     On Archer OS itself this request is not even needed: the build installs
+     Rajdhani and Orbitron into /usr/share/fonts/truetype/archer, so
+     fontconfig resolves both families locally by name with no network. The
+     remote path is kept for phones/browsers hitting this page over the
+     tunnel, where those fonts are not installed. -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap">
+<noscript><link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap"></noscript>
 <style>
 :root {
   --bg:       #050508;
