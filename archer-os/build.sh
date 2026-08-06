@@ -170,8 +170,10 @@ DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
 
 # X11 kiosk — pre-register Xorg permissions so the setuid-registration step
 # doesn't abort the build in restricted build environments (WSL2 etc.).
-# Tell dpkg not to set setuid on Xorg (0755 instead of 4755) — archer user
-# has NOPASSWD sudo below so X starts via that instead.
+# Tell dpkg not to set setuid on Xorg (0755 instead of 4755). /usr/bin/Xorg
+# is only a dispatcher script; the real privilege comes from the setuid
+# /usr/lib/xorg/Xorg.wrap that xserver-xorg-legacy installs below, which is
+# what lets .bash_profile start the session unprivileged.
 mkdir -p "$MOUNT/var/lib/dpkg"
 chroot "$MOUNT" bash -c "dpkg-statoverride --add root root 0755 /usr/bin/Xorg 2>/dev/null; true"
 echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
@@ -180,9 +182,9 @@ echo "force-unsafe-io" > "$MOUNT/etc/dpkg/dpkg.cfg.d/99archer-build"
 # exist, so /usr/bin/Xorg's own dispatcher script falls through to exec'ing
 # the real Xorg binary directly with none of Xwrapper.config's settings
 # (below) applied. Plain `startx` then runs Xorg as whatever user invoked
-# it, failing immediately with "_XSERVTransmkdir: ERROR: euid != 0" — sudo
-# startx (see .bash_profile below) covers this too, but installing the
-# actual package this config already assumes exists is the real fix.
+# it, failing immediately with "_XSERVTransmkdir: ERROR: euid != 0". With
+# this package present, Xorg.wrap elevates only the X server, so
+# .bash_profile can run the whole desktop session as the archer user.
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
     xorg xinit xserver-xorg-legacy chromium x11-xserver-utils fontconfig \
@@ -407,14 +409,15 @@ done
 # Disable screensaver / power management
 xset s off -dpms 2>/dev/null || true
 
-# .bash_profile launches this via `sudo startx`, so this script and every
-# process it spawns runs as ROOT with HOME=/root — verified empirically
-# with a real NOPASSWD-sudo test user, not assumed (sudo's env_reset
-# resets HOME to the target user's home). openbox and tint2 both discover
-# their config via $HOME/.config, so without this they would read
-# /root/.config/... , find nothing, and silently fall back to stock
-# defaults: no taskbar, no dashboard, no theme, generic Debian root menu.
-# Point HOME at the archer config tree the build actually wrote.
+# The session normally runs as the archer user now (see .bash_profile),
+# so HOME is already /home/archer. This export is kept because
+# .bash_profile still has a sudo fallback path, and under `sudo startx`
+# HOME becomes /root — verified empirically with a real NOPASSWD-sudo
+# test user, not assumed (sudo's env_reset resets HOME to the target
+# user's home). openbox and tint2 both discover their config via
+# $HOME/.config, so on that path they would read /root/.config/... , find
+# nothing, and silently fall back to stock defaults: no taskbar, no
+# dashboard, no theme, generic Debian root menu. Pin it either way.
 export HOME=/home/archer
 export XDG_CONFIG_HOME=/home/archer/.config
 
@@ -472,6 +475,10 @@ fi
 CHROME_FLAGS=(
     --app="$URL"
     --start-maximized
+    # --no-sandbox is still required: CONFIG_USER_NS is only just enabled in
+    # kernel/archer.config, and Chromium's namespace sandbox cannot start
+    # without it. Once a build with that kernel is confirmed booting, this
+    # flag can be dropped to get the sandbox back.
     --no-sandbox
     --disable-infobars
     --no-first-run
@@ -544,7 +551,7 @@ cat > "$MOUNT/home/archer/.config/openbox/rc.xml" <<'RCXML'
 </placement>
 
 <theme>
-  <name>Onyx</name>
+  <name>Archer</name>
   <titleLayout>NLIMC</titleLayout>
   <keepBorder>yes</keepBorder>
   <animateIconify>yes</animateIconify>
@@ -879,7 +886,7 @@ border_color_pressed = #ff3333 100
 
 #-------------------------------------
 # Panel
-panel_items = TSC
+panel_items = LTSC
 panel_size = 100% 34
 panel_margin = 0 0
 panel_padding = 6 0 6
@@ -931,6 +938,22 @@ mouse_scroll_up = prev_task
 mouse_scroll_down = next_task
 
 #-------------------------------------
+# Launcher — Dashboard / Terminal / Files, always visible on the panel.
+# Directive names taken from this tint2 version's own shipped example
+# configs, same as the rest of this file.
+launcher_padding = 6 6 6
+launcher_background_id = 0
+launcher_icon_background_id = 0
+launcher_icon_size = 22
+launcher_icon_asb = 100 0 0
+launcher_icon_theme_override = 0
+startup_notifications = 1
+launcher_tooltip = 1
+launcher_item_app = /usr/share/applications/archer-dashboard.desktop
+launcher_item_app = /usr/share/applications/archer-terminal.desktop
+launcher_item_app = /usr/share/applications/archer-files.desktop
+
+#-------------------------------------
 # System tray (notification area)
 systray_padding = 4 4 4
 systray_background_id = 0
@@ -965,6 +988,133 @@ battery_tooltip = 0
 battery_low_status = 0
 TINT2RC
 
+# ── Archer openbox theme ──────────────────────────────────────────────
+# openbox themes are pure text (the stock Onyx theme ships exactly one
+# file, themerc, and no images — checked inside the real .deb), so a
+# fully branded window-decoration theme costs nothing and needs no
+# artwork. Colors are the dashboard's own :root CSS variables. Lives in
+# /usr/share/themes rather than the archer user's home so it resolves
+# no matter which uid ends up running the session.
+mkdir -p "$MOUNT/usr/share/themes/Archer/openbox-3"
+cat > "$MOUNT/usr/share/themes/Archer/openbox-3/themerc" <<'THEMERC'
+!! Archer OS — matches archer_dashboard.html's palette
+!! bg #050508 / panel #0a0a12 / border #16162a / accent cyan #00e5ff
+
+border.width: 1
+padding.width: 6
+padding.height: 3
+window.handle.width: 0
+menu.overlap: 0
+
+!! ── Window borders — focused window gets the cyan accent ──
+window.active.border.color: #00e5ff
+window.inactive.border.color: #16162a
+window.active.client.color: #0a0a12
+window.inactive.client.color: #050508
+
+!! ── Titlebar ──
+window.active.title.bg: flat solid
+window.active.title.bg.color: #0d0d16
+window.inactive.title.bg: flat solid
+window.inactive.title.bg.color: #050508
+window.inactive.title.separator.color: #16162a
+
+!! ── Titlebar text ──
+window.label.text.justify: center
+window.active.label.bg: parentrelative
+window.active.label.text.color: #00e5ff
+window.inactive.label.bg: parentrelative
+window.inactive.label.text.color: #6a7a88
+
+!! ── Window buttons ──
+window.*.button.*.bg: parentrelative
+window.active.button.*.image.color: #6a7a88
+window.inactive.button.*.image.color: #30394a
+window.active.button.*.hover.bg: flat solid
+window.active.button.*.hover.bg.color: #0a0a12
+window.active.button.*.hover.image.color: #00e5ff
+window.inactive.button.*.hover.bg: parentrelative
+window.inactive.button.*.hover.image.color: #6a7a88
+window.*.button.*.pressed.bg: flat solid
+window.active.button.*.pressed.bg.color: #00394a
+window.inactive.button.*.pressed.bg.color: #0a0a12
+window.active.button.*.pressed.image.color: #00e5ff
+window.inactive.button.*.pressed.image.color: #6a7a88
+window.active.button.disabled.image.color: #1e1e35
+window.inactive.button.disabled.image.color: #1e1e35
+!! No per-button styling here on purpose: obrender/theme.c reads button
+!! appearance through a single global key (window.active.button.hover.bg
+!! and .image.color), so a per-button override like
+!! window.active.button.close.hover.bg is never queried and is silently
+!! dead. themerc is parsed as an XrmDatabase, which is why the '*' forms
+!! above work — they are loose bindings that match openbox's own lookups.
+
+!! ── Menu ──
+menu.border.color: #1e1e35
+menu.title.bg: flat solid
+menu.title.bg.color: #050508
+menu.title.text.color: #00e5ff
+menu.title.text.justify: center
+menu.items.bg: flat solid
+menu.items.bg.color: #0a0a12
+menu.items.text.color: #dde4e8
+menu.items.justify: left
+menu.items.disabled.text.color: #30394a
+menu.items.active.bg: flat solid
+menu.items.active.bg.color: #00394a
+menu.items.active.text.color: #00e5ff
+menu.separator.color: #1e1e35
+
+!! ── On-screen display (resize/move popups, alt-tab) ──
+osd.bg: flat solid
+osd.bg.color: #0a0a12
+osd.border.color: #00e5ff
+osd.label.bg: parentrelative
+osd.label.text.color: #00e5ff
+osd.hilight.bg: flat solid
+osd.hilight.bg.color: #00e5ff
+osd.unhilight.bg: flat solid
+osd.unhilight.bg.color: #1e1e35
+THEMERC
+
+# ── Launcher entries for the taskbar ──────────────────────────────────
+# tint2's launcher takes .desktop files. Writing our own three rather
+# than pointing at the packages' (whose filenames/paths vary by distro
+# and version) keeps this from silently losing an icon on a rebuild.
+# Icon names are freedesktop standard ones that adwaita-icon-theme (a
+# hard dependency of GTK, so always present) ships as raster PNGs.
+mkdir -p "$MOUNT/usr/share/applications"
+cat > "$MOUNT/usr/share/applications/archer-dashboard.desktop" <<'DESKTOP1'
+[Desktop Entry]
+Type=Application
+Name=Dashboard
+Comment=Archer truck dashboard
+Exec=/opt/archer/desktop-dashboard.sh
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;
+DESKTOP1
+cat > "$MOUNT/usr/share/applications/archer-terminal.desktop" <<'DESKTOP2'
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=Command line
+Exec=lxterminal
+Icon=utilities-terminal
+Terminal=false
+Categories=System;
+DESKTOP2
+cat > "$MOUNT/usr/share/applications/archer-files.desktop" <<'DESKTOP3'
+[Desktop Entry]
+Type=Application
+Name=Files
+Comment=Browse files
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+Categories=System;
+DESKTOP3
+
 chroot "$MOUNT" chown -R archer:archer /home/archer/.config
 
 # .bash_profile — on tty1 (physical display), start X kiosk automatically
@@ -984,7 +1134,30 @@ if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
     # (confirmed via /tmp/archer-x.log on a real boot), cascading into a
     # generic "no screens found" that had nothing to do with the
     # framebuffer itself.
-    sudo startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    # Run the session UNPRIVILEGED. xserver-xorg-legacy (installed above)
+    # ships the setuid-root /usr/lib/xorg/Xorg.wrap, and Xwrapper.config
+    # grants allowed_users=anybody + needs_root_rights=yes — that is
+    # exactly the supported way to let a normal user start X while only
+    # the X server itself gets root. So openbox, tint2, Chromium, pcmanfm
+    # and lxterminal all run as archer rather than as uid 0.
+    #
+    # This is evidence-backed rather than hopeful: on this very image,
+    # after xserver-xorg-legacy was installed, a plain unprivileged
+    # `startx` was run by hand and Xorg came up as uid=0 via the wrapper
+    # (visible in the dbus log line naming /usr/lib/xorg/Xorg with uid=0).
+    #
+    # The fallback below is the safety net: if the unprivileged path dies
+    # almost immediately, that means the wrapper did not take, so retry
+    # the old root path rather than leaving a black screen. A real
+    # session always lasts far longer than this threshold, so a normal
+    # logout/exit will not trigger the retry.
+    _archer_t0=$(date +%s)
+    startx /opt/archer/kiosk.sh -- :0 vt1 >/tmp/archer-x.log 2>&1
+    _archer_elapsed=$(( $(date +%s) - _archer_t0 ))
+    if [ "$_archer_elapsed" -lt 10 ]; then
+        echo "[archer] unprivileged startx exited after ${_archer_elapsed}s — falling back to sudo" >> /tmp/archer-x.log
+        sudo startx /opt/archer/kiosk.sh -- :0 vt1 >>/tmp/archer-x.log 2>&1
+    fi
     # If X crashed mid-startup it can leave the console stuck in graphics
     # mode (KD_GRAPHICS) — these messages would be invisible otherwise.
     sudo /usr/bin/chvt 1 2>/dev/null
