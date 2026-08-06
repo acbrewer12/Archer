@@ -822,6 +822,73 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
     else
         LOG("root filesystem remounted read-write");
 
+    /* ── Start udevd BEFORE the module fallbacks below ──────────────────
+     * devtmpfs (built in) creates the device nodes themselves, so /dev looks
+     * populated even with no udev running — which is why this image could
+     * boot and paint a dashboard while still having a completely dead mouse
+     * and keyboard inside X. What devtmpfs does NOT do is populate the udev
+     * database under /run/udev, and that database is where the ID_INPUT_*
+     * properties live. Xorg enumerates input through libudev and matches its
+     * InputClass rules against exactly those properties, so with no udevd
+     * running it adds ZERO input devices. Xorg says so in its own log:
+     *   "The server relies on udev to provide the list of input devices.
+     *    If no devices become available, reconfigure udev or disable
+     *    AutoAddDevices."
+     * Observed on a real boot, not theorised.
+     *
+     * systemd-udevd is an ordinary daemon and does not require systemd to be
+     * PID 1 — it needs /proc, /sys, /dev and /run, all mounted above. It is
+     * also what makes modalias-based autoloading work, so USB input on the
+     * real head unit comes up without having to be named in the fallback
+     * table below. The path is probed rather than hardcoded because the
+     * binary moved between releases (bookworm ships a real
+     * /lib/systemd/systemd-udevd; newer ones make it a multi-call symlink
+     * to udevadm). */
+    {
+        static const char *const udevd_paths[] = {
+            "/lib/systemd/systemd-udevd",
+            "/usr/lib/systemd/systemd-udevd",
+            "/sbin/udevd",
+            "/usr/sbin/udevd",
+            NULL
+        };
+        static const char *const udevadm_paths[] = {
+            "/bin/udevadm",  "/sbin/udevadm",
+            "/usr/bin/udevadm", "/usr/sbin/udevadm",
+            NULL
+        };
+        const char *udevd = NULL, *udevadm = NULL;
+        for (int i = 0; udevd_paths[i]; i++)
+            if (access(udevd_paths[i], X_OK) == 0) { udevd = udevd_paths[i]; break; }
+        for (int i = 0; udevadm_paths[i]; i++)
+            if (access(udevadm_paths[i], X_OK) == 0) { udevadm = udevadm_paths[i]; break; }
+
+        if (!udevd) {
+            WARN("udevd not found — X will come up with no mouse or keyboard");
+        } else {
+            char *dargv[] = { (char *)udevd, "--daemon", NULL };
+            pid_t p = spawn(udevd, dargv, NULL, 0, 0);
+            if (p > 0) waitpid(p, NULL, 0);  /* --daemon detaches, launcher exits */
+
+            /* Devices that already existed when udevd started emit no
+             * uevents of their own, so without this trigger the boot-time
+             * mouse and keyboard never enter the database and the dead-input
+             * problem above persists regardless of the daemon running. */
+            if (udevadm) {
+                char *targv[] = { (char *)udevadm, "trigger", "--action=add", NULL };
+                p = spawn(udevadm, targv, NULL, 0, 0);
+                if (p > 0) waitpid(p, NULL, 0);
+
+                char *sargv[] = { (char *)udevadm, "settle", "--timeout=10", NULL };
+                p = spawn(udevadm, sargv, NULL, 0, 0);
+                if (p > 0) waitpid(p, NULL, 0);
+            } else {
+                WARN("udevadm not found — boot-time input devices may be missing");
+            }
+            LOG("udevd started");
+        }
+    }
+
     /* Load kernel modules that are =m (not built-in) but needed before udevd.
      * Network drivers: e1000 covers older VMware E1000 adapters.
      * GPU drivers: vmwgfx for VMware SVGA, then real-hardware drivers.

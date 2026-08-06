@@ -475,11 +475,6 @@ fi
 CHROME_FLAGS=(
     --app="$URL"
     --start-maximized
-    # --no-sandbox is still required: CONFIG_USER_NS is only just enabled in
-    # kernel/archer.config, and Chromium's namespace sandbox cannot start
-    # without it. Once a build with that kernel is confirmed booting, this
-    # flag can be dropped to get the sandbox back.
-    --no-sandbox
     --disable-infobars
     --no-first-run
     --disable-translate
@@ -498,6 +493,21 @@ CHROME_FLAGS=(
     --disable-gpu-compositing
     --use-gl=swiftshader
 )
+# Chromium's namespace sandbox needs unprivileged user namespaces
+# (CONFIG_USER_NS — now enabled in kernel/archer.config). Rather than
+# hardcoding --no-sandbox, which switches off a real security boundary AND
+# makes Chromium paint a permanent "You are using an unsupported
+# command-line flag: --no-sandbox" banner across the top of the dashboard,
+# actually test the capability and only fall back when it genuinely is not
+# there. On a kernel with user namespaces this runs sandboxed and the banner
+# is gone; on one without, the flag is added automatically so the dashboard
+# still starts rather than failing outright. unshare is util-linux, part of
+# the debootstrap base, so it is always present.
+if ! unshare --user --map-root-user true 2>/dev/null; then
+    echo "=== user namespaces unavailable — falling back to --no-sandbox ===" >> "$LOG"
+    CHROME_FLAGS+=(--no-sandbox)
+fi
+
 echo "=== launch: $(date) ===" >> "$LOG"
 exec /usr/bin/chromium "${CHROME_FLAGS[@]}" >>"$LOG" 2>&1
 DASHSCRIPT
