@@ -1356,7 +1356,22 @@ step "Configuring GRUB bootloader (UEFI + Legacy BIOS)..."
 # effect but with different, less portable defaults and no verification of
 # its own. Both kernels now have a checked, consistently-configured initrd.
 log "GRUB will boot: ${ARCHER_KERNEL_VER} (stock kernel kept in /boot as a verified fallback, not GRUB's default)"
-sed "s/__ARCHER_KERNEL_VERSION__/${ARCHER_KERNEL_VER}/g" \
+# Single source of truth for the kernel command line. It feeds BOTH the
+# hand-written "Archer OS" menuentry (config/grub.cfg, substituted just
+# below) and the auto-generated 10_linux entries (/etc/default/grub).
+# Keeping one variable is the point: a hand-written menuentry supplies its
+# own `linux` line and does NOT inherit GRUB_CMDLINE_LINUX_DEFAULT, while
+# GRUB_DEFAULT=archer-os makes that hand-written entry the one that boots.
+# They had already drifted, and it cost a real hardware boot.
+#
+# Verbose rather than "quiet loglevel=0" deliberately: build.sh has not yet
+# been confirmed booting end to end on hardware, and loglevel=0 hides
+# panics and hangs — the exact trap already hit once on the VM variant.
+# Switch to quiet once a USB boot is confirmed reaching the desktop.
+ARCHER_CMDLINE="loglevel=7 ignore_loglevel vga=791 video=efifb:off video=vesafb:off init=/sbin/archer_init"
+
+sed -e "s/__ARCHER_KERNEL_VERSION__/${ARCHER_KERNEL_VER}/g" \
+    -e "s|__ARCHER_CMDLINE__|${ARCHER_CMDLINE}|g" \
     "$(dirname "$0")/config/grub.cfg" > "$MOUNT/etc/grub.d/40_archer"
 chmod +x "$MOUNT/etc/grub.d/40_archer"
 
@@ -1387,7 +1402,7 @@ GRUB_DEFAULT=archer-os
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Archer OS"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=0 vga=791 video=efifb:off video=vesafb:off init=/sbin/archer_init"
+GRUB_CMDLINE_LINUX_DEFAULT="${ARCHER_CMDLINE}"
 GRUB_CMDLINE_LINUX=""
 GRUB_TERMINAL=console
 EOF
