@@ -400,12 +400,15 @@ mkdir -p /home/archer/.config/openbox        2>/dev/null || true
 mkdir -p /home/archer/.config/tint2          2>/dev/null || true
 touch /home/archer/.Xauthority 2>/dev/null || true
 
-# Wait up to 45s for Flask to be ready. Pure-bash TCP probe — curl is not
-# guaranteed to be present this early (and isn't worth the dependency here).
-for i in $(seq 1 45); do
-    { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null && { exec 3<&- 3>&-; break; }
-    sleep 1
-done
+# The Flask wait deliberately does NOT live here any more — it moved into
+# desktop-dashboard.sh. Gating the whole session on the backend meant the
+# desktop itself was held hostage to archer.py's startup, and worse, the
+# wait gave up after 45s and started the desktop anyway. On USB-booted real
+# hardware archer.py takes longer than that to answer, so Chromium launched
+# against a backend that was not up yet, got a connection error, and never
+# reloads on its own — a permanently white "dashboard" even once Flask
+# finished starting. Now the desktop appears straight away (taskbar and
+# terminal usable while the backend boots) and only the dashboard waits.
 # Disable screensaver / power management
 xset s off -dpms 2>/dev/null || true
 
@@ -471,6 +474,44 @@ fi
 # Deliberately NOT truncating $LOG here: a still-running Chromium holds it
 # open in append mode, so truncating would blow away the very output needed
 # to diagnose why the first window misbehaved.
+
+# Wait for the backend before launching, because Chromium does not retry a
+# failed load. 180s rather than the old 45s: that figure was tuned against a
+# VM disk, and a USB-booted head unit is far slower to bring archer.py up
+# (venv interpreter plus a large import graph off slow flash). Exceeding the
+# old timeout is exactly what produced a white connection-error page that
+# never recovered even after Flask came up.
+FLASK_UP=0
+for i in $(seq 1 180); do
+    { exec 3<>/dev/tcp/127.0.0.1/5000; } 2>/dev/null && { exec 3<&- 3>&-; FLASK_UP=1; break; }
+    sleep 1
+done
+
+if [ "$FLASK_UP" != "1" ]; then
+    # Never hand the user a blank white browser error — say what happened
+    # and show the evidence, on-screen, without needing a VT switch.
+    echo "=== backend never answered on 127.0.0.1:5000 within 180s ===" >> "$LOG"
+    ERR_HTML=/tmp/archer-dashboard-error.html
+    _esc() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+    {
+        echo "<html><head><meta charset='utf-8'><title>Archer</title></head>"
+        echo "<body style='background:#050508;color:#dde4e8;font:13px monospace;padding:28px'>"
+        echo "<div style='color:#00e5ff;font-size:26px;letter-spacing:6px'>ARCHER</div>"
+        echo "<p style='color:#ff3333'>The Archer backend did not answer on 127.0.0.1:5000 within 180 seconds.</p>"
+        echo "<p style='color:#6a7a88'>The desktop is working — this is the backend, not the display."
+        echo "Press Ctrl+Alt+T for a terminal. Press Ctrl+R in this window to retry once the"
+        echo "backend is up — Ctrl+Alt+D will not help here, the already-running-window guard"
+        echo "in desktop-dashboard.sh treats this window as the dashboard and exits.</p>"
+        echo "<pre style='color:#6a7a88'>--- is archer.py running? ---</pre><pre>"
+        ps -eo pid,user,args 2>/dev/null | grep -F archer.py | grep -v grep | _esc
+        echo "</pre><pre style='color:#6a7a88'>--- /run/archer_init.log (tail) ---</pre><pre>"
+        tail -n 40 /run/archer_init.log 2>/dev/null | _esc
+        echo "</pre><pre style='color:#6a7a88'>--- listening sockets ---</pre><pre>"
+        (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null) | _esc
+        echo "</pre></body></html>"
+    } > "$ERR_HTML"
+    URL="file://$ERR_HTML"
+fi
 
 CHROME_FLAGS=(
     --app="$URL"
