@@ -48,6 +48,7 @@
 #include <net/if.h>
 #include <sys/socket.h>
 #include <dirent.h>
+#include <grp.h>
 
 /* ── tunables ────────────────────────────────────────────────────── */
 #define ARCHER_VENV   "/opt/archer/.venv/bin/python3"
@@ -55,6 +56,10 @@
 #define ARCHER_DIR    "/opt/archer"
 #define ARCHER_USER   "archer"
 
+/* archer.py's own stdout/stderr. Deliberately a separate file from
+ * LOG_PATH so a Python traceback is not interleaved with init chatter —
+ * `cat /run/archer.log` should answer "why did the backend not start". */
+#define ARCHER_LOG    "/run/archer.log"
 #define LOG_PATH      "/run/archer_init.log"
 #define STATUS_PATH   "/run/archer_status"
 
@@ -435,6 +440,60 @@ static int get_uid_gid(const char *username, uid_t *uid, gid_t *gid)
  * Fail closed — anything that doesn't pass this check must not run as
  * root; the caller should skip it rather than trust it blindly.
  */
+/*
+ * Supplementary groups for a user, parsed straight out of /etc/group.
+ *
+ * Deliberately NOT initgroups(): that resolves through NSS, and this binary
+ * is linked -static (see build.sh / build-vm.sh), where NSS needs the exact
+ * glibc shared objects present at runtime — gcc warns about precisely this.
+ * get_uid_gid() above already parses /etc/passwd by hand for the same
+ * reason, so this keeps that approach consistent.
+ *
+ * Why it matters: setgid()/setuid() do NOT touch the supplementary group
+ * list, so without this the child inherits PID 1's list, which is empty.
+ * That silently voids the build's
+ *   usermod -aG audio,video,dialout,sudo,input archer
+ * and "dialout" is the one that bites — archer.py opens serial ports for
+ * OBD and would take EACCES on every one of them.
+ */
+static int get_supp_groups(const char *username, gid_t primary, gid_t *out, int max)
+{
+    FILE *f = fopen("/etc/group", "r");
+    if (!f) return 0;
+
+    int n = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), f) && n < max) {
+        /* format: name:passwd:gid:member,member,...  (fields may be empty) */
+        char *p = line;
+        char *field[4] = { NULL, NULL, NULL, NULL };
+        int nf = 0;
+        field[nf++] = p;
+        while (*p && nf < 4) {
+            if (*p == ':') { *p = '\0'; field[nf++] = p + 1; }
+            p++;
+        }
+        if (nf < 4) continue;
+
+        char *nl = strchr(field[3], '\n');
+        if (nl) *nl = '\0';
+
+        gid_t g = (gid_t)strtoul(field[2], NULL, 10);
+        if (g == primary) continue;   /* primary comes from setgid() */
+
+        char *m = field[3];
+        while (*m) {
+            char *comma = strchr(m, ',');
+            if (comma) *comma = '\0';
+            if (strcmp(m, username) == 0) { out[n++] = g; break; }
+            if (!comma) break;
+            m = comma + 1;
+        }
+    }
+    fclose(f);
+    return n;
+}
+
 static int is_safe_to_run_as_root(const char *path)
 {
     struct stat st;
@@ -642,13 +701,44 @@ static void start_services(void)
         pid_t pid = fork();
         if (pid == 0) {
             if (chdir(ARCHER_DIR) < 0) _exit(1);
+
+            /* Open the log sink and /dev/null BEFORE dropping privileges.
+             *
+             * This used to happen after setuid(), and it silently threw away
+             * every line archer.py ever wrote. devtmpfs creates /dev/kmsg
+             * mode 0644 root:root, so as uid 1000 that open() returns EACCES,
+             * kmsg came back -1, and the guarded dup2 pair was skipped
+             * entirely — confirmed empirically, not deduced. That is why a
+             * failing archer.py has been invisible in dmesg the whole time
+             * and why the white-dashboard failure was so hard to pin down.
+             * File descriptors survive setuid, so opening first and dup2'ing
+             * after is both correct and safe.
+             *
+             * Sink is a real file rather than /dev/kmsg: userspace writes to
+             * /dev/kmsg are printk-ratelimited (~10 records per 5s) and any
+             * single write over 1024 bytes is rejected with EINVAL, so a
+             * Python traceback — the exact thing worth capturing — is the
+             * output most likely to be truncated or dropped. /run is a tmpfs
+             * archer_init mounts itself, so this always works and never
+             * touches the read-only-until-remounted root.
+             */
+            int log_fd = open(ARCHER_LOG, O_WRONLY | O_CREAT | O_APPEND | O_NOCTTY, 0644);
+            if (log_fd < 0) log_fd = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+            int null_fd = open("/dev/null", O_RDONLY);
+
+            /* Supplementary groups must be set while still root, and
+             * before setuid(). See get_supp_groups() for why this is a
+             * hand parse rather than initgroups(). Non-fatal on failure:
+             * better to run with only the primary group than to refuse to
+             * start the application at all. */
+            gid_t supp[32];
+            int nsupp = get_supp_groups(ARCHER_USER, archer_gid, supp, 32);
+            if (nsupp > 0) setgroups((size_t)nsupp, supp);
+
             if (setgid(archer_gid) < 0 || setuid(archer_uid) < 0) _exit(1);
 
-            int null_fd = open("/dev/null", O_RDONLY);
             if (null_fd >= 0) { dup2(null_fd, STDIN_FILENO); close(null_fd); }
-
-            int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
-            if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+            if (log_fd >= 0) { dup2(log_fd, STDOUT_FILENO); dup2(log_fd, STDERR_FILENO); close(log_fd); }
 
             execve(ARCHER_VENV, argv, env);
             _exit(127);

@@ -201,11 +201,17 @@ cat > "$MOUNT/etc/apt/sources.list" <<SOURCES
 deb http://deb.debian.org/debian $DEBIAN_RELEASE main contrib non-free-firmware
 deb http://security.debian.org/debian-security $DEBIAN_RELEASE-security main contrib non-free-firmware
 SOURCES
-chroot "$MOUNT" apt-get update -qq 2>&1 | tail -2 || true
+# NOT piped: the exit status of a pipeline is the LAST command's, and
+# set -e does not imply pipefail, so `... | tail -2 || true` silently
+# swallowed a failed update and would have shipped an image with no
+# firmware while still reporting success.
+if ! chroot "$MOUNT" apt-get update -qq; then
+    log "WARNING: apt-get update failed after adding non-free-firmware — WiFi firmware will be missing"
+fi
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     --no-install-recommends \
     firmware-iwlwifi firmware-realtek firmware-atheros \
-    firmware-brcm80211 firmware-misc-nonfree 2>&1 || \
+    firmware-brcm80211 firmware-mediatek firmware-misc-nonfree 2>&1 || \
     log "WARNING: WiFi firmware install failed — wireless will not work"
 
 # Archer wordmark font (Orbitron) and the sign-in/technical-readout font
@@ -467,6 +473,24 @@ echo "=== launch: $(date) ===" >> "$LOG"
 exec /usr/bin/chromium "${CHROME_FLAGS[@]}" >>"$LOG" 2>&1
 DASHSCRIPT
 chmod +x "$MOUNT/opt/archer/desktop-dashboard.sh"
+
+# WiFi setup launcher. A wrapper script rather than inlining the command in
+# both the openbox menu XML and a .desktop Exec= line, because those two
+# formats have different quoting rules and the command needs quoting:
+# lxterminal's own manpage says that except in the --command=STRING form,
+# -e "must be the last option on the command line", so `lxterminal -e sudo
+# nmtui` is not reliable.
+#
+# sudo is required, not cosmetic: NetworkManager authorises non-root D-Bus
+# requests through polkit (auth-polkit defaults to true), and polkit is not
+# installed in this image at all — so nmtui run as the archer user could
+# list networks but every actual change would be denied. archer has
+# NOPASSWD sudo, and NM always grants requests from uid 0.
+cat > "$MOUNT/opt/archer/wifi-setup.sh" <<'WIFISH'
+#!/bin/bash
+exec lxterminal --command="sudo nmtui"
+WIFISH
+chmod +x "$MOUNT/opt/archer/wifi-setup.sh"
 
 # openbox autostart — sourced automatically by openbox on session start.
 mkdir -p "$MOUNT/home/archer/.config/openbox"
@@ -773,7 +797,7 @@ cat > "$MOUNT/home/archer/.config/openbox/menu.xml" <<'MENUXML'
   </item>
   <item label="WiFi">
     <action name="Execute">
-      <command>lxterminal -e nmtui</command>
+      <command>/opt/archer/wifi-setup.sh</command>
     </action>
   </item>
   <separator/>
@@ -1080,7 +1104,7 @@ cat > "$MOUNT/usr/share/applications/archer-wifi.desktop" <<'DESKTOP4'
 Type=Application
 Name=WiFi
 Comment=Connect to a wireless network
-Exec=lxterminal -e nmtui
+Exec=/opt/archer/wifi-setup.sh
 Icon=network-wireless
 Terminal=false
 Categories=System;
@@ -1206,7 +1230,7 @@ cp /etc/resolv.conf "$MOUNT/etc/resolv.conf"
 
 chroot "$MOUNT" python3 -m venv /opt/archer/.venv
 chroot "$MOUNT" /opt/archer/.venv/bin/pip install -q \
-    flask edge-tts SpeechRecognition requests pyserial
+    flask flask-limiter edge-tts SpeechRecognition requests pyserial
 
 # Leave a fallback resolv.conf — dhclient will overwrite it with DHCP-provided DNS at boot.
 # Without this, DNS fails on first boot because NM doesn't manage ethernet.

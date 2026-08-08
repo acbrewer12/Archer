@@ -68,12 +68,24 @@ if _IS_HF and not os.environ.get('BEAMNG_TOKEN'):
 def _load_env_file():
     for path in ('/etc/archer/archer.env', os.path.expanduser('~/.archer.env')):
         if os.path.isfile(path):
-            with open(path) as _f:
-                for _line in _f:
-                    _line = _line.strip()
-                    if _line and not _line.startswith('#') and '=' in _line:
-                        _k, _, _v = _line.partition('=')
-                        os.environ.setdefault(_k.strip(), _v.strip())
+            # Guarded because this runs at module scope, before Flask or any
+            # logging exists — an exception here kills the whole process with
+            # nothing but a traceback on a stream that may go nowhere.
+            # PermissionError is the realistic case, not a theoretical one:
+            # /etc/archer is mode 1770 root:archer, so a secrets file dropped
+            # in by root with the natural 0600 is stat-able (isfile() returns
+            # True) but unreadable by the archer uid the app runs as. Missing
+            # config should degrade to "no keys", never to "backend refuses
+            # to boot".
+            try:
+                with open(path) as _f:
+                    for _line in _f:
+                        _line = _line.strip()
+                        if _line and not _line.startswith('#') and '=' in _line:
+                            _k, _, _v = _line.partition('=')
+                            os.environ.setdefault(_k.strip(), _v.strip())
+            except OSError as _e:
+                print(f'[ENV] Could not read {path}: {_e} — continuing without it')
             break
 _load_env_file()
 
