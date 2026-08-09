@@ -628,8 +628,22 @@ static void start_services(void)
 
     /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
      *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
-     *    Non-blocking: if the Pi isn't present or auth fails, Archer still starts
-     *    (just without OBD data). Result written to /run/archer_obd_auth for archer.py.
+     *    If the Pi isn't present or auth fails, Archer still starts (just
+     *    without OBD data). The result is written to /run/archer_obd_auth.
+     *
+     *    NOTE: nothing actually reads that file — grepped the whole repo, it
+     *    is write-only. It is kept as a boot-time diagnostic, not a handoff.
+     *
+     *    This used to run to completion BEFORE archer.py was forked, and the
+     *    wait below is capped at 10s. In QEMU that cost nothing because
+     *    /dev/ttyUSB0 does not exist, so the client raised immediately — but
+     *    on real hardware the port DOES exist, and with the Pi absent or slow
+     *    the client burns two 5s readline timeouts, hits the cap, and gets
+     *    SIGKILLed. That was a flat 10s added to the delay before Flask even
+     *    began importing, on hardware that is already slow to start it. Since
+     *    archer.py never consumes the result, there is no reason to serialise
+     *    them: the child is forked here and collected in step 5b, after
+     *    archer.py is already on its way.
      *
      *    This runs as root — before we drop to the unprivileged 'archer' user —
      *    because it needs to read the root-only shared key at
@@ -638,6 +652,7 @@ static void start_services(void)
      *    which is owned by 'archer' (see build.sh). Verify they are root-owned
      *    and not group/world-writable first; fail closed (skip auth, boot
      *    continues without OBD data) if that check doesn't pass. */
+    pid_t pid_obd = -1;
     {
         const char *obd_auth_script = "/opt/archer/archer-os/obd-auth/obd_auth_client.py";
         char *argv[] = {
@@ -651,33 +666,14 @@ static void start_services(void)
             int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd >= 0) { dprintf(fd, "0\n"); close(fd); }
         } else {
-            pid_t pid = fork();
-            if (pid == 0) {
+            pid_obd = fork();
+            if (pid_obd == 0) {
                 int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
                 if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
                 execv(ARCHER_VENV, argv);
                 _exit(1);
             }
-            if (pid > 0) {
-                /* Wait up to 10 seconds — don't stall boot forever */
-                int waited = 0;
-                int auth_status = -1;
-                while (waited < 10) {
-                    pid_t r = waitpid(pid, &auth_status, WNOHANG);
-                    if (r == pid) break;
-                    sleep(1); waited++;
-                }
-                if (waited >= 10) {
-                    WARN("OBD2 auth: timeout — killing auth process");
-                    kill(pid, SIGKILL);
-                    waitpid(pid, NULL, 0);
-                }
-                int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
-                int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
-                if (ok) LOG("OBD2 authentication successful — port unlocked");
-                else    WARN("OBD2 authentication skipped or failed");
-            }
+            /* Deliberately NOT waited on here — see step 5b below. */
         }
     }
 
@@ -748,6 +744,30 @@ static void start_services(void)
             LOG("Archer app started");
         else
             ERR("Archer app failed to start — this is a critical failure");
+    }
+
+    /* 5b. Collect the OBD2 auth result, now that archer.py is already
+     *     starting. Same 10s cap and SIGKILL as before — the only change is
+     *     WHERE it happens, so the wait overlaps archer.py's (slow) import
+     *     instead of delaying it. See step 5 above for why this is safe. */
+    if (pid_obd > 0) {
+        int waited = 0;
+        int auth_status = -1;
+        while (waited < 10) {
+            pid_t r = waitpid(pid_obd, &auth_status, WNOHANG);
+            if (r == pid_obd) break;
+            sleep(1); waited++;
+        }
+        if (waited >= 10) {
+            WARN("OBD2 auth: timeout — killing auth process");
+            kill(pid_obd, SIGKILL);
+            waitpid(pid_obd, NULL, 0);
+        }
+        int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
+        int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
+        if (ok) LOG("OBD2 authentication successful — port unlocked");
+        else    WARN("OBD2 authentication skipped or failed");
     }
 }
 

@@ -1427,6 +1427,17 @@ UPDATESCRIPT
 chmod +x "$MOUNT/opt/archer/update.sh"
 chroot "$MOUNT" chown archer:archer /opt/archer/update.sh
 
+# Reclaim the apt download cache before finalising. Nothing in either build
+# ever ran `apt-get clean`, so every .deb apt fetched — the whole X11 and
+# Chromium set, plus the five firmware data packages — stayed in
+# /var/cache/apt/archives and shipped INSIDE the image, at full .deb size on
+# top of the unpacked files. That is pure waste in a fixed-size image
+# (build-vm.sh hard-codes a 4GB one) and leaves less headroom for the kernel
+# modules and the two dracut initramfs generations that come later.
+chroot "$MOUNT" apt-get clean
+rm -rf "$MOUNT/var/lib/apt/lists"/*
+log "apt cache cleaned: image is $(du -sh "$MOUNT" 2>/dev/null | cut -f1) unpacked"
+
 step "Unmounting and converting VM image..."
 # Tear down bind mounts before unmounting the image filesystem
 umount "$MOUNT/dev/pts" 2>/dev/null || true
