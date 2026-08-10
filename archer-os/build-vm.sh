@@ -492,6 +492,18 @@ exec lxterminal --command="sudo nmtui"
 WIFISH
 chmod +x "$MOUNT/opt/archer/wifi-setup.sh"
 
+# System scripts the desktop surfaces: the optional disk installer and the
+# settings menu. Copied from the repo rather than heredoc'd so they stay
+# reviewable as normal files with their own history.
+for _s in install-to-disk.sh settings.sh; do
+    if [ -f "$(dirname "$0")/$_s" ]; then
+        cp "$(dirname "$0")/$_s" "$MOUNT/opt/archer/$_s"
+        chmod +x "$MOUNT/opt/archer/$_s"
+    else
+        log "WARNING: $_s missing from the build tree — desktop entry will be dead"
+    fi
+done
+
 # openbox autostart — sourced automatically by openbox on session start.
 mkdir -p "$MOUNT/home/archer/.config/openbox"
 cat > "$MOUNT/home/archer/.config/openbox/autostart" <<'AUTOSTART'
@@ -800,6 +812,11 @@ cat > "$MOUNT/home/archer/.config/openbox/menu.xml" <<'MENUXML'
       <command>/opt/archer/wifi-setup.sh</command>
     </action>
   </item>
+  <item label="Settings">
+    <action name="Execute">
+      <command>lxterminal --command="/opt/archer/settings.sh"</command>
+    </action>
+  </item>
   <separator/>
   <item label="Reload Desktop">
     <action name="Execute">
@@ -947,6 +964,7 @@ launcher_item_app = /usr/share/applications/archer-dashboard.desktop
 launcher_item_app = /usr/share/applications/archer-terminal.desktop
 launcher_item_app = /usr/share/applications/archer-files.desktop
 launcher_item_app = /usr/share/applications/archer-wifi.desktop
+launcher_item_app = /usr/share/applications/archer-settings.desktop
 
 #-------------------------------------
 # System tray (notification area)
@@ -1099,6 +1117,16 @@ Icon=utilities-terminal
 Terminal=false
 Categories=System;
 DESKTOP2
+cat > "$MOUNT/usr/share/applications/archer-settings.desktop" <<'DESKTOP5'
+[Desktop Entry]
+Type=Application
+Name=Settings
+Comment=Network, disk install, login PIN, logs, power
+Exec=lxterminal --command="/opt/archer/settings.sh"
+Icon=preferences-system
+Terminal=false
+Categories=System;
+DESKTOP5
 cat > "$MOUNT/usr/share/applications/archer-wifi.desktop" <<'DESKTOP4'
 [Desktop Entry]
 Type=Application
