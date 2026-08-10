@@ -519,48 +519,24 @@ static void start_services(void)
     /* 0. Wired ethernet — start dhclient immediately so DHCP runs in the
      *    background while we bring up D-Bus and NetworkManager.
      *    By the time Archer starts (~6s later) the IP is already assigned. */
-    bring_up_ethernet();
-
     uid_t archer_uid = 1000;
     gid_t archer_gid = 1000;
     get_uid_gid(ARCHER_USER, &archer_uid, &archer_gid);
 
-    /* 1. D-Bus system daemon — must start BEFORE NetworkManager.
-     *    NetworkManager uses D-Bus for all inter-process communication.
-     *    Without it, NM starts but can't manage interfaces. */
-    {
-        /* Create the D-Bus runtime directory if missing */
-        mkdir("/run/dbus", 0755);
-        char *argv[] = { "/usr/bin/dbus-daemon", "--system", "--nofork",
-                         "--nopidfile", NULL };
-        pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
-        if (pid > 0) {
-            LOG("dbus-daemon started");
-            sleep(2);  /* wait for D-Bus socket to be ready before NM connects */
-        } else {
-            WARN("dbus-daemon failed — NetworkManager may not work");
-        }
-    }
-
-    /* 2. NetworkManager — manages WiFi and USB tethering */
-    {
-        char *argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
-        pid_network = spawn("/usr/sbin/NetworkManager", argv, "/", 0, 0);
-        if (pid_network > 0)
-            LOG("NetworkManager started");
-        else
-            WARN("NetworkManager failed to start");
-    }
-
-    /* 3. Avahi daemon — mDNS, makes archer.local work on the LAN */
-    {
-        char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
-        pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
-        if (pid_avahi > 0)
-            LOG("avahi-daemon started");
-        /* non-critical, no warning if it fails */
-    }
-
+    /* ── ORDERING NOTE (boot latency) ─────────────────────────────────
+     * What the user waits for is the screen, so the graphical session and
+     * the backend start FIRST and everything else overlaps behind them.
+     *
+     * This used to run dbus -> NetworkManager -> avahi -> getty -> archer.py,
+     * so the login screen was queued behind three daemons, and archer.py —
+     * which needs seconds just to import its Python dependencies — was dead
+     * last. Nothing about X, the login UI, or the Flask app needs dbus or the
+     * network up first, so that ordering bought nothing and charged the user
+     * the entire daemon-startup time before anything appeared on screen.
+     *
+     * Now: tty1 (login/kiosk) -> archer.py -> tty2 -> network stack, so the
+     * slow Python import overlaps daemon startup instead of following it.
+     */
     /* 4a. Getty on tty1 — autologin as archer → .bash_profile → startx → kiosk.
      *     We open /dev/tty1 explicitly so stdin/stdout/stderr go there. */
     {
@@ -621,60 +597,6 @@ static void start_services(void)
         pid_getty2 = pid;
         if (pid_getty2 > 0)
             LOG("getty started on tty2 (maintenance, password login required)");
-    }
-
-    /* Small delay: let NetworkManager initialize before Archer tries to use the network */
-    sleep(2);
-
-    /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
-     *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
-     *    If the Pi isn't present or auth fails, Archer still starts (just
-     *    without OBD data). The result is written to /run/archer_obd_auth.
-     *
-     *    NOTE: nothing actually reads that file — grepped the whole repo, it
-     *    is write-only. It is kept as a boot-time diagnostic, not a handoff.
-     *
-     *    This used to run to completion BEFORE archer.py was forked, and the
-     *    wait below is capped at 10s. In QEMU that cost nothing because
-     *    /dev/ttyUSB0 does not exist, so the client raised immediately — but
-     *    on real hardware the port DOES exist, and with the Pi absent or slow
-     *    the client burns two 5s readline timeouts, hits the cap, and gets
-     *    SIGKILLed. That was a flat 10s added to the delay before Flask even
-     *    began importing, on hardware that is already slow to start it. Since
-     *    archer.py never consumes the result, there is no reason to serialise
-     *    them: the child is forked here and collected in step 5b, after
-     *    archer.py is already on its way.
-     *
-     *    This runs as root — before we drop to the unprivileged 'archer' user —
-     *    because it needs to read the root-only shared key at
-     *    /etc/archer/obd_auth.key. That means we must NOT blindly trust the
-     *    interpreter/script we're about to run: both live under /opt/archer,
-     *    which is owned by 'archer' (see build.sh). Verify they are root-owned
-     *    and not group/world-writable first; fail closed (skip auth, boot
-     *    continues without OBD data) if that check doesn't pass. */
-    pid_t pid_obd = -1;
-    {
-        const char *obd_auth_script = "/opt/archer/archer-os/obd-auth/obd_auth_client.py";
-        char *argv[] = {
-            ARCHER_VENV,
-            (char *)obd_auth_script,
-            NULL
-        };
-
-        if (!is_safe_to_run_as_root(ARCHER_VENV) || !is_safe_to_run_as_root(obd_auth_script)) {
-            ERR("OBD2 auth: skipped — interpreter or script is not root-owned/is writable by 'archer'");
-            int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd >= 0) { dprintf(fd, "0\n"); close(fd); }
-        } else {
-            pid_obd = fork();
-            if (pid_obd == 0) {
-                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
-                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
-                execv(ARCHER_VENV, argv);
-                _exit(1);
-            }
-            /* Deliberately NOT waited on here — see step 5b below. */
-        }
     }
 
     /* 6. Archer Flask app — the truck AI */
@@ -744,6 +666,109 @@ static void start_services(void)
             LOG("Archer app started");
         else
             ERR("Archer app failed to start — this is a critical failure");
+    }
+
+
+    /* ── network stack: started after the UI, overlapping with it ── */
+    bring_up_ethernet();
+    /* 1. D-Bus system daemon — must start BEFORE NetworkManager.
+     *    NetworkManager uses D-Bus for all inter-process communication.
+     *    Without it, NM starts but can't manage interfaces. */
+    {
+        /* Create the D-Bus runtime directory if missing */
+        mkdir("/run/dbus", 0755);
+        char *argv[] = { "/usr/bin/dbus-daemon", "--system", "--nofork",
+                         "--nopidfile", NULL };
+        pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
+        if (pid > 0) {
+            LOG("dbus-daemon started");
+            /* Poll for the socket instead of sleeping a flat 2s. NetworkManager
+             * only needs the bus to be listening, which normally happens in
+             * tens of milliseconds — a fixed sleep(2) spent that time on every
+             * single boot regardless. Cap at 2s so a broken dbus still can't
+             * wedge the boot. */
+            for (int i = 0; i < 200; i++) {
+                if (access("/run/dbus/system_bus_socket", F_OK) == 0) break;
+                usleep(10000);  /* 10ms */
+            }
+        } else {
+            WARN("dbus-daemon failed — NetworkManager may not work");
+        }
+    }
+
+    /* 2. NetworkManager — manages WiFi and USB tethering */
+    {
+        char *argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
+        pid_network = spawn("/usr/sbin/NetworkManager", argv, "/", 0, 0);
+        if (pid_network > 0)
+            LOG("NetworkManager started");
+        else
+            WARN("NetworkManager failed to start");
+    }
+
+    /* 3. Avahi daemon — mDNS, makes archer.local work on the LAN */
+    {
+        char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
+        pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
+        if (pid_avahi > 0)
+            LOG("avahi-daemon started");
+        /* non-critical, no warning if it fails */
+    }
+
+    /* No delay here any more. archer.py does not need the network to be up in
+     * order to start — it binds a local socket and serves the dashboard; any
+     * network use is lazy and already failure-tolerant. Sleeping 2s here just
+     * pushed the backend (and therefore the dashboard) 2s later on every boot. */
+
+    /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
+     *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
+     *    If the Pi isn't present or auth fails, Archer still starts (just
+     *    without OBD data). The result is written to /run/archer_obd_auth.
+     *
+     *    NOTE: nothing actually reads that file — grepped the whole repo, it
+     *    is write-only. It is kept as a boot-time diagnostic, not a handoff.
+     *
+     *    This used to run to completion BEFORE archer.py was forked, and the
+     *    wait below is capped at 10s. In QEMU that cost nothing because
+     *    /dev/ttyUSB0 does not exist, so the client raised immediately — but
+     *    on real hardware the port DOES exist, and with the Pi absent or slow
+     *    the client burns two 5s readline timeouts, hits the cap, and gets
+     *    SIGKILLed. That was a flat 10s added to the delay before Flask even
+     *    began importing, on hardware that is already slow to start it. Since
+     *    archer.py never consumes the result, there is no reason to serialise
+     *    them: the child is forked here and collected in step 5b, after
+     *    archer.py is already on its way.
+     *
+     *    This runs as root — before we drop to the unprivileged 'archer' user —
+     *    because it needs to read the root-only shared key at
+     *    /etc/archer/obd_auth.key. That means we must NOT blindly trust the
+     *    interpreter/script we're about to run: both live under /opt/archer,
+     *    which is owned by 'archer' (see build.sh). Verify they are root-owned
+     *    and not group/world-writable first; fail closed (skip auth, boot
+     *    continues without OBD data) if that check doesn't pass. */
+    pid_t pid_obd = -1;
+    {
+        const char *obd_auth_script = "/opt/archer/archer-os/obd-auth/obd_auth_client.py";
+        char *argv[] = {
+            ARCHER_VENV,
+            (char *)obd_auth_script,
+            NULL
+        };
+
+        if (!is_safe_to_run_as_root(ARCHER_VENV) || !is_safe_to_run_as_root(obd_auth_script)) {
+            ERR("OBD2 auth: skipped — interpreter or script is not root-owned/is writable by 'archer'");
+            int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) { dprintf(fd, "0\n"); close(fd); }
+        } else {
+            pid_obd = fork();
+            if (pid_obd == 0) {
+                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+                execv(ARCHER_VENV, argv);
+                _exit(1);
+            }
+            /* Deliberately NOT waited on here — see step 5b below. */
+        }
     }
 
     /* 5b. Collect the OBD2 auth result, now that archer.py is already
@@ -989,7 +1014,7 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
                 p = spawn(udevadm, targv, NULL, 0, 0);
                 if (p > 0) waitpid(p, NULL, 0);
 
-                char *sargv[] = { (char *)udevadm, "settle", "--timeout=10", NULL };
+                char *sargv[] = { (char *)udevadm, "settle", "--timeout=3", NULL };
                 p = spawn(udevadm, sargv, NULL, 0, 0);
                 if (p > 0) waitpid(p, NULL, 0);
             } else {
@@ -1036,7 +1061,8 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
             if (pid > 0) waitpid(pid, NULL, 0);
         }
         LOG("kernel modules loaded");
-        sleep(1); /* let uevents settle so /dev/fb0 and eth0 appear */
+        /* No sleep: `udevadm settle` above already waits for the uevent queue
+         * to drain, which is exactly what this second was approximating. */
     }
 
     /* Snapshot the kernel ring buffer now — if something hangs or panics
