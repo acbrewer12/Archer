@@ -9152,6 +9152,188 @@ if not _master_code:
           f'set ARCHER_MASTER_CODE in archer.env for a stable code across restarts)')
 _master_code_enabled = True   # toggled from Tier 1 dashboard
 
+# ── OWNER CREDENTIAL (persistent login) ───────────────────────────────────────
+# The master code above is regenerated randomly on every restart when
+# ARCHER_MASTER_CODE is unset, which makes it useless as an actual login: the
+# head unit reboots and the code the owner memorised is gone. This is the
+# persistent credential the login screen uses instead.
+#
+# Stored at /etc/archer/owner.json. That directory is mode 1770 root:archer
+# with the sticky bit, so the archer user can create its own file there but
+# cannot delete or overwrite root-owned secrets like obd_auth.key.
+#
+# The PIN is never stored — only a scrypt hash with a per-install random salt.
+# scrypt is memory-hard, which matters here because a 6-digit PIN is only a
+# million candidates: a fast hash would be brute-forced instantly by anyone who
+# pulled the USB stick and read the file. hashlib.scrypt is stdlib, so this
+# costs no new dependency on an image where every package is hand-picked.
+OWNER_CRED_FILE = '/etc/archer/owner.json'
+
+# Deliberately conservative scrypt cost. n=2**14 with r=8,p=1 is ~16MB and a
+# few hundred ms on a weak head-unit CPU — slow enough to make offline
+# brute-force of a 6-digit PIN expensive, fast enough that unlocking the truck
+# does not feel broken.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
+
+# Failed-attempt throttle, in memory. Deliberately not persisted: an attacker
+# with physical access could clear a persisted counter anyway, and losing the
+# count on reboot is the right trade for never locking the owner out of their
+# own truck permanently.
+_login_fails = {'count': 0, 'until': 0.0}
+_LOGIN_MAX_FAILS = 5
+_LOGIN_LOCKOUT_SECS = 30
+
+
+def owner_is_configured():
+    """True once a PIN has been set. Drives setup-vs-login routing."""
+    try:
+        with open(OWNER_CRED_FILE) as f:
+            d = _json_mac.load(f)
+        return bool(d.get('salt') and d.get('hash'))
+    except Exception:
+        # Unreadable/corrupt/missing all mean "not set up" — never raise here,
+        # this is called from request handling and must not 500 the login page.
+        return False
+
+
+def _hash_pin(pin, salt_bytes):
+    return hashlib.scrypt(pin.encode('utf-8'), salt=salt_bytes,
+                          n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32).hex()
+
+
+def save_owner_pin(pin):
+    """Write a new owner PIN. Returns (ok, error_message)."""
+    pin = (pin or '').strip()
+    if not pin.isdigit() or not (4 <= len(pin) <= 12):
+        return False, 'PIN must be 4-12 digits'
+    if len(set(pin)) == 1:
+        return False, 'PIN cannot be all the same digit'
+    salt = secrets.token_bytes(16)
+    payload = {
+        'salt':       salt.hex(),
+        'hash':       _hash_pin(pin, salt),
+        'created_at': int(time.time()),
+        'algo':       f'scrypt-{_SCRYPT_N}-{_SCRYPT_R}-{_SCRYPT_P}',
+    }
+    try:
+        os.makedirs(os.path.dirname(OWNER_CRED_FILE), exist_ok=True)
+        # Write via a temp file in the same directory then rename, so a power
+        # cut mid-write (routine on a truck — ignition off) can never leave a
+        # half-written credential that locks the owner out.
+        tmp = OWNER_CRED_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            _json_mac.dump(payload, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, OWNER_CRED_FILE)
+        return True, ''
+    except OSError as e:
+        return False, f'Could not save credential: {e}'
+
+
+def verify_owner_pin(pin):
+    """Constant-time PIN check with a lockout. Returns (ok, error_message)."""
+    now = time.time()
+    if now < _login_fails['until']:
+        return False, f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    try:
+        with open(OWNER_CRED_FILE) as f:
+            d = _json_mac.load(f)
+        salt = bytes.fromhex(d['salt'])
+        expected = d['hash']
+    except Exception:
+        return False, 'No PIN is set up on this device'
+    candidate = _hash_pin((pin or '').strip(), salt)
+    if hmac.compare_digest(candidate, expected):
+        _login_fails['count'] = 0
+        _login_fails['until'] = 0.0
+        return True, ''
+    _login_fails['count'] += 1
+    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
+        _login_fails['until'] = now + _LOGIN_LOCKOUT_SECS
+        _login_fails['count'] = 0
+        return False, f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS}s'
+    return False, 'Incorrect PIN'
+
+
+_SETUP_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER — Setup</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{background:#050508;color:#dde4e8;font-family:'Share Tech Mono',monospace;
+display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:54px;letter-spacing:8px;color:#00e5ff;
+line-height:1;text-shadow:0 0 30px rgba(0,229,255,0.35)}
+.sub{font-size:11px;color:#6a7a88;letter-spacing:3px;margin-top:6px;text-align:center}
+.card{background:#0a0a12;border:1px solid #1e1e35;border-top:2px solid #00e5ff;border-radius:12px;
+padding:26px 24px;margin-top:26px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px}
+.lbl{font-size:11px;color:#6a7a88;letter-spacing:2px;text-align:center}
+input{background:#050508;border:1px solid #1e1e35;border-radius:8px;color:#dde4e8;
+font-family:'Share Tech Mono',monospace;font-size:26px;letter-spacing:10px;text-align:center;
+padding:12px;outline:none;width:100%}
+input:focus{border-color:#00e5ff;box-shadow:0 0 0 2px rgba(0,229,255,0.15)}
+button{background:#00e5ff;border:none;border-radius:8px;padding:13px;color:#04141a;
+font-family:'Bebas Neue',sans-serif;font-size:19px;letter-spacing:4px;cursor:pointer;width:100%}
+button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
+.err{color:#ff3333;font-size:11px;letter-spacing:1px;text-align:center;min-height:14px}
+.hint{color:#30394a;font-size:10px;letter-spacing:1px;text-align:center;line-height:1.8}</style></head><body><div class="logo">ARCHER</div><div class="sub">FIRST-TIME SETUP</div><div class="card"><div class="lbl">CHOOSE A PIN</div><input id="p1" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12" placeholder="4-12 digits"><div class="lbl">CONFIRM PIN</div><input id="p2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12"><div class="err" id="err"></div><button id="go">SET PIN</button><div class="hint">This unlocks the truck on every start.<br>Keep it somewhere safe \u2014 it cannot be recovered,<br>only reset from the maintenance shell.</div></div><script>async function post(url, body){
+  let tok='';
+  try{ const r=await fetch('/csrf_token'); tok=(await r.json()).token; }catch(e){}
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tok},
+    body:JSON.stringify(body)});
+  let d={}; try{ d=await r.json(); }catch(e){}
+  return {ok:r.ok, d};
+}
+const e=document.getElementById("err"),b=document.getElementById("go");
+async function submit(){ b.disabled=true; e.textContent="";
+  const r=await post("/setup",{pin:document.getElementById("p1").value,confirm:document.getElementById("p2").value});
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  e.textContent=(r.d&&r.d.error)||"Setup failed"; b.disabled=false; }
+b.addEventListener("click",submit);
+document.getElementById("p2").addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
+document.getElementById("p1").focus();
+</script></body></html>"""
+
+_LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{background:#050508;color:#dde4e8;font-family:'Share Tech Mono',monospace;
+display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:54px;letter-spacing:8px;color:#00e5ff;
+line-height:1;text-shadow:0 0 30px rgba(0,229,255,0.35)}
+.sub{font-size:11px;color:#6a7a88;letter-spacing:3px;margin-top:6px;text-align:center}
+.card{background:#0a0a12;border:1px solid #1e1e35;border-top:2px solid #00e5ff;border-radius:12px;
+padding:26px 24px;margin-top:26px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px}
+.lbl{font-size:11px;color:#6a7a88;letter-spacing:2px;text-align:center}
+input{background:#050508;border:1px solid #1e1e35;border-radius:8px;color:#dde4e8;
+font-family:'Share Tech Mono',monospace;font-size:26px;letter-spacing:10px;text-align:center;
+padding:12px;outline:none;width:100%}
+input:focus{border-color:#00e5ff;box-shadow:0 0 0 2px rgba(0,229,255,0.15)}
+button{background:#00e5ff;border:none;border-radius:8px;padding:13px;color:#04141a;
+font-family:'Bebas Neue',sans-serif;font-size:19px;letter-spacing:4px;cursor:pointer;width:100%}
+button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
+.err{color:#ff3333;font-size:11px;letter-spacing:1px;text-align:center;min-height:14px}
+.hint{color:#30394a;font-size:10px;letter-spacing:1px;text-align:center;line-height:1.8}</style></head><body><div class="logo">ARCHER</div><div class="sub">ENTER PIN TO UNLOCK</div><div class="card"><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="12" autofocus><div class="err" id="err"></div><button id="go">UNLOCK</button></div><script>async function post(url, body){
+  let tok='';
+  try{ const r=await fetch('/csrf_token'); tok=(await r.json()).token; }catch(e){}
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tok},
+    body:JSON.stringify(body)});
+  let d={}; try{ d=await r.json(); }catch(e){}
+  return {ok:r.ok, d};
+}
+const e=document.getElementById("err"),b=document.getElementById("go"),p=document.getElementById("pin");
+const nxt=new URLSearchParams(location.search).get("next")||"/dashboard";
+async function submit(){ b.disabled=true; e.textContent="";
+  const r=await post("/login",{pin:p.value,next:nxt});
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  e.textContent=(r.d&&r.d.error)||"Incorrect PIN"; p.value=""; b.disabled=false; p.focus(); }
+b.addEventListener("click",submit);
+p.addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
+p.focus();
+</script></body></html>"""
+
+
+
 def _check_master_auto_enable():
     """Keep master code enabled if no Tier 1 devices are registered."""
     global _master_code_enabled
@@ -10283,7 +10465,7 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
-_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static'}
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static', '/login', '/setup', '/csrf_token'}
 
 _BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
 
@@ -10297,6 +10479,32 @@ def require_boot():
     path = _req.path
     if path in _BOOT_EXEMPT or any(path.startswith(p) for p in _BOOT_EXEMPT_PREFIXES):
         return None
+
+    # ── LOGIN GATE ────────────────────────────────────────────────────────
+    # Runs before the boot gate: an unauthenticated visitor should meet the
+    # login screen, not the boot animation. The login page is static and
+    # paints immediately, so this is also the fastest possible first frame.
+    #
+    # Only HTML page loads are gated. AJAX/SSE fall through exactly as they do
+    # for the boot gate below, so a signed-in dashboard's polling is unaffected
+    # and an unauthenticated one still gets the tier checks each endpoint
+    # already enforces for itself.
+    if 'text/html' in _req.headers.get('Accept', ''):
+        _sess = _req.cookies.get('archer_auth', '')
+        _signed_in = False
+        if _sess:
+            try:
+                decode_auth_jwt(_sess)
+                _signed_in = True
+            except ValueError:
+                _signed_in = False
+        if not _signed_in:
+            # First boot has no credential yet — send them to create one
+            # rather than to a login screen nothing can satisfy.
+            _dest = '/setup' if not owner_is_configured() else '/login'
+            if path != _dest:
+                return _redir(f'{_dest}?next={path}' if _dest == '/login' else _dest)
+            return None
     # Maintenance — browser page loads only; AJAX passes through so terminal works
     maintenance_active = (
         system_health['maintenance'] or
@@ -10470,6 +10678,68 @@ def boot_page():
             html = f.read()
         return FR(html, mimetype='text/html')
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
+
+
+@display_app.route('/setup', methods=['GET'])
+def setup_page():
+    """First-run: choose the owner PIN. Redirects away once one exists so this
+    can never be used to silently replace a configured credential."""
+    from flask import Response as FR, redirect as _redir
+    if owner_is_configured():
+        return _redir('/login')
+    return FR(_SETUP_HTML, mimetype='text/html')
+
+
+@display_app.route('/setup', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
+def setup_submit():
+    from flask import request as _req, jsonify as _js, make_response as _mk
+    if owner_is_configured():
+        # Changing an existing PIN is a signed-in action, not a setup action.
+        return _js({'ok': False, 'error': 'Already set up — sign in instead'}), 403
+    data = _req.get_json(silent=True) or {}
+    pin, confirm = data.get('pin', ''), data.get('confirm', '')
+    if pin != confirm:
+        return _js({'ok': False, 'error': 'PINs do not match'}), 400
+    ok, err = save_owner_pin(pin)
+    if not ok:
+        return _js({'ok': False, 'error': err}), 400
+    resp = _mk(_js({'ok': True, 'redirect': '/dashboard'}))
+    resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
+                    httponly=True, samesite='Lax', secure=_USE_TLS)
+    print('[AUTH] Owner PIN configured — first-run setup complete')
+    return resp
+
+
+@display_app.route('/login', methods=['GET'])
+def login_page():
+    """PIN entry. Sends first-run users to setup rather than showing a login
+    screen no credential can satisfy."""
+    from flask import Response as FR, redirect as _redir
+    if not owner_is_configured():
+        return _redir('/setup')
+    return FR(_LOGIN_HTML, mimetype='text/html')
+
+
+@display_app.route('/login', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
+def login_submit():
+    from flask import request as _req, jsonify as _js, make_response as _mk
+    data = _req.get_json(silent=True) or {}
+    ok, err = verify_owner_pin(data.get('pin', ''))
+    if not ok:
+        return _js({'ok': False, 'error': err}), 401
+    nxt = data.get('next') or '/dashboard'
+    # Only ever redirect to a local path — never let the client hand us an
+    # absolute URL, which would turn the login into an open redirect.
+    if not nxt.startswith('/') or nxt.startswith('//'):
+        nxt = '/dashboard'
+    resp = _mk(_js({'ok': True, 'redirect': nxt}))
+    resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
+                    httponly=True, samesite='Lax', secure=_USE_TLS)
+    return resp
 
 
 @display_app.route('/tpms', methods=['GET', 'POST'])
