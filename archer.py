@@ -11642,17 +11642,49 @@ def obd_autodetect():
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
 
     while True:
+        # ── Manual override: OBD_PORT ─────────────────────────
+        # config.py:70 has defined OBD_PORT and archer.env.example has shipped it
+        # since forever, and README's OBD troubleshooting tells the user to set
+        # OBD_PORT=/dev/rfcomm0 when auto-detect fails — but nothing ever read it.
+        # archer.py does not import config.py at all, and this function never
+        # consulted the environment, so the documented escape hatch was dead.
+        #
+        # It is also the ONLY workable path for the Bluetooth adapter the README
+        # documents as the primary hardware. pyserial's Linux backend does glob
+        # /dev/rfcomm*, so an rfcomm node IS enumerated — but an rfcomm tty has no
+        # /sys/class/tty/*/device symlink, so SysFS leaves subsystem=None, never
+        # calls apply_usb_info(), and the port keeps ListPortInfo's defaults:
+        # description='n/a', manufacturer=None. Verified directly against pyserial
+        # 3.5. None of OBD_KEYWORDS is a substring of 'n/a', so the scan below
+        # enumerates the adapter and then silently rejects it, forever, with no
+        # error surfaced anywhere. See docs/HARDWARE_BRINGUP.md §1.2 and §1.3.
+        #
+        # Read fresh each iteration so the port can be corrected without a restart.
+        # Unset (the shipped default) leaves the keyword scan below byte-for-byte
+        # unchanged. Deliberately does NOT fall back to scanning when the named port
+        # is absent — a manual override that silently picks something else is worse
+        # than one that says what is wrong and waits for the device to appear.
+        manual_port = (os.environ.get('OBD_PORT') or '').strip()
+
         # ── Scan for adapter ──────────────────────────────────
         port_device = None
         try:
             import serial
             import serial.tools.list_ports
-            for p in serial.tools.list_ports.comports():
-                desc = (p.description or '').lower()
-                mfr  = (p.manufacturer or '').lower()
-                if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
-                    port_device = p.device
-                    break
+            if manual_port:
+                if os.path.exists(manual_port):
+                    port_device = manual_port
+                else:
+                    print(f'[OBD] OBD_PORT={manual_port} set but not present — waiting')
+                    time.sleep(5)
+                    continue
+            else:
+                for p in serial.tools.list_ports.comports():
+                    desc = (p.description or '').lower()
+                    mfr  = (p.manufacturer or '').lower()
+                    if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
+                        port_device = p.device
+                        break
         except ImportError:
             time.sleep(10)
             continue
@@ -11669,6 +11701,21 @@ def obd_autodetect():
         ser = None
         try:
             import serial
+            # OPEN HARDWARE QUESTION: 38400 is hardcoded and unverified. Baseline
+            # ELM327 clones default to it, which is presumably where the number came
+            # from, but STN-based adapters (the OBDLink family, including the MX+
+            # this project is built around) commonly come up at a higher rate, and
+            # ScanTool's own tooling autobauds rather than assuming. Over Bluetooth
+            # SPP the value is inert — RFCOMM ignores the termios line rate entirely
+            # — so if OBD_PORT=/dev/rfcomm0 is the path in use, this constant does
+            # not matter at all. Not guessing at a replacement: connect the real
+            # adapter, and if ATZ returns nothing or garbage here, sweep 9600 /
+            # 38400 / 115200 / 500000 and record what actually answers before
+            # deciding whether this should stay a constant, become an env var, or
+            # become an autobaud sweep. Note the current code cannot distinguish
+            # "wrong baud" from "no adapter" — both yield an empty _obd_cmd() result
+            # and the same silent fall back to simulation.
+            # See docs/HARDWARE_BRINGUP.md §1.4.
             ser = serial.Serial(port_device, 38400, timeout=2)
             _obd_cmd(ser, 'ATZ');   time.sleep(1.0)   # reset adapter
             _obd_cmd(ser, 'ATE0')                      # echo off

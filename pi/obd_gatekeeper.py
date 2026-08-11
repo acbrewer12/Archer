@@ -86,10 +86,49 @@ AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
 ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")
 BAUD          = 115200
 RELAY_PIN     = 17     # BCM — HIGH = OBD2 unlocked, LOW = locked
+# OPEN HARDWARE QUESTION (highest-consequence one in this file): the HIGH/LOW
+# mapping above, and the initial=GPIO.LOW in setup_relay(), assume an ACTIVE-HIGH
+# relay module — one that energises its coil when IN is driven high. A large
+# fraction of the cheap opto-isolated relay boards sold for Pi use are ACTIVE-LOW
+# and energise when IN is pulled low. Note that OVERRIDE_PIN on the next line is
+# explicitly annotated active-low, so polarity was clearly on the author's mind for
+# the input; no assumption was ever stated for this output, and no board has been
+# measured. If the installed board turns out to be active-low, the polarity is
+# inverted end to end and the OBD2 port sits UNLOCKED whenever the Pi is off, still
+# booting, or crashed — the exact opposite of the "default state: complete silence"
+# guarantee the module docstring opens with, and it fails open rather than closed.
+# Only real hardware can settle it: with the relay disconnected from the CAN H/L
+# path, drive GPIO 17 low and then high and check continuity across the switched
+# contacts. Continuity at LOW means an active-low board and this constant's meaning
+# must be inverted before anything is wired to a vehicle. Check the de-energised
+# (Pi unpowered) state too — that is the state that actually matters for fail-safe.
+# See docs/HARDWARE_BRINGUP.md §3.1.
 OVERRIDE_PIN  = 27     # BCM — physical emergency override switch (pull-up, active-low)
 OVERRIDE_HOLD = 3.0    # seconds switch must be held to trigger (prevents accidental trips)
 AUTH_TIMEOUT  = 10.0   # seconds to complete the full handshake
 TIMESTAMP_WINDOW = 30  # seconds — reject challenges older than this
+# OPEN HARDWARE QUESTION: both of the above are round numbers with no measurement
+# behind them — nothing in this project has ever run the handshake over a real UART.
+# On the arithmetic, AUTH_TIMEOUT is very unlikely to be too SHORT: the whole
+# exchange is two round trips of ~120 bytes at 115200 baud, roughly 10ms of wire
+# time, so 10s carries about 1000x headroom. The interesting direction is the other
+# one — this same value is how long main()'s idle loop blocks per iteration, so it
+# also sets the service's minimum reaction time to a client appearing and bounds how
+# long a stalled client can hold AUTH_PORT open.
+#
+# TIMESTAMP_WINDOW is the sharper unknown, because it is not a latency budget at all
+# — it is a clock-AGREEMENT budget between two machines. A Pi with no RTC boots to
+# whatever timestamp was last written to disk and cannot land inside ±30s until
+# systemd-timesyncd gets a route, which on a truck hotspot may be minutes or never.
+# When it fails the operator sees "Timestamp out of window", each attempt calls
+# _record_failure(), and ten of those reach permanent lockout (see MAX_FAILURES_PERM
+# below) — so the most likely first-boot failure of this whole system is a clock,
+# not a key. Widening the window is NOT the fix: it widens the replay window by
+# exactly the same amount. Real hardware needs to answer two things — the measured
+# wall time of a real handshake, and how far the Pi's clock has actually drifted at
+# the moment obd_auth_client.py first runs after a cold boot. If the latter is
+# routinely >30s the answer is a battery-backed RTC, not a larger constant.
+# See docs/HARDWARE_BRINGUP.md §3.2 and §2.5.
 MAX_SESSION_SECS = 4 * 3600  # force re-auth after 4 hours
 
 # Rate limiting — protects against brute-force / fuzzing attacks
@@ -114,6 +153,18 @@ log = logging.getLogger(__name__)
 
 _fail_count   = 0
 _locked_until = 0.0
+
+# NOTE for first-hardware bring-up (not a defect — stated because the consequence is
+# easy to miss): _fail_count is process-global and DECAYS NEVER. It is zeroed only by
+# a successful authentication, via _reset_failures() at the bottom of
+# handle_connection(). Ten failures across the entire lifetime of the service —
+# spread over weeks, or accumulated in thirty seconds by retrying through a
+# clock-skew problem — reach MAX_FAILURES_PERM and lock the port indefinitely. Since
+# the state is in memory only, the "manual reset" the critical log line refers to is
+# `sudo systemctl restart obd_gatekeeper` (Restart=always, RestartSec=3). The
+# physical override switch also still works while locked out: main() tests
+# _override_active before _check_lockout(), which is the deliberate escape hatch.
+# See docs/HARDWARE_BRINGUP.md §2.5.
 
 
 def _record_failure():
@@ -444,6 +495,32 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> Optional[List[s
     """
     port.timeout = AUTH_TIMEOUT
 
+    # OPEN HARDWARE QUESTION: this read and the RESPONSE read below both use
+    # readline(), which on a serial.Serial returns on '\n' OR on timeout, whichever
+    # comes first — and a timeout return is a PARTIAL line that is indistinguishable
+    # from a legitimately short one. Every test that covers this function
+    # (test_archer.py TestGatekeeperHandshake) mocks the port and hands back whole
+    # lines atomically, so partial-read behaviour has never once been exercised.
+    #
+    # A truncated read HERE is harmless: it logs "Unrecognised opener" and retries
+    # without recording a failure. A truncated read at the RESPONSE line below is
+    # not — it yields a short client_mac, fails compare_digest, and calls
+    # _record_failure(), which means ordinary line noise counts toward the lockout
+    # tiers. Ten such events over the lifetime of the process (the counter never
+    # decays) is a permanent lockout caused by electrical noise rather than an
+    # attacker. Worth contrasting with _proxy() above, which already handles this
+    # correctly for the post-auth path: it buffers and splits on '\r', holding an
+    # unterminated command over to the next read. The handshake path has no
+    # equivalent buffering.
+    #
+    # Real hardware is the only way to size the risk: run the handshake a few
+    # hundred times over the actual /dev/ttyAMA0 wiring WITH THE ENGINE RUNNING
+    # (alternator ripple, injector transients, starter draw) and count how many
+    # produce "Expected RESPONSE, got:" with a truncated value. If that count is
+    # non-zero, the fix is either to give this path the same buffer-until-terminator
+    # treatment _proxy() has, or to have _record_failure() distinguish "malformed
+    # frame" from "wrong key" so noise cannot drive the lockout tiers.
+    # See docs/HARDWARE_BRINGUP.md §3.3.
     try:
         line = port.readline().decode("ascii", errors="replace").strip()
     except serial.SerialException:
@@ -556,6 +633,27 @@ def main():
             with serial.Serial(AUTH_PORT, BAUD, timeout=AUTH_TIMEOUT) as port:
                 session_permissions = handle_connection(port, keys)
                 if session_permissions is not None:
+                    # EVALUATED, not just flagged — there is no race between the
+                    # relay's physical switching speed and AUTH_TIMEOUT, contrary to
+                    # what the ordering might suggest at a glance. AUTH_TIMEOUT
+                    # bounds the readline() calls inside handle_connection() only,
+                    # and that call has already returned by the time this line runs;
+                    # nothing re-arms it. A mechanical relay settles in ~5-10ms,
+                    # orders of magnitude below any timeout in this file.
+                    #
+                    # What IS unconfirmed is narrower and needs real hardware: the
+                    # client is told AUTH_OK inside handle_connection(), BEFORE the
+                    # contacts here have moved, so a client that fires its first OBD
+                    # command the instant it reads AUTH_OK can put bytes on the wire
+                    # during the settle window. That would cost a single dropped
+                    # first command (an ELM327 would simply not answer, and the
+                    # client's own retry covers it) — it is not a security boundary
+                    # problem, since the relay is still the only thing gating the
+                    # bus. Watch for a missing/ignored first command on first
+                    # bring-up; if it shows up, the fix is to move the AUTH_OK write
+                    # after set_relay(True), which is a protocol-ordering change and
+                    # deliberately not being made on untested assumptions.
+                    # See docs/HARDWARE_BRINGUP.md §3.10.
                     set_relay(True)
                     run_proxy_session(port, session_permissions)
                     set_relay(False)

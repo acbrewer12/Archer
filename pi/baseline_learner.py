@@ -23,10 +23,69 @@ import time
 from pathlib import Path
 
 BASELINE_FILE      = Path("truck_baseline.json")
+# OPEN QUESTION (latent, becomes live the moment this is deployed): a relative path
+# resolves against the CURRENT WORKING DIRECTORY. Run by hand from the repo root
+# that is the repo root, which is what every use so far has been. Run from a systemd
+# unit with no WorkingDirectory= — which is what both pi/obd_gatekeeper.service and
+# pi/oled_display.service look like — CWD is "/", so the learner would attempt
+# /truck_baseline.json, fail on permissions, and silently lose a calibration run.
+# status() already reports the resolved path (str(self._file.resolve())); check it
+# before starting any long calibration. See docs/HARDWARE_BRINGUP.md §3.7.
+
 CALIBRATION_TARGET = 1000   # samples needed before is_calibrated == True
+# OPEN HARDWARE QUESTION: this constant and the module docstring above describe two
+# completely different calibration periods, and they cannot be reconciled at the
+# rate this file actually samples. The docstring says "first 100 engine starts after
+# install"; _run_calibration() sleeps 0.1s between samples, so 1000 samples is 100
+# SECONDS — one uninterrupted minute and forty seconds. For "1000 samples ≈ 100
+# starts" to hold, a single start would have to contribute ~10 samples, i.e. one
+# second of engine run time each.
+#
+# This is not pedantry about a comment. 100 starts would span weeks and capture cold
+# mornings, hot restarts, highway warm-up and seasonal swing — a representative
+# baseline, which is the whole premise of the module. 100 seconds of one idle
+# captures a single thermal state, and everything the truck subsequently does reads
+# as an anomaly against it.
+#
+# Real hardware is needed to close this because the target has to be derived from
+# the achievable sample rate on the actual bus, which is NOT the 10Hz assumed here —
+# see the Z_SCORE_THRESHOLD note below. A per-start counter would serve the
+# docstring's intent far better than a raw sample count, but that is a design change
+# rather than a constant tweak. See docs/HARDWARE_BRINGUP.md §3.4.
 
 # A deviation this many standard deviations from baseline is flagged
 Z_SCORE_THRESHOLD  = 3.0
+# OPEN HARDWARE QUESTION: 3.0 sigma is only meaningful if sigma itself is
+# meaningful, and every baseline this project has ever built came from
+# sierra_ecu_config.py — never from a vehicle. Three compounding reasons the
+# emulator-derived sigma will not transfer:
+#
+#   1. SAMPLE RATE. _run_calibration() polls an in-process dict at 10Hz — zero
+#      latency. The real path (archer.py obd_autodetect) sweeps 13 PIDs
+#      sequentially, each with up to a 1.5s timeout, plus a 0.15s inter-sweep sleep,
+#      over a 2006 GMT800's GM Class 2 / J1850 VPW bus at 10.4 kbit/s. A full sweep
+#      is plausibly ~1s — roughly 1Hz, an order of magnitude slower than calibration
+#      assumes. (README.md claims "every 200 ms"; that has never been measured.)
+#
+#   2. AUTOCORRELATION. The emulator's own step thread also runs at 10Hz, so
+#      consecutive samples here are near-duplicates. Welford treats them as
+#      independent observations, so the mean is estimated from ~1000 samples but the
+#      VARIANCE from far fewer effective ones. The learned stddev comes out biased
+#      low, sometimes drastically — and a 3-sigma threshold built on an artificially
+#      small sigma is a hair trigger that real readings would trip constantly.
+#
+#   3. ZERO-VARIANCE FIELDS. Several emulator outputs are literal constants (boost
+#      and ethanol are hardcoded 0). analyze() SKIPS any PID whose stddev is 0.0, so
+#      those channels are not merely mis-scaled — they are excluded from anomaly
+#      detection entirely, while the same channels on a real bus carry ordinary
+#      sensor noise and would be checked.
+#
+# What real hardware settles: collect one genuine calibration run off the truck and
+# compare per-PID stddev against the emulator-derived figures. If real sigma is
+# consistently larger (it should be), any existing truck_baseline.json must be
+# discarded and rebuilt on the vehicle, and the real-world false-positive rate at
+# 3.0 measured before a single anomaly from this module is trusted.
+# See docs/HARDWARE_BRINGUP.md §3.5.
 
 
 class BaselineLearner:
@@ -109,6 +168,23 @@ class BaselineLearner:
         Record one complete set of PID readings.  Non-numeric values are skipped.
         Saves to disk every 50 samples to avoid data loss.
         """
+        # OPEN QUESTION, tied to CALIBRATION_TARGET above: this updates the Welford
+        # accumulators UNCONDITIONALLY — is_calibrated gates nothing here. It is read
+        # only by _run_calibration()'s while-condition and reported in status().
+        #
+        # That is fine for the standalone CLI, which stops looping once calibrated.
+        # It is not fine for the wiring _run_calibration()'s own docstring
+        # anticipates ("In production, record_sample() is called from the main Archer
+        # data pipeline instead") — a pipeline that does not exist today: grepping
+        # the tree, BaselineLearner and record_sample appear nowhere outside this
+        # file. Nothing in archer.py, blueprints/, or pi/ ever constructs or feeds
+        # it. Whoever wires it up will, without a guard here, fold every subsequent
+        # reading — including the anomalies this module exists to catch — back into
+        # the baseline. A slowly failing sensor would be learned as normal, which is
+        # exactly the failure mode the module is meant to prevent. Best resolved
+        # together with CALIBRATION_TARGET, since both turn on what "the calibration
+        # period" is actually supposed to mean on a real truck.
+        # See docs/HARDWARE_BRINGUP.md §3.8.
         for key, value in pid_dict.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 self._update_stats(key, float(value))
@@ -201,6 +277,21 @@ def _run_calibration(learner: BaselineLearner):
     Minimal standalone calibration loop.  In production, record_sample() is
     called from the main Archer data pipeline instead.
     """
+    # OPEN HARDWARE QUESTION: this loop is the ONLY caller of record_sample() in the
+    # repo, and it feeds the software emulator — never a vehicle. Beyond the rate and
+    # autocorrelation problems noted at Z_SCORE_THRESHOLD, the two data sources do
+    # not even agree on WHICH fields exist. _ecu.get_state() returns ~40 keys,
+    # including strings and body-control state (engine_state, prndl, tcc_state,
+    # airbag_status, door/seatbelt flags, TPMS pressures). The real OBD path
+    # populates 13 Mode-01 PIDs plus battery voltage. So a baseline built here tracks
+    # a large superset the real bus can never supply; analyze() skips keys it has no
+    # stats for, so those entries just sit inert in truck_baseline.json.
+    #
+    # The practical consequence for bring-up: a truck_baseline.json produced by this
+    # command is NOT a baseline of the truck and must not be carried over to the
+    # vehicle. Real hardware is needed both to establish the achievable sample rate
+    # and to produce a baseline over the field set the live path actually emits.
+    # See docs/HARDWARE_BRINGUP.md §3.5 and §2.8.
     # Import the ECU emulator if available; otherwise abort with guidance.
     try:
         import sys as _sys

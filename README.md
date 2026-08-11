@@ -259,9 +259,11 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 
 ### OBD Not Connecting
 1. Check that OBDLink MX+ is paired via Bluetooth: `bluetoothctl paired-devices`
-2. Verify the port: `ls /dev/rfcomm* /dev/ttyUSB*`
-3. Set `OBD_PORT=/dev/rfcomm0` in `archer.env`
-4. If no hardware available, set `USE_EMULATOR=true` for simulated data
+2. Bind the RFCOMM node — **nothing automates this**, and it must be redone after every reboot: `sudo rfcomm bind 0 <MAC> 1`
+3. Verify the port: `ls /dev/rfcomm* /dev/ttyUSB*`
+4. Set `OBD_PORT=/dev/rfcomm0` in `archer.env` and restart Archer. **Required for Bluetooth adapters** — auto-detect matches on the port description, and an RFCOMM node reports `n/a`, so it will never be selected on its own. See [docs/HARDWARE_BRINGUP.md §1.2](docs/HARDWARE_BRINGUP.md).
+5. Confirm you are actually live: `curl -s localhost:7860/obd_auth` → `"obd_mode": "live"`. Ignore `obd_mode` from `/display_data` — it is hardcoded to `EMULATED` (§1.6).
+6. If no hardware available, leave `OBD_PORT` unset for simulated data. Note `USE_EMULATOR` in `archer.env` has **no effect** on `archer.py` (§1.6).
 
 ### Mirror Display Not Showing
 1. Confirm Pi HDMI output is active: `tvservice -s`
@@ -287,6 +289,21 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 > **Full API reference → [docs/API.md](docs/API.md)**
 >
 > Documents every Flask endpoint: auth tiers, request/response shapes, rate limits, and how to extend Archer.
+
+---
+
+## Hardware Bring-Up
+
+> **Full bring-up guide → [docs/HARDWARE_BRINGUP.md](docs/HARDWARE_BRINGUP.md)**
+>
+> Read this **before** the Pi and an OBD adapter are first physically connected. Covers why the software emulator provides zero coverage of the live-OBD switchover, an ordered first-boot validation checklist with an abort step at every stage, and the open hardware questions in the gatekeeper and baseline learner.
+
+Things to know before that first connection:
+
+- The relay is wired to **BCM GPIO 17**, not GPIO 5 — the architecture diagram above is wrong; `pi/obd_gatekeeper.py` is authoritative.
+- Clock skew, not a bad key, is the most likely first-boot auth failure — the timestamp window is ±30 s and a Pi without an RTC boots well outside it.
+- Ten failed handshakes over the service's lifetime is an **indefinite** lockout; the counter never decays. Recover with `sudo systemctl restart obd_gatekeeper`.
+- To tell real data from simulated: pull the adapter out of the OBD-II port. If nothing in `/obd_auth` changes, you were never live.
 
 ---
 
