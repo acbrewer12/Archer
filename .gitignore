@@ -14,5 +14,6 @@ archer_data.db
 archer_data.db-wal
 archer_data.db-shm
 google-services.json
+fcm_tokens.json
 *.keystore
 roku/config/token.txt

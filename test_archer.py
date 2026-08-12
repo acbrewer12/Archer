@@ -2547,5 +2547,79 @@ class TestSerialAuth:
         assert isinstance(guard._order, deque)
 
 
+# ═══════════════════════════════════════════════════════════════
+# FCM push notifications
+# ═══════════════════════════════════════════════════════════════
+class TestFcmPushIntegration:
+    def setup_method(self):
+        import fcm_push as fp
+        fp.reset_for_tests()
+
+    def test_fcm_token_endpoint_registers(self):
+        r = client.post('/fcm_token', json={'token': 'test-device-token-xyz'})
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+        import fcm_push as fp
+        assert 'test-device-token-xyz' in fp.get_tokens()
+
+    def test_fcm_token_rejects_invalid(self):
+        r = client.post('/fcm_token', json={'token': ''})
+        assert r.status_code == 400
+
+    def test_notify_tier1_triggers_fcm(self):
+        with patch('fcm_push.send_tier_request', return_value=1) as send:
+            c = _authed_client(2, 'Passenger')
+            c.post('/notify_tier1', json={'from': 'Alice', 'message': 'Sport mode please'})
+            send.assert_called_once_with('Alice', 'Sport mode please')
+
+    def test_discord_alert_triggers_fcm_even_when_discord_disabled(self):
+        archer.discord_config['enabled'] = False
+        archer.discord_config['last_sent'].clear()
+        with patch('fcm_push.send_vehicle_alert', return_value=1) as send:
+            archer.discord_alert('oil_high', 'Oil **225F**', title='OIL')
+            send.assert_called_once_with(
+                'oil_high', 'Oil **225F**', title='OIL', skip_cooldown=True,
+            )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Maintenance service tracker JSON API
+# ═══════════════════════════════════════════════════════════════
+class TestMaintenanceData:
+    def setup_method(self):
+        self._saved_log = dict(archer.maintenance_log)
+        self._saved_odo = dict(archer.odometer)
+
+    def teardown_method(self):
+        archer.maintenance_log.clear()
+        archer.maintenance_log.update(self._saved_log)
+        archer.odometer.clear()
+        archer.odometer.update(self._saved_odo)
+
+    def test_requires_tier1(self):
+        r = client.get('/maintenance/data')
+        assert r.status_code == 403
+
+    def test_returns_items_array(self):
+        r = _authed_client(1, 'Owner').get('/maintenance/data')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert isinstance(d['items'], list)
+        assert len(d['items']) == len(archer._MAINTENANCE_UI_SPECS)
+
+    def test_maps_maintenance_log_miles(self):
+        archer.maintenance_log['oil_change'] = {
+            'last_date': 'January 01 2026',
+            'last_miles': 140000,
+            'interval_miles': 5000,
+        }
+        archer.odometer['miles'] = 145200
+        r = _authed_client(1, 'Owner').get('/maintenance/data')
+        oil = next(i for i in json.loads(r.data)['items'] if i['id'] == 'oil')
+        assert oil['last_mi'] == 140000
+        assert oil['current_mi'] == 145200
+        assert oil['interval_mi'] == 5000
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

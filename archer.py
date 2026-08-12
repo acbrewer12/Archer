@@ -2825,6 +2825,50 @@ def check_maintenance():
         return 'All maintenance is up to date.'
     return 'Due soon: ' + ', '.join(due) + '.'
 
+# UI service-tracker rows — log_key links to maintenance_log when set.
+_MAINTENANCE_UI_SPECS = (
+    ('oil',     'oil_change',    'Oil Change',       5000,   90),
+    ('tranny',  None,            'Trans Fluid',      30000,  730),
+    ('air',     'air_filter',    'Air Filter',       15000,  365),
+    ('fuel',    None,            'Fuel Filter',      25000,  548),
+    ('coolant', None,            'Coolant Flush',    60000,  730),
+    ('plugs',   'spark_plugs',   'Spark Plugs',      100000, 1095),
+    ('diff',    None,            'Diff Fluid',       30000,  730),
+    ('tires',   'tire_rotation', 'Tire Rotation',    7500,   180),
+    ('brake',   'brake_fluid',   'Brake Fluid',      0,      730),
+    ('belt',    None,            'Serpentine Belt',  60000,  1460),
+    ('def',     None,            'DEF Top-off',      5000,   90),
+    ('pcv',     None,            'PCV Valve',        30000,  730),
+)
+
+
+def _days_since_maintenance_date(date_str):
+    if not date_str:
+        return 0
+    try:
+        done = datetime.strptime(date_str, '%B %d %Y')
+        return max(0, (datetime.now() - done).days)
+    except ValueError:
+        return 0
+
+
+def get_maintenance_items_payload():
+    """Build service-tracker rows for archer_maintenance.html."""
+    current_mi = int(odometer.get('miles') or 0)
+    items = []
+    for spec_id, log_key, name, interval_mi, interval_days in _MAINTENANCE_UI_SPECS:
+        log = maintenance_log.get(log_key, {}) if log_key else {}
+        items.append({
+            'id':            spec_id,
+            'name':          name,
+            'interval_mi':   interval_mi,
+            'last_mi':       int(log.get('last_miles') or 0),
+            'current_mi':    current_mi,
+            'interval_days': interval_days,
+            'last_days':     _days_since_maintenance_date(log.get('last_date')),
+        })
+    return items
+
 # ── PERFORMANCE CALCULATOR ───────────────
 def calc_hp_estimate(ethanol_pct, boost_psi):
     phase = get_build_phase()
@@ -5307,13 +5351,22 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
 
 def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000):
     """Send alert with cooldown to prevent spam."""
-    if not discord_config['enabled']:
-        return
     now = time.time()
     last = discord_config['last_sent'].get(alert_type, 0)
     if now - last < discord_config['cooldown_secs']:
         return
     discord_config['last_sent'][alert_type] = now
+
+    try:
+        import fcm_push as _fcm
+        _fcm.send_vehicle_alert(
+            alert_type, message, title=title or 'ARCHER', skip_cooldown=True,
+        )
+    except Exception as _e:
+        print(f'[FCM] Alert dispatch failed: {str(_e)[:60]}')
+
+    if not discord_config['enabled']:
+        return
 
     webhook = discord_config.get(f'webhook_{channel}') or discord_config['webhook_alerts']
     if not webhook:
@@ -5342,60 +5395,59 @@ def discord_vitals():
 def discord_monitor():
     """Background thread — watches for alert conditions."""
     while True:
-        if discord_config['enabled']:
-            # Oil temp warning
-            if discord_config['notify_oil'] and truck_state['oil_temp'] > 225:
-                discord_alert('oil_high',
-                    f'Oil temp critical at **{truck_state["oil_temp"]}F**. Pull over.',
-                    '⚠️ OIL TEMP WARNING', 'alerts', 0xCC0000)
+        # Oil temp warning
+        if discord_config['notify_oil'] and truck_state['oil_temp'] > 225:
+            discord_alert('oil_high',
+                f'Oil temp critical at **{truck_state["oil_temp"]}F**. Pull over.',
+                '⚠️ OIL TEMP WARNING', 'alerts', 0xCC0000)
 
-            # Battery warning
-            if discord_config['notify_battery'] and truck_state['battery_main'] < 12.0:
-                discord_alert('bat_low',
-                    f'Battery low at **{truck_state["battery_main"]}V**. Check alternator.',
-                    '🔋 BATTERY WARNING', 'alerts', 0xFF6600)
+        # Battery warning
+        if discord_config['notify_battery'] and truck_state['battery_main'] < 12.0:
+            discord_alert('bat_low',
+                f'Battery low at **{truck_state["battery_main"]}V**. Check alternator.',
+                '🔋 BATTERY WARNING', 'alerts', 0xFF6600)
 
-            # Boost spike
-            if discord_config['notify_boost'] and truck_state['boost'] > 13:
-                discord_alert('boost_high',
-                    f'Boost spiking at **{truck_state["boost"]} PSI**.',
-                    '💨 BOOST SPIKE', 'alerts', 0xFF6600)
+        # Boost spike
+        if discord_config['notify_boost'] and truck_state['boost'] > 13:
+            discord_alert('boost_high',
+                f'Boost spiking at **{truck_state["boost"]} PSI**.',
+                '💨 BOOST SPIKE', 'alerts', 0xFF6600)
 
-            # Radar alert
-            if discord_config['notify_radar'] and radar_detector['alert_level'] in ['strong','laser']:
-                band = radar_detector['band'] or 'Unknown'
-                discord_alert('radar',
-                    f'**{band} band** — {radar_detector["direction"]} — {radar_detector["strength"]} bars\n'
-                    f'Road: {road_memory[current_road]["name"] if current_road else "unknown"}',
-                    '🚨 RADAR ALERT', 'radar', 0xFF0000)
+        # Radar alert
+        if discord_config['notify_radar'] and radar_detector['alert_level'] in ['strong','laser']:
+            band = radar_detector['band'] or 'Unknown'
+            discord_alert('radar',
+                f'**{band} band** — {radar_detector["direction"]} — {radar_detector["strength"]} bars\n'
+                f'Road: {road_memory[current_road]["name"] if current_road else "unknown"}',
+                '🚨 RADAR ALERT', 'radar', 0xFF0000)
 
-            # Valet doing something bad
-            if discord_config['notify_valet'] and tier_state['current'] >= 4:
-                if truck_state['rpm'] > 3000:
-                    discord_alert('valet_rpm',
-                        f'Valet hit **{truck_state["rpm"]} RPM**.',
-                        '👀 VALET ALERT', 'alerts', 0xFFAA00)
+        # Valet doing something bad
+        if discord_config['notify_valet'] and tier_state['current'] >= 4:
+            if truck_state['rpm'] > 3000:
+                discord_alert('valet_rpm',
+                    f'Valet hit **{truck_state["rpm"]} RPM**.',
+                    '👀 VALET ALERT', 'alerts', 0xFFAA00)
 
-            # Weather alert
-            if discord_config['notify_weather']:
-                if weather_alerts.get('tornado_warn'):
-                    discord_alert('tornado',
-                        'Tornado WARNING active for Salem area.',
-                        '🌪️ TORNADO WARNING', 'alerts', 0xFF0000)
-                elif weather_alerts.get('severe_storm'):
-                    discord_alert('storm',
-                        'Severe thunderstorm warning active.',
-                        '⛈️ SEVERE STORM', 'alerts', 0xFF6600)
+        # Weather alert
+        if discord_config['notify_weather']:
+            if weather_alerts.get('tornado_warn'):
+                discord_alert('tornado',
+                    'Tornado WARNING active for Salem area.',
+                    '🌪️ TORNADO WARNING', 'alerts', 0xFF0000)
+            elif weather_alerts.get('severe_storm'):
+                discord_alert('storm',
+                    'Severe thunderstorm warning active.',
+                    '⛈️ SEVERE STORM', 'alerts', 0xFF6600)
 
-            # New personal record
-            if discord_config['notify_records']:
-                if drag_timer['best_et'] and drag_timer['stage'] == 'done':
-                    et  = drag_timer['best_et']
-                    mph = drag_timer['best_mph']
-                    discord_alert('new_record',
-                        f'New best ET: **{et}s @ {mph} MPH** 🔥\n'
-                        f'E{truck_state["ethanol"]} — {truck_state["boost"]} PSI boost',
-                        '🏆 NEW PERSONAL BEST', 'alerts', 0x00CC44)
+        # New personal record
+        if discord_config['notify_records']:
+            if drag_timer['best_et'] and drag_timer['stage'] == 'done':
+                et  = drag_timer['best_et']
+                mph = drag_timer['best_mph']
+                discord_alert('new_record',
+                    f'New best ET: **{et}s @ {mph} MPH** 🔥\n'
+                    f'E{truck_state["ethanol"]} — {truck_state["boost"]} PSI boost',
+                    '🏆 NEW PERSONAL BEST', 'alerts', 0x00CC44)
 
         time.sleep(15)
 
@@ -8341,7 +8393,7 @@ def voice_command_endpoint():
 
 
 # ── FCM DEVICE TOKEN ─────────────────────────────────────────────────────────
-_fcm_tokens: set = set()
+import fcm_push as _fcm_push
 
 @display_app.route('/fcm_token', methods=['POST'])
 @_limiter.limit('10 per minute')
@@ -8354,24 +8406,11 @@ def fcm_token_route():
     can send targeted push notifications via firebase-admin.
     """
     from flask import request as flask_request
-    import json as _json_lib
     data  = flask_request.get_json() or {}
     token = data.get('token', '').strip()
     if not token or len(token) > 512:
         return jsonify({'error': 'Invalid token'}), 400
-    _fcm_tokens.add(token)
-    try:
-        tok_path = os.path.join(os.path.dirname(__file__), 'fcm_tokens.json')
-        existing = []
-        if os.path.exists(tok_path):
-            with open(tok_path) as _f:
-                existing = _json_lib.load(_f)
-        if token not in existing:
-            existing.append(token)
-            with open(tok_path, 'w') as _f:
-                _json_lib.dump(existing, _f)
-    except Exception:
-        pass
+    _fcm_push.register_token(token)
     return jsonify({'ok': True})
 
 
@@ -9798,6 +9837,11 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
     })
     tier_responses[nid] = 'pending'
     print(f'[TIER NOTIFY] {from_name}: {message}')
+    try:
+        import fcm_push as _fcm
+        _fcm.send_tier_request(from_name, message)
+    except Exception as _e:
+        print(f'[FCM] Tier request push failed: {str(_e)[:60]}')
     return nid
 
 @display_app.route('/notify_tier1', methods=['POST'])
@@ -10496,6 +10540,14 @@ def tpms_endpoint():
         'target':  target,
         'overall': 'critical' if any_low else ('warn' if any_warn else 'ok'),
     })
+
+
+@display_app.route('/maintenance/data')
+def maintenance_data():
+    """JSON service-tracker rows for archer_maintenance.html (not the maintenance-mode splash)."""
+    if get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    return jsonify({'items': get_maintenance_items_payload()})
 
 
 @display_app.route('/maintenance')
