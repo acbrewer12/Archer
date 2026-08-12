@@ -11,5 +11,24 @@ RestartSec=3
 StandardOutput=journal
 StandardError=journal
 
+# ── relay polarity ───────────────────────────────────────────────────
+# The gatekeeper refuses ALL authentication until it can establish whether
+# driving GPIO 17 high locks or unlocks the OBD2 port. Guessing wrong means the
+# connector is live whenever the Pi is off. See docs/HARDWARE_BRINGUP.md §3.1.
+#
+# PREFERRED — uncomment and set to the BCM pin wired to a dry contact that
+# follows the relay's switched state (spare pole of a DPDT relay, or an
+# auxiliary NO contact, to GND, internal pull-up). Polarity is then measured at
+# every transition, so a relay that welds shut in service is caught too.
+# NEVER tap CAN H or CAN L into a GPIO for this — see the doc.
+#Environment=GATEKEEPER_RELAY_SENSE_PIN=22
+# Set only if the sense contact is wired to the NC side rather than NO:
+#Environment=GATEKEEPER_RELAY_SENSE_INVERT=true
+#
+# FALLBACK — with no sense pin, record a bench measurement once:
+#   sudo python3 /opt/archer/obd_gatekeeper.py --verify-relay
+# which writes the attestation this path points at.
+#Environment=GATEKEEPER_POLARITY_FILE=/etc/archer/relay_polarity.json
+
 [Install]
 WantedBy=multi-user.target

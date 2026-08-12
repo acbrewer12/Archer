@@ -40,14 +40,28 @@ Key rotation: KEY_FILE may contain two newline-separated hex keys:
 To rotate: prepend new key to file as line 1, keep old as line 2 for one
 session, then remove line 2.
 
+Relay polarity — REQUIRED before the port will ever unlock: the "complete
+silence" default above holds only if driving GPIO 17 low actually opens the CAN
+H/L passthrough. On an active-LOW relay board it does the opposite, and the port
+would sit open whenever the Pi is off, booting, or crashed. This is not
+detectable by reading the pin back (that returns the output latch, not the
+contacts), so the service refuses all authentication until polarity is
+established either by a wired sense contact (GATEKEEPER_RELAY_SENSE_PIN —
+preferred, re-checked on every transition) or by a recorded bench measurement
+(`obd_gatekeeper.py --verify-relay`). See the "relay polarity" section below and
+docs/HARDWARE_BRINGUP.md §3.1.
+
 Install as a systemd service on the Pi:
   sudo cp obd_gatekeeper.py /opt/archer/obd_gatekeeper.py
   sudo cp key_manager.py /opt/archer/key_manager.py    # needed for scope lookup
   sudo cp obd_gatekeeper.service /etc/systemd/system/
+  sudo python3 /opt/archer/obd_gatekeeper.py --verify-relay   # unless sense pin wired
   sudo systemctl enable --now obd_gatekeeper
 
 Physical wiring (Pi ↔ OBD2 connector):
   Pi GPIO 17 (BCM) → Relay IN  (controls CAN H/L passthrough)
+  Pi GPIO 22 (BCM) ← Relay sense contact, optional but recommended (dry contact
+                     to GND; spare DPDT pole or aux NO — never CAN H/L directly)
   Pi /dev/ttyAMA0  → OBD2 pin 7 (K-Line) or custom auth pins 11/12
   Pi internal UART → ELM327 chip or direct CAN transceiver (SN65HVD230)
 """
@@ -56,6 +70,7 @@ import os
 import sys
 import hmac
 import hashlib
+import json
 import serial
 import secrets
 import time
@@ -85,24 +100,67 @@ KEY_FILE      = "/etc/archer/obd_auth.key"
 AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
 ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")
 BAUD          = 115200
-RELAY_PIN     = 17     # BCM — HIGH = OBD2 unlocked, LOW = locked
-# OPEN HARDWARE QUESTION (highest-consequence one in this file): the HIGH/LOW
-# mapping above, and the initial=GPIO.LOW in setup_relay(), assume an ACTIVE-HIGH
-# relay module — one that energises its coil when IN is driven high. A large
-# fraction of the cheap opto-isolated relay boards sold for Pi use are ACTIVE-LOW
-# and energise when IN is pulled low. Note that OVERRIDE_PIN on the next line is
-# explicitly annotated active-low, so polarity was clearly on the author's mind for
-# the input; no assumption was ever stated for this output, and no board has been
-# measured. If the installed board turns out to be active-low, the polarity is
-# inverted end to end and the OBD2 port sits UNLOCKED whenever the Pi is off, still
-# booting, or crashed — the exact opposite of the "default state: complete silence"
-# guarantee the module docstring opens with, and it fails open rather than closed.
-# Only real hardware can settle it: with the relay disconnected from the CAN H/L
-# path, drive GPIO 17 low and then high and check continuity across the switched
-# contacts. Continuity at LOW means an active-low board and this constant's meaning
-# must be inverted before anything is wired to a vehicle. Check the de-energised
-# (Pi unpowered) state too — that is the state that actually matters for fail-safe.
+RELAY_PIN     = 17     # BCM — polarity is NOT assumed; see below and _relay_level()
+# OPEN HARDWARE QUESTION (the highest-consequence one in this file) — the hardware
+# is still unmeasured, but the code no longer GUESSES at the answer.
+#
+# This constant used to be annotated "HIGH = OBD2 unlocked, LOW = locked". That
+# mapping is correct only for an ACTIVE-HIGH relay module — one that energises its
+# coil when IN is driven high. A large fraction of the cheap opto-isolated relay
+# boards sold for Pi use are ACTIVE-LOW and energise when IN is pulled low. Note
+# that OVERRIDE_PIN below is explicitly annotated active-low, so polarity was
+# clearly on the author's mind for the input; no assumption was ever stated for
+# this output, and no board has ever been measured.
+#
+# If the installed board is active-low, the polarity is inverted end to end and the
+# OBD2 port sits UNLOCKED whenever the Pi is off, still booting, or crashed — the
+# exact opposite of the "default state: complete silence" guarantee the module
+# docstring opens with. It fails OPEN, and it does so silently: the logs would read
+# "OBD2 relay: LOCKED" the whole time.
+#
+# Because that failure mode is both fail-open and invisible, this file no longer
+# trusts the mapping. It refuses to unlock the port at all until polarity has been
+# established, either by a wired sense contact (RELAY_SENSE_PIN — empirical, and
+# re-checked on every transition) or by a recorded bench measurement (POLARITY_FILE,
+# attested once by a human with a multimeter). See the "relay polarity" section
+# below for the mechanism, for why reading the pin back proves nothing, and for why
+# an unverified system stays running-but-locked rather than exiting.
+#
+# STILL NEEDS REAL HARDWARE: the de-energised (Pi unpowered) contact state. That is
+# the state that actually decides fail-safe vs fail-open, no software can observe
+# it, and the fix if it is wrong is a pull resistor, not code.
 # See docs/HARDWARE_BRINGUP.md §3.1.
+RELAY_ACTIVE_HIGH_ASSUMED = True   # historical assumption — used ONLY as the
+                                   # fallback drive level while blocked, never as
+                                   # grounds to unlock. Verification overrides it.
+
+# BCM pin wired to a DRY CONTACT that follows the relay's switched state, or None
+# when no feedback is wired. This is the only way the Pi can actually observe what
+# the relay did rather than what it was told to do — GPIO.input() on RELAY_PIN
+# itself just reads back the output latch and proves nothing.
+#
+# WIRING (read this before picking a pin): use the spare pole of a DPDT relay, or
+# an auxiliary/NO contact on the relay board, wired as a dry contact between this
+# GPIO and GND, with the internal pull-up enabled. NEVER tap CAN H or CAN L into a
+# GPIO to sense this — they are not logic-level, they sit around 2.5V idle and
+# swing above the Pi's 3.3V tolerance, and loading the differential pair risks
+# disrupting the bus on a moving vehicle. The sense contact must be galvanically
+# separate from the CAN path.
+RELAY_SENSE_PIN = (
+    int(os.environ["GATEKEEPER_RELAY_SENSE_PIN"])
+    if os.environ.get("GATEKEEPER_RELAY_SENSE_PIN", "").strip().isdigit()
+    else None
+)
+# True when the sense contact is CLOSED (reads LOW, pulled to GND) in the relay's
+# UNLOCKED/passthrough state. Flip via env if the spare pole is wired to the NC
+# side instead of NO.
+RELAY_SENSE_CLOSED_MEANS_UNLOCKED = (
+    os.environ.get("GATEKEEPER_RELAY_SENSE_INVERT", "").strip().lower() != "true"
+)
+
+# Bench-measured polarity attestation, written by `obd_gatekeeper.py --verify-relay`.
+POLARITY_FILE = os.environ.get("GATEKEEPER_POLARITY_FILE", "/etc/archer/relay_polarity.json")
+
 OVERRIDE_PIN  = 27     # BCM — physical emergency override switch (pull-up, active-low)
 OVERRIDE_HOLD = 3.0    # seconds switch must be held to trigger (prevents accidental trips)
 AUTH_TIMEOUT  = 10.0   # seconds to complete the full handshake
@@ -198,16 +256,261 @@ def _reset_failures():
     _locked_until = 0.0
 
 
+# ── relay polarity ───────────────────────────────────────────────────
+#
+# The problem this section exists to solve: if the installed relay board is
+# active-LOW rather than the active-HIGH this file historically assumed, every
+# lock/unlock decision is inverted and the OBD2 port sits OPEN whenever the Pi is
+# unpowered, booting, or crashed. That is a fail-open security model, and it would
+# not announce itself — the logs would cheerfully read "OBD2 relay: LOCKED" while
+# the connector was live.
+#
+# WHAT CANNOT BE DONE: there is no software-only self-test for this. On a pin
+# configured as an output, GPIO.input(RELAY_PIN) returns the output latch — the
+# value just written — not the state of the coil, the contacts, or anything
+# downstream. A "self-test" built on reading back the pin would pass 100% of the
+# time on both an active-high and an active-low board. That is not a weaker test
+# than the real thing, it is a strictly harmful one: it converts an honest unknown
+# into a logged green checkmark. It is deliberately not implemented.
+#
+# WHAT CAN BE DONE, in descending order of strength:
+#
+#   1. RELAY_SENSE_PIN — a dry contact following the switched state (see the wiring
+#      note at the constant). This is genuine observation: drive the pin, read the
+#      contact back, and compare. It catches an inverted board, a relay that never
+#      energises (dead coil, wrong drive voltage, missing JD-VCC jumper), and a
+#      contact welded shut from switching inductive load. Checked on every
+#      transition, not just at boot, so a relay that fails closed mid-session is
+#      caught too. This is the recommended install and the hardware has not been
+#      bought yet, so there is still time to spec a DPDT part.
+#
+#   2. POLARITY_FILE — a human attestation recorded once at the bench with a
+#      multimeter, via `obd_gatekeeper.py --verify-relay`. Weaker: it is a claim
+#      about a measurement taken at one moment, not a live reading, and it cannot
+#      notice the relay dying later. But it is a real measurement of the real
+#      board, which is exactly what was missing.
+#
+#   3. Neither — the port never unlocks. See _polarity_blocked below.
+#
+# WHY AN UNVERIFIED SYSTEM STAYS RUNNING RATHER THAN EXITING (the non-obvious part):
+# the instinct on "refuse to proceed" is sys.exit(1). That is precisely wrong here.
+# The GPIO only holds a defined level while some process is driving it; when this
+# service exits, the pin reverts to its power-on default (an input with no pull on
+# a Pi), the relay board's IN floats, and on an active-low board that floating input
+# is read as the ASSERTED state. Exiting to be safe would therefore unlock the port
+# on exactly the hardware the check is meant to protect against. So an unverified
+# gatekeeper stays alive, keeps driving the pin at its best-guess locked level, and
+# refuses every authentication instead — loudly, on a repeating timer.
+#
+# WHAT NONE OF THIS FIXES: the window between the vehicle powering the Pi and this
+# code executing GPIO.setup() — several seconds of kernel boot during which the pin
+# is undriven. That is not solvable in software at any level. It needs a physical
+# pull resistor on the relay IN line (pull-down for an active-high board, pull-up
+# for active-low) sized against the board's input impedance, so the de-energised
+# state is defined before anything boots. Recorded as an open item in
+# docs/HARDWARE_BRINGUP.md §3.1 — measure the unpowered state during bring-up.
+
+# Resolved polarity for this process. None until established; set by
+# verify_relay_polarity() at startup.
+_relay_active_high: Optional[bool] = None
+_polarity_source   = "unverified"
+# When True, authentication is refused outright — polarity could not be
+# established, so "unlock" has no trustworthy meaning.
+_polarity_blocked  = True
+
+
+def _relay_level(unlocked: bool, active_high: bool) -> int:
+    """Map a logical relay state to the physical level to drive.
+
+    Pure and total — the one place the polarity mapping lives, so it can be
+    tested without a Pi. Returns GPIO.HIGH/GPIO.LOW when RPi.GPIO is present,
+    and the equivalent 1/0 otherwise so the mapping stays testable off-hardware.
+    """
+    high = GPIO.HIGH if GPIO_AVAILABLE else 1
+    low  = GPIO.LOW  if GPIO_AVAILABLE else 0
+    if active_high:
+        return high if unlocked else low
+    return low if unlocked else high
+
+
+def load_relay_polarity() -> Optional[dict]:
+    """Read and validate the bench-measured polarity attestation.
+
+    Returns the attestation dict, or None if absent/malformed/incomplete. Being
+    strict here is deliberate: a half-written or hand-edited file must not read as
+    a verification.
+    """
+    try:
+        with open(POLARITY_FILE, "r") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError) as e:
+        log.error(f"Polarity attestation at {POLARITY_FILE} is unreadable: {e}")
+        return None
+
+    if not isinstance(data, dict):
+        log.error(f"Polarity attestation at {POLARITY_FILE} is not an object")
+        return None
+    if not isinstance(data.get("active_high"), bool):
+        log.error(f"Polarity attestation at {POLARITY_FILE} has no boolean 'active_high'")
+        return None
+    # Require provenance. An attestation with nobody's name on it is a guess that
+    # someone wrote down, and the whole point of this file is that a human looked
+    # at a meter.
+    for field in ("verified_by", "verified_at", "method"):
+        if not str(data.get(field, "")).strip():
+            log.error(f"Polarity attestation at {POLARITY_FILE} is missing '{field}'")
+            return None
+    return data
+
+
+def read_relay_sense() -> Optional[bool]:
+    """Observe the relay's ACTUAL switched state via the sense contact.
+
+    Returns True if observed UNLOCKED, False if observed LOCKED, or None when no
+    sense pin is wired (or GPIO is unavailable) and the state is unobservable.
+    """
+    if RELAY_SENSE_PIN is None or not GPIO_AVAILABLE:
+        return None
+    closed = (GPIO.input(RELAY_SENSE_PIN) == GPIO.LOW)  # pulled up; closed → LOW
+    return closed if RELAY_SENSE_CLOSED_MEANS_UNLOCKED else (not closed)
+
+
+def verify_relay_polarity() -> bool:
+    """Establish relay polarity empirically if possible, by attestation otherwise.
+
+    Sets the module-level polarity state and returns True when the port may be
+    unlocked. Never raises — a failure here must leave the service running and
+    locked, not crash it (see the section header for why exiting is unsafe).
+    """
+    global _relay_active_high, _polarity_source, _polarity_blocked
+
+    if not GPIO_AVAILABLE:
+        # No GPIO means no relay is being driven at all — nothing is being
+        # protected and nothing can be misrepresented. Test/dev path.
+        _relay_active_high = RELAY_ACTIVE_HIGH_ASSUMED
+        _polarity_source   = "stub (no GPIO)"
+        _polarity_blocked  = False
+        log.info("Relay polarity check skipped — stub mode, no GPIO to verify")
+        return True
+
+    # ── 1. Empirical: drive each state and read the contact back ──────────
+    if RELAY_SENSE_PIN is not None:
+        results = {}
+        for candidate_active_high in (True, False):
+            # Drive the level that WOULD mean "locked" under this candidate
+            # polarity, then observe. Exactly one candidate can be consistent.
+            GPIO.output(RELAY_PIN, _relay_level(False, candidate_active_high))
+            time.sleep(0.05)   # relay mechanical settle (datasheets: ~5-10ms)
+            observed_locked = (read_relay_sense() is False)
+            GPIO.output(RELAY_PIN, _relay_level(True, candidate_active_high))
+            time.sleep(0.05)
+            observed_unlocked = (read_relay_sense() is True)
+            results[candidate_active_high] = observed_locked and observed_unlocked
+
+        # Always leave the pin at the assumed-locked level before deciding.
+        GPIO.output(RELAY_PIN, _relay_level(False, RELAY_ACTIVE_HIGH_ASSUMED))
+
+        consistent = [p for p, ok in results.items() if ok]
+        if len(consistent) == 1:
+            _relay_active_high = consistent[0]
+            _polarity_source   = f"measured via sense pin GPIO {RELAY_SENSE_PIN}"
+            _polarity_blocked  = False
+            GPIO.output(RELAY_PIN, _relay_level(False, _relay_active_high))
+            log.info(
+                f"Relay polarity VERIFIED empirically: "
+                f"{'ACTIVE-HIGH' if _relay_active_high else 'ACTIVE-LOW'} "
+                f"(sense pin GPIO {RELAY_SENSE_PIN})"
+            )
+            if not _relay_active_high:
+                log.warning(
+                    "Board is ACTIVE-LOW — the port is UNLOCKED whenever this Pi is "
+                    "unpowered or booting. Fit a pull-up on the relay IN line."
+                )
+            return True
+
+        # Both or neither consistent → the contact is not tracking the drive.
+        _polarity_blocked = True
+        _relay_active_high = RELAY_ACTIVE_HIGH_ASSUMED
+        _polarity_source   = "sense pin INCONSISTENT"
+        log.critical(
+            f"RELAY SENSE INCONSISTENT — driving GPIO {RELAY_PIN} does not change "
+            f"the sense contact on GPIO {RELAY_SENSE_PIN} as either polarity predicts "
+            f"(results={results}). Likely causes: contacts welded shut, coil not "
+            f"energising (check relay supply / JD-VCC jumper), sense wired to the "
+            f"wrong pole, or GATEKEEPER_RELAY_SENSE_INVERT set wrongly. "
+            f"REFUSING ALL AUTHENTICATION until this is resolved."
+        )
+        return False
+
+    # ── 2. Attested: a human measured it at the bench ─────────────────────
+    attestation = load_relay_polarity()
+    if attestation is not None:
+        _relay_active_high = attestation["active_high"]
+        _polarity_source   = (
+            f"attested by {attestation['verified_by']} on {attestation['verified_at']} "
+            f"({attestation['method']})"
+        )
+        _polarity_blocked  = False
+        log.info(
+            f"Relay polarity from attestation: "
+            f"{'ACTIVE-HIGH' if _relay_active_high else 'ACTIVE-LOW'} — {_polarity_source}"
+        )
+        log.info(
+            f"No sense pin wired — polarity is NOT re-checked at runtime. A relay that "
+            f"fails closed later will not be detected. Wiring GATEKEEPER_RELAY_SENSE_PIN "
+            f"upgrades this to a live check."
+        )
+        if not _relay_active_high:
+            log.warning(
+                "Board is ACTIVE-LOW — the port is UNLOCKED whenever this Pi is "
+                "unpowered or booting. Fit a pull-up on the relay IN line."
+            )
+        return True
+
+    # ── 3. Unverified — run, hold the pin, refuse to unlock ───────────────
+    _relay_active_high = RELAY_ACTIVE_HIGH_ASSUMED
+    _polarity_source   = "unverified"
+    _polarity_blocked  = True
+    log.critical(
+        "RELAY POLARITY UNVERIFIED — refusing all authentication. This service "
+        "cannot tell whether driving GPIO %d high locks or unlocks the OBD2 port, "
+        "and guessing wrong means the connector is live whenever the Pi is off. "
+        "Resolve with EITHER: (a) wire a sense contact and set "
+        "GATEKEEPER_RELAY_SENSE_PIN (preferred — live verification), or (b) measure "
+        "the board with a multimeter and record it: sudo %s --verify-relay. "
+        "Holding GPIO %d at the assumed-locked level meanwhile.",
+        RELAY_PIN, os.path.abspath(__file__), RELAY_PIN,
+    )
+    return False
+
+
 # ── relay control ────────────────────────────────────────────────────
 
 def setup_relay():
     if not GPIO_AVAILABLE:
         log.info("RPi.GPIO not available — relay in stub mode")
+        verify_relay_polarity()
         return
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(RELAY_PIN,    GPIO.OUT, initial=GPIO.LOW)
+    # Set up at the assumed-locked level first, then let verify_relay_polarity()
+    # correct it. Under an active-low board this initial level is wrong (it holds
+    # the port unlocked) for the few milliseconds until verification runs — an
+    # unavoidable ordering artefact, since the pin must be an output before it can
+    # be driven at all, and vastly shorter than the multi-second boot window that
+    # precedes it either way. The pull resistor discussed above is what actually
+    # covers this.
+    GPIO.setup(RELAY_PIN, GPIO.OUT,
+               initial=_relay_level(False, RELAY_ACTIVE_HIGH_ASSUMED))
     GPIO.setup(OVERRIDE_PIN, GPIO.IN,  pull_up_down=GPIO.PUD_UP)  # active-low
-    log.info(f"Relay on GPIO {RELAY_PIN}: OBD2 port LOCKED")
+    if RELAY_SENSE_PIN is not None:
+        GPIO.setup(RELAY_SENSE_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        log.info(f"Relay sense contact on GPIO {RELAY_SENSE_PIN}")
+
+    verify_relay_polarity()
+
+    log.info(f"Relay on GPIO {RELAY_PIN}: OBD2 port LOCKED ({_polarity_source})")
     log.info(f"Emergency override on GPIO {OVERRIDE_PIN} (hold {OVERRIDE_HOLD}s)")
 
 
@@ -239,7 +542,24 @@ def _watch_override():
                     f"{OVERRIDE_HOLD}s) — OBD2 unlocked without auth"
                 )
                 _override_active.set()
-                set_relay(True)
+                # The override deliberately bypasses the polarity gate. It is a
+                # physical action by someone standing at the vehicle who has
+                # decided they need the port open now, and the failure this whole
+                # mechanism guards against (silently fail-open) is not made worse
+                # by an explicit human unlock request. But it cannot be honestly
+                # reported as succeeding when polarity is unknown, so say so.
+                if _polarity_blocked:
+                    log.critical(
+                        "Override is driving GPIO %d on UNVERIFIED polarity (%s) — "
+                        "if the board is inverted this LOCKS instead of unlocking.",
+                        RELAY_PIN, _polarity_source,
+                    )
+                    active_high = (_relay_active_high if _relay_active_high is not None
+                                   else RELAY_ACTIVE_HIGH_ASSUMED)
+                    if GPIO_AVAILABLE:
+                        GPIO.output(RELAY_PIN, _relay_level(True, active_high))
+                else:
+                    set_relay(True)
         else:
             if _override_active.is_set():
                 log.info("Emergency override released — re-locking OBD2 port")
@@ -249,11 +569,53 @@ def _watch_override():
         time.sleep(0.1)
 
 
-def set_relay(unlocked: bool):
+def set_relay(unlocked: bool) -> bool:
+    """Drive the relay to `unlocked`, confirming it when a sense contact exists.
+
+    Returns True if the relay is believed to be in the requested state. A False
+    return on an unlock request means the caller MUST NOT proceed with the
+    session — the port is not in a known state.
+    """
     state_str = "UNLOCKED" if unlocked else "LOCKED"
+
+    # Refuse to unlock on unverified polarity. Locking is always permitted:
+    # under the assumed polarity it is correct, and under the inverted one the
+    # port was already open regardless, so driving the pin cannot make it worse.
+    if unlocked and _polarity_blocked:
+        log.critical(
+            "REFUSING to unlock OBD2 relay — polarity unverified (%s). "
+            "See --verify-relay.", _polarity_source
+        )
+        return False
+
+    active_high = (_relay_active_high if _relay_active_high is not None
+                   else RELAY_ACTIVE_HIGH_ASSUMED)
+
     if GPIO_AVAILABLE:
-        GPIO.output(RELAY_PIN, GPIO.HIGH if unlocked else GPIO.LOW)
+        GPIO.output(RELAY_PIN, _relay_level(unlocked, active_high))
+
+    # Confirm against the sense contact. This is the check that catches a relay
+    # failing during service, not just a mis-specified one at boot: a welded
+    # contact or a dead coil shows up here as a mismatch on the next transition.
+    observed = read_relay_sense()
+    if observed is not None:
+        time.sleep(0.05)   # mechanical settle before believing the reading
+        observed = read_relay_sense()
+        if observed != unlocked:
+            log.critical(
+                "RELAY DID NOT FOLLOW COMMAND — asked for %s, sense contact reads %s. "
+                "Treating the OBD2 port as COMPROMISED and refusing the session.",
+                state_str, "UNLOCKED" if observed else "LOCKED",
+            )
+            # Best effort: command locked again. If the relay is stuck this
+            # achieves nothing electrically, but it leaves the pin correct for
+            # the case where only the unlock drive failed.
+            if GPIO_AVAILABLE:
+                GPIO.output(RELAY_PIN, _relay_level(False, active_high))
+            return False
+
     log.info(f"OBD2 relay: {state_str}")
+    return True
 
 
 # ── key loading ──────────────────────────────────────────────────────
@@ -620,10 +982,28 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT,  _shutdown)
 
+    _last_polarity_nag = 0.0
+
     while True:
         # Physical override switch bypasses the auth/lockout flow entirely
         if _override_active.is_set():
             time.sleep(1)
+            continue
+
+        # Polarity gate. Deliberately a loop guard rather than a startup exit: the
+        # process must stay alive to keep driving RELAY_PIN at a defined level (see
+        # the relay polarity section for why exiting fails OPEN on an active-low
+        # board). Re-announced on a timer so the condition cannot scroll off the
+        # top of a log and be quietly forgotten.
+        if _polarity_blocked:
+            if time.time() - _last_polarity_nag > 60:
+                log.critical(
+                    "OBD2 port held LOCKED and ALL authentication refused — relay "
+                    "polarity unverified (%s). Run: sudo %s --verify-relay",
+                    _polarity_source, os.path.abspath(__file__),
+                )
+                _last_polarity_nag = time.time()
+            time.sleep(5)
             continue
 
         if _check_lockout():
@@ -654,7 +1034,17 @@ def main():
                     # after set_relay(True), which is a protocol-ordering change and
                     # deliberately not being made on untested assumptions.
                     # See docs/HARDWARE_BRINGUP.md §3.10.
-                    set_relay(True)
+                    #
+                    # set_relay() now returns False when the unlock could not be
+                    # confirmed (sense contact disagrees, or polarity unverified).
+                    # A session must not start in that case: the port is not in a
+                    # known state, and proxying bus traffic through it would be
+                    # acting on exactly the assumption this check exists to stop
+                    # trusting.
+                    if not set_relay(True):
+                        log.error("Unlock not confirmed — refusing session, re-locking")
+                        set_relay(False)
+                        continue
                     run_proxy_session(port, session_permissions)
                     set_relay(False)
                     # Reload keys after each session to pick up rotation changes
@@ -671,5 +1061,125 @@ def main():
             time.sleep(3)
 
 
+def _verify_relay_wizard() -> int:
+    """Interactive bench procedure that records a measured polarity attestation.
+
+    This exists because the Pi cannot see the relay. It walks an operator through
+    driving each level and reading the contacts with a multimeter, then records
+    what they measured. The value is entirely in the human doing the measurement —
+    so the prompts insist on the relay being DISCONNECTED from the vehicle, and
+    the file records who measured it and how.
+    """
+    from datetime import datetime, timezone
+
+    print("=" * 70)
+    print("Archer OBD Gatekeeper — relay polarity verification")
+    print("=" * 70)
+    print()
+    print("This records which GPIO level actually CLOSES the CAN H/L passthrough,")
+    print("so the gatekeeper stops assuming. Until it is recorded (or a sense")
+    print("contact is wired), the gatekeeper refuses all authentication.")
+    print()
+    print("SAFETY — do this at the bench, not on the truck:")
+    print("  * The relay must be DISCONNECTED from the vehicle CAN H/L lines.")
+    print("  * You need a multimeter on continuity across the switched contacts.")
+    print("  * If a sense contact is wired instead, you do not need this at all —")
+    print("    set GATEKEEPER_RELAY_SENSE_PIN and the check runs automatically.")
+    print()
+
+    if not GPIO_AVAILABLE:
+        print("ERROR: RPi.GPIO unavailable — run this on the Pi itself.")
+        return 1
+
+    if input("Is the relay disconnected from the vehicle? [yes/NO] ").strip().lower() != "yes":
+        print("Aborted — disconnect the relay from the CAN lines first.")
+        return 1
+
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(RELAY_PIN, GPIO.OUT, initial=GPIO.LOW)
+
+    try:
+        print()
+        print(f"Driving GPIO {RELAY_PIN} LOW. Probe the switched contacts now.")
+        GPIO.output(RELAY_PIN, GPIO.LOW)
+        time.sleep(0.5)
+        low_closed = input("  Continuity across the contacts at LOW? [yes/no] ").strip().lower()
+
+        print()
+        print(f"Driving GPIO {RELAY_PIN} HIGH. Probe again.")
+        GPIO.output(RELAY_PIN, GPIO.HIGH)
+        time.sleep(0.5)
+        high_closed = input("  Continuity across the contacts at HIGH? [yes/no] ").strip().lower()
+
+        GPIO.output(RELAY_PIN, GPIO.LOW)
+
+        low_c  = low_closed.startswith("y")
+        high_c = high_closed.startswith("y")
+
+        if low_c == high_c:
+            print()
+            print("INCONSISTENT: the contacts read the same at both levels.")
+            print("The relay is not switching. Check the coil supply, the JD-VCC")
+            print("jumper, and that IN is on the pin you think it is. Nothing recorded.")
+            return 1
+
+        # Continuity == passthrough connected == port UNLOCKED.
+        active_high = high_c
+        print()
+        print(f"  → Board is ACTIVE-{'HIGH' if active_high else 'LOW'}.")
+        if not active_high:
+            print()
+            print("  WARNING: active-low. The port is UNLOCKED whenever this Pi is")
+            print("  unpowered, booting, or crashed. Fit a pull-UP on the relay IN")
+            print("  line so the de-energised state is defined before boot, and")
+            print("  re-measure with the Pi powered off to confirm it holds.")
+
+        print()
+        print("Also measure the state that actually matters for fail-safe:")
+        unpowered = input("  With the Pi UNPOWERED, are the contacts open (port locked)? [yes/no/skipped] ").strip().lower()
+
+        who = input("Your name (recorded in the attestation): ").strip()
+        if not who:
+            print("A name is required — the attestation is a record of who measured it.")
+            return 1
+
+        payload = {
+            "active_high":      active_high,
+            "verified_by":      who,
+            "verified_at":      datetime.now(timezone.utc).isoformat(),
+            "method":           "bench multimeter continuity across switched contacts",
+            "unpowered_state":  unpowered,
+            "relay_pin":        RELAY_PIN,
+        }
+        os.makedirs(os.path.dirname(POLARITY_FILE), exist_ok=True)
+        with open(POLARITY_FILE, "w") as f:
+            json.dump(payload, f, indent=2)
+        os.chmod(POLARITY_FILE, 0o600)
+
+        print()
+        print(f"Recorded to {POLARITY_FILE}:")
+        print(json.dumps(payload, indent=2))
+        print()
+        print("Restart the gatekeeper to pick it up:")
+        print("  sudo systemctl restart obd_gatekeeper")
+        if unpowered.startswith("n"):
+            print()
+            print("NOTE: you reported the port is NOT locked with the Pi unpowered.")
+            print("That is a fail-open install. Fix it with a pull resistor before")
+            print("this goes in the truck — the software cannot cover that window.")
+        return 0
+
+    except (KeyboardInterrupt, EOFError):
+        print("\nAborted — nothing recorded.")
+        return 1
+    finally:
+        try:
+            GPIO.output(RELAY_PIN, GPIO.LOW)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
+    if "--verify-relay" in sys.argv[1:]:
+        sys.exit(_verify_relay_wizard())
     main()

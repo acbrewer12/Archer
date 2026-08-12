@@ -287,15 +287,30 @@ vehicle bus, so the relay is driven to a known state before it can pass anything
    > **Note the discrepancy:** README.md:54 says `GPIO 5 / relay`. The code says
    > `RELAY_PIN = 17` (`pi/obd_gatekeeper.py:88`). **The code is authoritative.**
    > README is wrong; do not wire to GPIO 5.
-3. Verify the relay board's coil polarity *before* connecting it to the bus — see
-   [3.1](#31-relay-polarity-is-assumed-active-high-and-never-verified). This is the
-   one wiring question with a genuine fail-open risk and it takes a multimeter and
-   two minutes.
+3. **Establish relay polarity now, with the relay still disconnected from the bus.**
+   The gatekeeper will refuse every authentication until this is done — that is
+   deliberate, see [3.1](#31-relay-polarity--no-longer-assumed-now-verified-or-refused).
+   Either:
+   - **Sense contact (preferred):** wire the spare pole of a DPDT relay (or an
+     auxiliary NO contact) as a dry contact to a spare BCM pin and set
+     `GATEKEEPER_RELAY_SENSE_PIN` in the unit file. Verification is then automatic
+     and repeats on every transition. **Never** tap CAN H/L into a GPIO for this.
+   - **Bench measurement:** `sudo python3 /opt/archer/obd_gatekeeper.py --verify-relay`
+     and follow the prompts with a multimeter on the switched contacts.
+
+   While you have the meter out, also record the **de-energised (Pi unpowered)**
+   contact state. That is the state that decides whether this install is fail-safe
+   or fail-open, and no software can determine it.
 4. Power the Pi from a 5 V / 3 A supply. Let it boot fully.
 5. Only now connect the relay's switched contacts into the CAN H/L path.
 
 **Abort:** relay clicks or the OBD-II connector goes live at any point before step
 5 → power the Pi down, disconnect the relay from the bus, re-check polarity.
+
+**Abort:** the log says `RELAY POLARITY UNVERIFIED` or `RELAY SENSE INCONSISTENT`
+→ do not connect anything to the bus. The first means step 3 was skipped; the
+second means the relay is not switching at all (check coil supply, the JD-VCC
+jumper, and that `IN` is on the pin you think it is).
 
 ### 2.2 Confirm the gatekeeper starts LOCKED
 
@@ -652,14 +667,20 @@ modules are documentation-only in this pass.
 Some candidates were evaluated and found *not* to be issues; those are recorded in
 [3.10](#310-evaluated-and-found-not-to-be-issues) so nobody re-litigates them.
 
-### 3.1 Relay polarity is assumed active-high and never verified
+### 3.1 Relay polarity — no longer assumed; now verified or refused
 
-`pi/obd_gatekeeper.py:88` — `RELAY_PIN = 17  # BCM — HIGH = OBD2 unlocked, LOW = locked`
+> **Status: enforced in code.** This was the one finding where "documented for
+> later" was not enough, because the failure mode is fail-OPEN and silent. The
+> gatekeeper now refuses to unlock the port until polarity has actually been
+> established. The background below is retained because the *hardware* question is
+> still open — the code now just declines to guess at the answer.
 
-The code drives HIGH to unlock and initialises the pin `initial=GPIO.LOW`. That is
+`pi/obd_gatekeeper.py` — `RELAY_PIN = 17`, historically `# HIGH = OBD2 unlocked`
+
+The code drove HIGH to unlock and initialised the pin `initial=GPIO.LOW`. That is
 correct **only for an active-high relay module.** A large fraction of the cheap
 opto-isolated relay boards sold for Pi use are **active-LOW** — they energise when
-`IN` is pulled low, and the pull-down/float state at boot energises the coil.
+`IN` is pulled low, and the float state at boot energises the coil.
 
 Note that the very next line, `OVERRIDE_PIN = 27`, is explicitly annotated
 `(pull-up, active-low)` — so the author was thinking about polarity for the input
@@ -668,13 +689,85 @@ and simply did not state an assumption for the output.
 If the installed board is active-low, the polarity is inverted end to end and the
 OBD-II port is **UNLOCKED whenever the Pi is off, still booting, or crashed** — the
 exact opposite of the fail-safe the module docstring promises ("Default state:
-complete silence"). This is the single highest-consequence unknown in the file.
+complete silence").
 
-**What real hardware settles it:** with the relay disconnected from the bus, drive
-GPIO 17 low and then high and check continuity across the switched contacts.
-Continuity at LOW = active-low board = polarity must be inverted before this is
-wired to a vehicle. Also check the board's de-energised (Pi unpowered) state, which
-is the state that matters most.
+#### Why there is no software-only self-test
+
+The obvious implementation — drive the pin, read it back, compare — is worthless
+here, and worth stating explicitly so nobody adds it later thinking it helps. On a
+pin configured as an output, `GPIO.input(RELAY_PIN)` returns the **output latch**:
+the value just written. It says nothing about the coil, the contacts, or anything
+downstream. Such a check passes 100% of the time on an active-high board *and* on
+an active-low one. That is not a weaker test than the real thing — it is strictly
+harmful, because it converts an honest unknown into a logged green checkmark.
+
+Polarity is only observable with either a **feedback wire** or a **human with a
+meter**. The code now supports both, in that order of preference.
+
+#### Option A (preferred) — wire a sense contact
+
+Set `GATEKEEPER_RELAY_SENSE_PIN` to a BCM pin wired to a **dry contact that
+follows the relay's switched state**: the spare pole of a DPDT relay, or an
+auxiliary NO contact, between the GPIO and GND, with the internal pull-up enabled.
+
+> **Never tap CAN H or CAN L into a GPIO to sense this.** They are not logic
+> level, idle around 2.5 V, swing outside the Pi's 3.3 V tolerance, and loading
+> the differential pair risks disrupting the bus on a moving vehicle. The sense
+> contact must be galvanically separate from the CAN path.
+
+At startup the gatekeeper then drives each candidate polarity, reads the contact
+back, and keeps the one that is consistent. This catches an inverted board, a coil
+that never energises (wrong supply, missing JD-VCC jumper), and — because the check
+also runs on every transition, not just at boot — a contact that welds shut later
+in service. The hardware is not bought yet, so **there is still time to spec a DPDT
+part.** Do that if at all possible; it is the only option that keeps verifying
+after bring-up day.
+
+#### Option B — record a bench measurement
+
+With no sense pin, run the guided procedure on the Pi:
+
+```bash
+sudo python3 /opt/archer/obd_gatekeeper.py --verify-relay
+```
+
+It walks through driving each level while you check continuity across the switched
+contacts with a multimeter, then writes `/etc/archer/relay_polarity.json` recording
+the result, who measured it, when, and how. The attestation is rejected unless all
+of those provenance fields are present — an `active_high` with nobody's name on it
+is just a guess someone wrote down.
+
+This is genuinely weaker than Option A: it is a claim about one moment, not a live
+reading, and it cannot notice the relay dying afterwards. The startup log says so.
+
+#### Option C — neither: the port never unlocks
+
+With no sense pin and no attestation, the gatekeeper **refuses every
+authentication** and repeats a CRITICAL log line every 60 seconds. `set_relay(True)`
+returns `False`; `main()` declines the session and re-locks.
+
+#### Why it does not just exit
+
+The instinct on "refuse to proceed" is `sys.exit(1)`. That is precisely wrong here,
+and it is the subtlest part of this whole mechanism. **The GPIO only holds a defined
+level while a process is driving it.** When the service exits, the pin reverts to
+its power-on default — an input with no pull — the relay board's `IN` floats, and on
+an active-low board that floating input reads as *asserted*. Exiting "to be safe"
+would therefore **unlock the port on exactly the hardware the check exists to
+protect against.** So an unverified gatekeeper stays alive, keeps holding the pin at
+its best-guess locked level, and refuses authentication instead.
+
+#### What none of this fixes
+
+The window between the vehicle powering the Pi and this code reaching
+`GPIO.setup()` — several seconds of kernel boot with the pin undriven. That is not
+solvable in software at any level. It needs a **physical pull resistor on the relay
+IN line** (pull-down for active-high, pull-up for active-low), sized against the
+board's input impedance, so the de-energised state is defined before anything boots.
+
+**Still to measure on real hardware:** the board's de-energised (Pi unpowered)
+contact state. That is the state that matters most for fail-safe, the `--verify-relay`
+wizard prompts for it, and no amount of code can substitute for the reading.
 
 ### 3.2 `AUTH_TIMEOUT` and `TIMESTAMP_WINDOW` were chosen without latency data
 
@@ -919,8 +1012,13 @@ Recorded so these don't get re-raised:
 
 Nothing below is currently true. In rough dependency order:
 
-1. Relay polarity confirmed with a meter against the actual board (3.1), and
-   confirmed to fail *locked* with the Pi unpowered.
+1. Relay polarity established against the actual board (3.1) — either a wired
+   sense contact (`GATEKEEPER_RELAY_SENSE_PIN`, preferred, keeps verifying) or a
+   recorded bench measurement (`--verify-relay`). The gatekeeper enforces this
+   itself: until one exists it refuses every authentication, so this item cannot
+   be silently skipped. Still needs a human for the part software cannot see —
+   confirming the board fails *locked* with the Pi unpowered, and fitting the pull
+   resistor that makes the pre-boot window safe.
 2. A real handshake completed over the real UART, with its wall time recorded
    (2.3, 3.2), and the key file confirmed single-line (3.6).
 3. A cold-boot clock-skew measurement, and a decision on an RTC (2.5, 3.2).

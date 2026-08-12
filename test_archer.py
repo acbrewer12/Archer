@@ -1636,6 +1636,177 @@ class TestGatekeeperHandshake:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 34b. Gatekeeper — relay polarity verification
+#
+# The relay's GPIO-HIGH-means-unlocked mapping was an untested assumption, and
+# getting it backwards means the OBD2 port is live whenever the Pi is off — a
+# fail-OPEN security model that would never announce itself. These tests drive
+# the verification logic against a simulated relay board of each polarity.
+#
+# Note the mock wiring below: `import RPi.GPIO as GPIO` resolves through
+# getattr(RPi, 'GPIO'), so the fake must be attached to the RPi mock as an
+# attribute, not merely registered in sys.modules under 'RPi.GPIO'.
+# ═══════════════════════════════════════════════════════════════
+class TestGatekeeperRelayPolarity:
+    """Tests for pi/obd_gatekeeper.py relay polarity verification."""
+
+    RELAY_PIN = 17
+    SENSE_PIN = 22
+
+    @classmethod
+    def _fake_gpio(cls, board_active_high):
+        """A fake RPi.GPIO modelling a relay board plus a dry sense contact."""
+        g = MagicMock()
+        g.HIGH, g.LOW = 1, 0
+        g.OUT, g.IN, g.BCM, g.PUD_UP = 'out', 'in', 'bcm', 'pud'
+        state = {'pin': 0}
+
+        def _output(pin, level):
+            if pin == cls.RELAY_PIN:
+                state['pin'] = level
+
+        def _input(pin):
+            if pin == cls.SENSE_PIN:
+                # Relay energised == CAN passthrough closed == port UNLOCKED.
+                unlocked = ((state['pin'] == 1) if board_active_high
+                            else (state['pin'] == 0))
+                return 0 if unlocked else 1     # closed contact reads LOW
+            return 1
+
+        g.output.side_effect = _output
+        g.input.side_effect  = _input
+        return g
+
+    @pytest.fixture(autouse=True)
+    def _isolate_env(self, monkeypatch):
+        """Keep GATEKEEPER_* env out of the other gatekeeper test class.
+
+        The module reads these at import time and both classes re-import it, so
+        a leaked value would silently change what the sibling tests exercise.
+        monkeypatch restores them after every test.
+        """
+        self._mp = monkeypatch
+        yield
+        import sys
+        sys.modules.pop('pi.obd_gatekeeper', None)
+
+    def _gatekeeper(self, board_active_high=True, sense=True,
+                    polarity_file='/nonexistent/archer-test-no-such-file.json'):
+        import sys
+        g   = self._fake_gpio(board_active_high)
+        rpi = MagicMock()
+        rpi.GPIO = g
+        sys.modules['RPi']      = rpi
+        sys.modules['RPi.GPIO'] = g
+        _serial_mock = MagicMock()
+        _serial_mock.SerialException = IOError
+        sys.modules['serial'] = _serial_mock
+        self._mp.setenv('GATEKEEPER_POLARITY_FILE', polarity_file)
+        if sense:
+            self._mp.setenv('GATEKEEPER_RELAY_SENSE_PIN', str(self.SENSE_PIN))
+        else:
+            self._mp.delenv('GATEKEEPER_RELAY_SENSE_PIN', raising=False)
+        sys.modules.pop('pi.obd_gatekeeper', None)
+        import pi.obd_gatekeeper as gk
+        return gk
+
+    # ── the core mapping ──────────────────────────────────────────
+    def test_relay_level_inverts_with_polarity(self):
+        gk = self._gatekeeper()
+        # Active-high: unlock drives HIGH. Active-low: unlock drives LOW.
+        assert gk._relay_level(True,  True)  == gk.GPIO.HIGH
+        assert gk._relay_level(False, True)  == gk.GPIO.LOW
+        assert gk._relay_level(True,  False) == gk.GPIO.LOW
+        assert gk._relay_level(False, False) == gk.GPIO.HIGH
+
+    # ── empirical detection via the sense contact ─────────────────
+    def test_detects_active_high_board(self):
+        gk = self._gatekeeper(board_active_high=True)
+        assert gk.verify_relay_polarity() is True
+        assert gk._relay_active_high is True
+        assert gk._polarity_blocked is False
+
+    def test_detects_active_low_board(self):
+        """The fail-open case: an inverted board must be detected, not assumed."""
+        gk = self._gatekeeper(board_active_high=False)
+        assert gk.verify_relay_polarity() is True
+        assert gk._relay_active_high is False
+        assert gk._polarity_blocked is False
+        # And unlocking must now drive the opposite level.
+        assert gk._relay_level(True, gk._relay_active_high) == gk.GPIO.LOW
+
+    def test_welded_relay_blocks_authentication(self):
+        """A contact that never follows the drive must refuse, not guess."""
+        gk = self._gatekeeper(board_active_high=True)
+        gk.GPIO.input.side_effect = lambda pin: 0    # always reads closed
+        assert gk.verify_relay_polarity() is False
+        assert gk._polarity_blocked is True
+        assert gk.set_relay(True) is False
+
+    # ── unverified: run, hold locked, refuse ──────────────────────
+    def test_unverified_refuses_unlock_but_allows_lock(self):
+        gk = self._gatekeeper(sense=False)
+        assert gk.verify_relay_polarity() is False
+        assert gk._polarity_blocked is True
+        assert gk.set_relay(True)  is False     # unlock refused
+        assert gk.set_relay(False) is True      # locking always permitted
+
+    # ── attestation file validation ───────────────────────────────
+    def test_attestation_missing_file_is_none(self):
+        gk = self._gatekeeper(sense=False)
+        assert gk.load_relay_polarity() is None
+
+    def test_valid_attestation_unblocks(self, tmp_path):
+        p = tmp_path / "relay_polarity.json"
+        p.write_text(json.dumps({
+            "active_high": False,
+            "verified_by": "tester",
+            "verified_at": "2026-08-12T00:00:00+00:00",
+            "method":      "bench multimeter continuity",
+        }))
+        gk = self._gatekeeper(sense=False, polarity_file=str(p))
+        assert gk.verify_relay_polarity() is True
+        assert gk._relay_active_high is False
+        assert gk._polarity_blocked is False
+
+    def test_attestation_without_provenance_is_rejected(self, tmp_path):
+        """active_high alone is a guess someone wrote down — require a name."""
+        p = tmp_path / "relay_polarity.json"
+        p.write_text(json.dumps({"active_high": True}))
+        gk = self._gatekeeper(sense=False, polarity_file=str(p))
+        assert gk.load_relay_polarity() is None
+        assert gk.verify_relay_polarity() is False
+        assert gk._polarity_blocked is True
+
+    def test_attestation_malformed_json_is_rejected(self, tmp_path):
+        p = tmp_path / "relay_polarity.json"
+        p.write_text("{not valid json")
+        gk = self._gatekeeper(sense=False, polarity_file=str(p))
+        assert gk.load_relay_polarity() is None
+        assert gk._polarity_blocked is True
+
+    def test_attestation_non_bool_active_high_is_rejected(self, tmp_path):
+        p = tmp_path / "relay_polarity.json"
+        p.write_text(json.dumps({
+            "active_high": "true",           # string, not bool
+            "verified_by": "tester",
+            "verified_at": "2026-08-12T00:00:00+00:00",
+            "method":      "bench",
+        }))
+        gk = self._gatekeeper(sense=False, polarity_file=str(p))
+        assert gk.load_relay_polarity() is None
+
+    # ── runtime divergence ────────────────────────────────────────
+    def test_relay_failing_mid_session_is_caught(self):
+        """A relay that stops following the drive fails the next transition."""
+        gk = self._gatekeeper(board_active_high=True)
+        assert gk.verify_relay_polarity() is True
+        # Relay contacts weld shut in the locked position after verification.
+        gk.GPIO.input.side_effect = lambda pin: 1     # always reads open/locked
+        assert gk.set_relay(True) is False
+
+
+# ═══════════════════════════════════════════════════════════════
 # 31. OBD-II PID parser math
 # These mirror the inner functions defined in the obd polling thread.
 # Testing them by exercising the same formula the real code uses.
