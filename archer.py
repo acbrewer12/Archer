@@ -9158,27 +9158,20 @@ _master_code_enabled = True   # toggled from Tier 1 dashboard
 # head unit reboots and the code the owner memorised is gone. This is the
 # persistent credential the login screen uses instead.
 #
-# Stored at /etc/archer/owner.json. That directory is mode 1770 root:archer
-# with the sticky bit, so the archer user can create its own file there but
-# cannot delete or overwrite root-owned secrets like obd_auth.key.
-#
-# The PIN is never stored — only a scrypt hash with a per-install random salt.
-# scrypt is memory-hard, which matters here because a 6-digit PIN is only a
-# million candidates: a fast hash would be brute-forced instantly by anyone who
-# pulled the USB stick and read the file. hashlib.scrypt is stdlib, so this
-# costs no new dependency on an image where every package is hand-picked.
-OWNER_CRED_FILE = '/etc/archer/owner.json'
+# Storage and hashing live in pin.py, NOT here, because the console login that
+# runs on tty1 before X starts has to check the same PIN without importing
+# Flask and its multi-second dependency graph. Two copies of the hashing would
+# be a correctness hazard — change the scrypt cost in one and the other
+# silently stops matching.
+import pin as _pin
 
-# Deliberately conservative scrypt cost. n=2**14 with r=8,p=1 is ~16MB and a
-# few hundred ms on a weak head-unit CPU — slow enough to make offline
-# brute-force of a 6-digit PIN expensive, fast enough that unlocking the truck
-# does not feel broken.
-_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
+OWNER_CRED_FILE = _pin.CRED_FILE
 
-# Failed-attempt throttle, in memory. Deliberately not persisted: an attacker
-# with physical access could clear a persisted counter anyway, and losing the
-# count on reboot is the right trade for never locking the owner out of their
-# own truck permanently.
+# Failed-attempt throttle for the WEB login specifically, in memory. The
+# console login does its own throttling; they intentionally differ. Not
+# persisted: an attacker with physical access could clear a persisted counter
+# anyway, and losing the count on reboot is the right trade for never locking
+# the owner out of their own truck permanently.
 _login_fails = {'count': 0, 'until': 0.0}
 _LOGIN_MAX_FAILS = 5
 _LOGIN_LOCKOUT_SECS = 30
@@ -9186,66 +9179,22 @@ _LOGIN_LOCKOUT_SECS = 30
 
 def owner_is_configured():
     """True once a PIN has been set. Drives setup-vs-login routing."""
-    try:
-        with open(OWNER_CRED_FILE) as f:
-            d = _json_mac.load(f)
-        return bool(d.get('salt') and d.get('hash'))
-    except Exception:
-        # Unreadable/corrupt/missing all mean "not set up" — never raise here,
-        # this is called from request handling and must not 500 the login page.
-        return False
+    return _pin.is_configured()
 
 
-def _hash_pin(pin, salt_bytes):
-    return hashlib.scrypt(pin.encode('utf-8'), salt=salt_bytes,
-                          n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32).hex()
-
-
-def save_owner_pin(pin):
+def save_owner_pin(pin_value):
     """Write a new owner PIN. Returns (ok, error_message)."""
-    pin = (pin or '').strip()
-    if not pin.isdigit() or not (4 <= len(pin) <= 12):
-        return False, 'PIN must be 4-12 digits'
-    if len(set(pin)) == 1:
-        return False, 'PIN cannot be all the same digit'
-    salt = secrets.token_bytes(16)
-    payload = {
-        'salt':       salt.hex(),
-        'hash':       _hash_pin(pin, salt),
-        'created_at': int(time.time()),
-        'algo':       f'scrypt-{_SCRYPT_N}-{_SCRYPT_R}-{_SCRYPT_P}',
-    }
-    try:
-        os.makedirs(os.path.dirname(OWNER_CRED_FILE), exist_ok=True)
-        # Write via a temp file in the same directory then rename, so a power
-        # cut mid-write (routine on a truck — ignition off) can never leave a
-        # half-written credential that locks the owner out.
-        tmp = OWNER_CRED_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            _json_mac.dump(payload, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, OWNER_CRED_FILE)
-        return True, ''
-    except OSError as e:
-        return False, f'Could not save credential: {e}'
+    return _pin.save(pin_value)
 
 
-def verify_owner_pin(pin):
+def verify_owner_pin(pin_value):
     """Constant-time PIN check with a lockout. Returns (ok, error_message)."""
     now = time.time()
     if now < _login_fails['until']:
         return False, f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
-    try:
-        with open(OWNER_CRED_FILE) as f:
-            d = _json_mac.load(f)
-        salt = bytes.fromhex(d['salt'])
-        expected = d['hash']
-    except Exception:
+    if not _pin.is_configured():
         return False, 'No PIN is set up on this device'
-    candidate = _hash_pin((pin or '').strip(), salt)
-    if hmac.compare_digest(candidate, expected):
+    if _pin.verify(pin_value):
         _login_fails['count'] = 0
         _login_fails['until'] = 0.0
         return True, ''
@@ -10498,6 +10447,22 @@ def require_boot():
                 _signed_in = True
             except ValueError:
                 _signed_in = False
+        # The head unit's own kiosk browser is exempt once the console login
+        # has been cleared for this boot. Without this the driver enters the
+        # same PIN twice — once on the console before X starts, then again in
+        # Chromium — which is worse than either gate alone.
+        #
+        # Both halves matter. The marker is created by console-login.sh only
+        # after a correct PIN and lives in /run (tmpfs), so it is per-boot, not
+        # persistent. The loopback test keeps it local: a phone, the Roku, or
+        # anything else over the network is a different remote_addr and still
+        # meets /login. Nothing rewrites remote_addr here — there is no
+        # ProxyFix and no reverse proxy in front of this app — so it is the
+        # real peer address rather than a spoofable header.
+        if (not _signed_in
+                and _req.remote_addr in ('127.0.0.1', '::1')
+                and os.path.exists('/run/archer-console-unlock')):
+            _signed_in = True
         if not _signed_in:
             # First boot has no credential yet — send them to create one
             # rather than to a login screen nothing can satisfy.

@@ -495,7 +495,7 @@ chmod +x "$MOUNT/opt/archer/wifi-setup.sh"
 # System scripts the desktop surfaces: the optional disk installer and the
 # settings menu. Copied from the repo rather than heredoc'd so they stay
 # reviewable as normal files with their own history.
-for _s in install-to-disk.sh settings.sh; do
+for _s in install-to-disk.sh settings.sh console-login.sh; do
     if [ -f "$(dirname "$0")/$_s" ]; then
         cp "$(dirname "$0")/$_s" "$MOUNT/opt/archer/$_s"
         chmod +x "$MOUNT/opt/archer/$_s"
@@ -1155,6 +1155,19 @@ chmod +x "$MOUNT/opt/archer/kiosk.sh"
 cat > "$MOUNT/home/archer/.bash_profile" <<'BASHPROFILE'
 # tty1 = kiosk display (dashboard). tty2 = maintenance shell (Ctrl+Alt+F2).
 if [ "$(tty)" = "/dev/tty1" ] && [ -z "$DISPLAY" ]; then
+    # Ask for the PIN HERE, on the bare console, before any of the graphical
+    # stack starts. Chromium on this hardware renders through SwiftShader
+    # (simpledrm is mode-setting only — there is no GPU driver), so its first
+    # paint is many seconds away; a login drawn by the dashboard could never
+    # feel quick no matter how much boot time is trimmed ahead of it. This
+    # prompt is up as soon as the shell is, and X starts only once it passes.
+    #
+    # It exits 0 by itself when no PIN exists yet, so a first boot falls
+    # straight through to the graphical /setup wizard. It is skipped entirely
+    # if the file is missing: a truck that will not start because its login
+    # script failed to copy is a far worse outcome than an unlocked dash.
+    [ -x /opt/archer/console-login.sh ] && /opt/archer/console-login.sh
+
     # Don't exec — keep bash alive so if X exits we drop to a shell instead
     # of dying and triggering an infinite getty restart loop.
     #
