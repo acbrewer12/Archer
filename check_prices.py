@@ -108,8 +108,11 @@ _PRICE_PATTERNS = [
     r'\$([\d]{4,6})(?!\d)',           # $10999  (no comma)
 ]
 
-# Redirect path fragments that indicate a listing was removed
-_SOLD_REDIRECT_MARKERS = ['/search', '/results', '/inventory?', '/not-found', '/404', '/error']
+# Redirect path fragments that indicate a listing was removed. (Bare inventory-
+# root redirects are handled separately in _check_sold via an exact-match check —
+# a substring marker can't tell a search root from a real listing's own path,
+# since every listing path also contains "/inventory".)
+_SOLD_REDIRECT_MARKERS = ['/search', '/results', '/not-found', '/404', '/error']
 
 # Safety cap: never follow more than this many pagination pages for a single catalog URL
 MAX_CATALOG_PAGES = 20
@@ -310,9 +313,17 @@ def _check_sold(page, response, url: str) -> Optional[str]:
     try:
         origin = 'https://' + final_url.split('/')[2].rstrip('/')
         is_homepage = final_path in ('', origin)
+        # Bare inventory search root (e.g. /inventory or /inventory/) — where a
+        # sold listing's URL often redirects. Exact match, not substring: a real
+        # listing's own path (e.g. /inventory/used-2022-ford-f-150-.../) also
+        # contains "/inventory" as a substring, so a substring check would wrongly
+        # flag every live listing as sold.
+        is_inventory_root = final_path in (origin + '/inventory', origin + '/inventory/')
     except Exception:
         is_homepage = False
-    if is_homepage or any(m in final_path.lower() for m in _SOLD_REDIRECT_MARKERS):
+        is_inventory_root = False
+    if (is_homepage or is_inventory_root
+            or any(m in final_path.lower() for m in _SOLD_REDIRECT_MARKERS)):
         return f'SOLD/REMOVED (probably) — redirected to {final_url}'
 
     # Signal 3: sold-indicator phrases in rendered text
@@ -725,16 +736,22 @@ def _try_flaresolverr(url: str, browser) -> CheckResult:
             'url': url,
             'maxTimeout': 60000,
         }, timeout=75)
-        fs_resp.raise_for_status()
-        result = fs_resp.json()
+        # Read the body before raising on HTTP status — FlareSolverr returns a
+        # JSON error payload with a non-200 status when it fails to solve the
+        # challenge, and raise_for_status() would otherwise discard that message.
+        try:
+            result = fs_resp.json()
+        except ValueError:
+            fs_resp.raise_for_status()
+            raise
     except Exception as e:
         return CheckResult(price=None, sold=None,
                            debug=f'[flaresolverr] service call failed: {str(e)[:100]}',
                            engine='flaresolverr', blocked=False)
 
-    if result.get('status') != 'ok':
+    if fs_resp.status_code != 200 or result.get('status') != 'ok':
         return CheckResult(price=None, sold=None,
-                           debug=f'[flaresolverr] solver error: {result.get("message","?")[:100]}',
+                           debug=f'[flaresolverr] solver error (HTTP {fs_resp.status_code}): {result.get("message","?")[:100]}',
                            engine='flaresolverr', blocked=False)
 
     solution   = result['solution']

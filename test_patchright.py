@@ -9,7 +9,7 @@ past this specific site's Cloudflare protection.
 import re
 from patchright.sync_api import sync_playwright
 
-URL = 'https://www.jamesonealchryslerdodgejeep.com/inventory/used-2004-gmc-sierra-2500hd-slt-4wd-4d-crew-cab-1gthk23u64f251261/'
+URL = 'https://www.jamesonealchryslerdodgejeep.com/inventory/used-2022-ford-f-150-xl-4wd-4d-supercrew-1ftew1ep4nfa96736/'
 
 PRICE_PATTERNS = [
     r'\$([\d]{2,3},\d{3})\.\d{2}',

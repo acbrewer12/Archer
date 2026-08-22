@@ -10,7 +10,7 @@ import re
 import os
 import requests
 
-URL = 'https://www.jamesonealchryslerdodgejeep.com/inventory/used-2004-gmc-sierra-2500hd-slt-4wd-4d-crew-cab-1gthk23u64f251261/'
+URL = 'https://www.jamesonealchryslerdodgejeep.com/inventory/used-2022-ford-f-150-xl-4wd-4d-supercrew-1ftew1ep4nfa96736/'
 FLARESOLVERR_ENDPOINT = 'http://localhost:8191/v1'
 
 PRICE_PATTERNS = [
@@ -35,12 +35,20 @@ def main():
             'url': URL,
             'maxTimeout': 60000,
         }, timeout=70)
-        response.raise_for_status()
-        result = response.json()
 
-        if result.get('status') != 'ok':
-            print(f"RESULT: FlareSolverr itself reported an error — {result.get('message')}")
-            write_summary('FlareSolverr', False, f"FlareSolverr error: {result.get('message')}")
+        # Read the body before raising on HTTP status — FlareSolverr returns
+        # a JSON error payload (e.g. "Unable to evaluate the Cloudflare
+        # Turnstile challenge") with a non-200 status, and raise_for_status()
+        # would otherwise throw that message away.
+        try:
+            result = response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise
+
+        if response.status_code != 200 or result.get('status') != 'ok':
+            print(f"RESULT: FlareSolverr error (HTTP {response.status_code}) — {result.get('message')}")
+            write_summary('FlareSolverr', False, f"HTTP {response.status_code}: {result.get('message')}")
             return
 
         solution = result['solution']
