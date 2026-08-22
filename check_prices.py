@@ -725,16 +725,22 @@ def _try_flaresolverr(url: str, browser) -> CheckResult:
             'url': url,
             'maxTimeout': 60000,
         }, timeout=75)
-        fs_resp.raise_for_status()
-        result = fs_resp.json()
+        # Read the body before raising on HTTP status — FlareSolverr returns a
+        # JSON error payload with a non-200 status when it fails to solve the
+        # challenge, and raise_for_status() would otherwise discard that message.
+        try:
+            result = fs_resp.json()
+        except ValueError:
+            fs_resp.raise_for_status()
+            raise
     except Exception as e:
         return CheckResult(price=None, sold=None,
                            debug=f'[flaresolverr] service call failed: {str(e)[:100]}',
                            engine='flaresolverr', blocked=False)
 
-    if result.get('status') != 'ok':
+    if fs_resp.status_code != 200 or result.get('status') != 'ok':
         return CheckResult(price=None, sold=None,
-                           debug=f'[flaresolverr] solver error: {result.get("message","?")[:100]}',
+                           debug=f'[flaresolverr] solver error (HTTP {fs_resp.status_code}): {result.get("message","?")[:100]}',
                            engine='flaresolverr', blocked=False)
 
     solution   = result['solution']
