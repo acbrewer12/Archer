@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install patchright camoufox[geoip] nodriver gspread google-auth requests curl-cffi
+          pip install patchright camoufox[geoip] nodriver gspread google-auth requests curl-cffi trafilatura
           patchright install chromium
           python -m camoufox fetch
           # nodriver uses the system Chrome that's pre-installed on ubuntu-latest runners

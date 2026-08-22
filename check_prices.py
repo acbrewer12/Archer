@@ -80,6 +80,12 @@ try:
 except ImportError:
     _HAS_REQUESTS = False
 
+try:
+    import trafilatura as _trafilatura
+    _HAS_TRAFILATURA = True
+except ImportError:
+    _HAS_TRAFILATURA = False
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -161,6 +167,31 @@ def find_columns(sheet):
 
 
 # ── Shared page helpers (work with any Playwright-compatible engine) ───────────
+
+def _sold_check_text(html: str, fallback_text: str = '') -> str:
+    """Clean page content before the sold-phrase check runs, same motivation as
+    the exact-match redirect fix: raw HTML/rendered text can contain a sold
+    phrase in a place that has nothing to do with the actual listing — a
+    "recently sold" sidebar widget, nav boilerplate, a hidden element. Uses
+    trafilatura to strip nav/ads/scripts/sidebars down to the real page
+    content before matching. Independent of the redirect-based sold check —
+    this one catches a listing that stays on the same URL but now says SOLD
+    directly on the page.
+
+    Falls back to fallback_text (typically a rendered inner_text()) or the raw
+    HTML when trafilatura isn't installed or can't extract anything usable
+    from this page (e.g. content trafilatura's article heuristics don't
+    recognize) — same three-signal design as the rest of _check_sold, so a
+    failed extraction here just means this signal sits out, not a crash."""
+    if _HAS_TRAFILATURA:
+        try:
+            extracted = _trafilatura.extract(html, include_comments=False, include_tables=False)
+            if extracted:
+                return extracted.lower()
+        except Exception:
+            pass
+    return (fallback_text or html).lower()
+
 
 def _is_blocked(page) -> bool:
     """True when a bot-protection challenge page is showing instead of real content."""
@@ -326,14 +357,22 @@ def _check_sold(page, response, url: str) -> Optional[str]:
             or any(m in final_path.lower() for m in _SOLD_REDIRECT_MARKERS)):
         return f'SOLD/REMOVED (probably) — redirected to {final_url}'
 
-    # Signal 3: sold-indicator phrases in rendered text
+    # Signal 3: sold-indicator phrases, checked against trafilatura-cleaned
+    # content rather than raw rendered text — a "recently sold" sidebar
+    # widget or nav boilerplate shouldn't be able to trigger this.
     try:
-        text = page.locator('body').inner_text().lower()
+        inner_text = page.locator('body').inner_text()
+    except Exception:
+        inner_text = ''
+    try:
+        html = page.content()
+    except Exception:
+        html = ''
+    if inner_text or html:
+        text = _sold_check_text(html, fallback_text=inner_text)
         for phrase in SOLD_PHRASES:
             if phrase in text:
                 return f'SOLD/REMOVED — page says "{phrase}"'
-    except Exception:
-        pass
 
     return None
 
@@ -426,10 +465,11 @@ def _try_curl_cffi(url: str) -> CheckResult:
                 except (json.JSONDecodeError, ValueError, AttributeError):
                     continue
 
-            # Sold phrases in static HTML
-            html_lower = html.lower()
+            # Sold phrases — checked against trafilatura-cleaned content, not
+            # raw HTML, so boilerplate elsewhere on the page can't trigger this.
+            cleaned = _sold_check_text(html)
             for phrase in SOLD_PHRASES:
-                if phrase in html_lower:
+                if phrase in cleaned:
                     return CheckResult(price=None,
                                        sold=f'SOLD/REMOVED — page says "{phrase}"',
                                        debug='', engine='curl-cffi')
@@ -621,10 +661,11 @@ async def _nodriver_async(url: str) -> CheckResult:
             except (json.JSONDecodeError, ValueError, AttributeError):
                 continue
 
-        # Sold phrases
-        html_lower = html.lower()
+        # Sold phrases — checked against trafilatura-cleaned content, not
+        # raw HTML, so boilerplate elsewhere on the page can't trigger this.
+        cleaned = _sold_check_text(html)
         for phrase in SOLD_PHRASES:
-            if phrase in html_lower:
+            if phrase in cleaned:
                 return CheckResult(price=None,
                                    sold=f'SOLD/REMOVED — page says "{phrase}"',
                                    debug='', engine='nodriver')
@@ -860,10 +901,11 @@ def _try_scraperapi(url: str) -> CheckResult:
             except (json.JSONDecodeError, ValueError, AttributeError):
                 continue
 
-        # Sold phrases
-        html_lower = html.lower()
+        # Sold phrases — checked against trafilatura-cleaned content, not
+        # raw HTML, so boilerplate elsewhere on the page can't trigger this.
+        cleaned = _sold_check_text(html)
         for phrase in SOLD_PHRASES:
-            if phrase in html_lower:
+            if phrase in cleaned:
                 return CheckResult(price=None,
                                    sold=f'SOLD/REMOVED — page says "{phrase}"',
                                    debug='', engine='scraperapi')
@@ -933,10 +975,11 @@ def _try_zenrows(url: str) -> CheckResult:
             except (json.JSONDecodeError, ValueError, AttributeError):
                 continue
 
-        # Sold phrases
-        html_lower = html.lower()
+        # Sold phrases — checked against trafilatura-cleaned content, not
+        # raw HTML, so boilerplate elsewhere on the page can't trigger this.
+        cleaned = _sold_check_text(html)
         for phrase in SOLD_PHRASES:
-            if phrase in html_lower:
+            if phrase in cleaned:
                 return CheckResult(price=None,
                                    sold=f'SOLD/REMOVED — page says "{phrase}"',
                                    debug='', engine='zenrows')
