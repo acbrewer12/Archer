@@ -16,6 +16,37 @@ Both Caddy blocks proxy to the **same** archer.py process and port — there's o
 
 ## Setup steps, in order
 
+**0. Create a dedicated `archer` system user before anything else.**
+Running archer.py as your own login works, but `/etc/archer` holds the HSM
+key (`master.key`) and `archer.env` secrets — files that should only be
+readable by the process that needs them, not by every process running as
+you. archer-os (the in-truck image) already solved this with a dedicated
+`archer` user and a `root:archer`, mode `1770` directory; apply the same
+pattern here from the start instead of hitting the permission error later
+(archer.py's own env-file loader comment calls this out: a secrets file
+root drops in with the default `0600` is unreadable by a non-owning user
+even inside a `1770` directory — the *file* itself also needs `chown
+root:archer` + a group-readable mode):
+```
+sudo useradd -r -m -d /opt/archer -s /usr/sbin/nologin archer
+sudo mkdir -p /etc/archer
+sudo chown root:archer /etc/archer
+sudo chmod 1770 /etc/archer
+
+# Clone/copy the repo to /opt/archer, owned by the new user:
+sudo git clone <this-repo> /opt/archer   # or copy an existing checkout
+sudo chown -R archer:archer /opt/archer
+
+# archer.env holds secrets — created by root, group-readable by archer:
+sudo cp /opt/archer/archer.env.example /etc/archer/archer.env
+sudo nano /etc/archer/archer.env          # fill in real values
+sudo chown root:archer /etc/archer/archer.env
+sudo chmod 640 /etc/archer/archer.env
+```
+archer.py loads `/etc/archer/archer.env` itself on startup (no systemd
+`EnvironmentFile=` needed) — see the `_load_env_file()` comment near the
+top of archer.py for the exact permission failure mode this avoids.
+
 **1. Install Tailscale on the server:**
 ```
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -37,7 +68,7 @@ sudo cp Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-**4. Install and enable the systemd service** (`archer.service`, in this folder) so archer.py survives reboots and crashes automatically. Update `User=`/`WorkingDirectory=`/`ExecStart=` to match the real install location first:
+**4. Install and enable the systemd service** (`archer.service`, in this folder) so archer.py survives reboots and crashes automatically. It already assumes step 0's layout (`archer` user, `/opt/archer`) — only touch `User=`/`WorkingDirectory=`/`ExecStart=` if you installed somewhere else:
 ```
 sudo cp archer.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -50,6 +81,144 @@ journalctl -u archer -f
 **5. Set up Dynamic DNS** for the public fan page only (the private side doesn't need this — Tailscale handles its own addressing). Specific steps depend on the router/ISP; most home routers have built-in DDNS client support for common providers.
 
 **6. Everyone signs in at the same URL.** Once steps 1-4 are done, every family member visits the same `<machine>.<tailnet>.ts.net` address (past Caddy's basic-auth prompt) and archer.py routes each of them to their own tier's dashboard automatically based on their registered device/JWT — no separate per-tier URLs to hand out.
+
+## Discord bot setup (legacy — superseded by Slack below, code left in place)
+
+Ported to Slack per a stated preference for a more professional platform —
+see "Slack bot setup" below, which is now the live/intended integration.
+This section and the Discord code in archer.py (`discord_config`,
+`discord_alert`, `/discord/interactions`, etc.) are untouched and still
+work if you set `discord_config['enabled'] = True`; nothing here was
+deleted, just superseded. Originally, this replaced the earlier Mattermost
+self-hosting idea, which needed more RAM than this 8GB box has to spare.
+Archer's Discord integration is two independent pieces:
+
+- **Outbound alerts** (`discord_alert`/`discord_send` in archer.py) — plain
+  webhooks, no bot required. Create a webhook per channel (Channel Settings
+  -> Integrations -> Webhooks) and set the URLs with `set_discord_webhook()`
+  or directly in `discord_config`.
+- **Inbound slash commands + buttons** (`/discord/interactions` in
+  archer.py) — needs a real Discord app/bot, covered below.
+
+**a. Create the app:** [discord.com/developers/applications](https://discord.com/developers/applications)
+-> New Application. Under **General Information**, copy the **Public Key**
+and **Application ID**. Under **Bot**, create a bot and copy its **Token**
+(only needed for command registration, not at runtime — see below).
+
+**b. Invite the bot to your server:** OAuth2 -> URL Generator -> scopes
+`bot` + `applications.commands` -> minimal permissions (Send Messages,
+Use Application Commands) -> open the generated URL and add it to your
+server. Copy the **alerts channel's ID** (right-click it -> Copy Channel
+ID; enable Developer Mode in Discord settings first) and **your own user
+ID** the same way.
+
+**c. Fill in `/etc/archer/archer.env`** (from step 0) with `DISCORD_BOT_TOKEN`,
+`DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID`, `DISCORD_OWNER_ID`,
+`DISCORD_ALERTS_CHANNEL_ID`, and set `discord_config['enabled'] = True`
+(or wire a route/PIN command to flip it — it defaults off).
+
+**d. Register the slash commands** (one-time, or whenever the command list
+in `discord_register_commands.py` changes):
+```
+DISCORD_BOT_TOKEN=<token> DISCORD_APPLICATION_ID=<app-id> python3 discord_register_commands.py
+```
+
+**e. Set the Interactions Endpoint URL** in the Discord app's General
+Information page to `https://<your-public-domain.com>/discord/interactions`
+— the **public** Caddy block, not the Tailscale one, since Discord's
+servers need to reach it from the open internet. Discord sends a signed
+PING to verify the endpoint the moment you save this field, so archer.py
+must already be running with `DISCORD_PUBLIC_KEY` set before you save it,
+or Discord will reject the URL.
+
+**f. Restart the service** so the new env vars load:
+```
+sudo systemctl restart archer
+```
+
+**Not yet verified against a live bot** — this was built and reviewed
+against Discord's documented interaction contract, but never round-tripped
+against an actual Discord server (no network path to Discord's API from
+the environment this was built in). Before relying on it: register the
+commands, save the Interactions Endpoint URL, and confirm `/status` and a
+crash-alert button both actually work end-to-end.
+
+## Slack bot setup (slash commands, alert buttons, digests, tiered channels)
+
+The live integration — same feature set as the Discord build above, ported
+to Slack's actual mechanisms (HMAC-SHA256 signing instead of Ed25519,
+Block Kit instead of embeds, `response_url` instead of interaction-token
+webhook edits), plus a real structural addition Discord's build never had:
+**content is routed to one of three channels by Archer's existing tier
+system**, not broadcast to one flat channel.
+
+**Why three channels, and why stop at three:** Tier 1 (Owner) gets
+everything — every alert, full `/vstatus` and `/digest` output. Tier 2
+(Passenger) gets a real subset: alerts and command output relevant to
+someone riding along (parking status, request-system activity, safety
+alerts), not raw engine diagnostics. Tier 3 (Family) is the most
+restricted, matching the Family web dashboard's actual read-only,
+safety-status-only behavior (PRODUCT.md) — no raw numbers at all, just
+whether things are normal. Valet and Public/Fan are deliberately excluded:
+Valet has no ongoing user who'd plausibly be in the workspace, and Fan is
+explicitly no-login by design. The exact routing table lives in archer.py
+as `_SLACK_ALERT_TIERS` (which alert types reach which tiers) and
+`_slack_vstatus_message()`/`_slack_digest_message()` (what `/vstatus` and
+`/digest` actually say per tier) — read those before changing what's
+"passenger-relevant" vs. "owner-only," since that judgment call is spelled
+out there, not hidden in this doc.
+
+**a. Create the Slack app:** [api.slack.com/apps](https://api.slack.com/apps)
+-> Create New App -> From scratch. Under **Basic Information**, copy the
+**Signing Secret**. Under **OAuth & Permissions**, add the `chat:write`
+bot scope, install the app to your workspace, and copy the **Bot User
+OAuth Token** (starts with `xoxb-`).
+
+**b. Create three channels** (e.g. `#archer-owner`, `#archer-passenger`,
+`#archer-family`) and invite the bot to each (`/invite @Archer` in each
+channel). Copy each channel's ID (View channel details -> bottom of the
+panel) and each authorized person's Slack member ID (their profile ->
+More -> Copy member ID).
+
+**c. Configure Slash Commands:** App dashboard -> **Slash Commands** ->
+Create New Command, once each for `/vstatus`, `/ask`, `/parking`, `/digest`
+— Slack rejects `/status` as a reserved command name, hence `vstatus`
+("vehicle status") — Request URL for all four is
+`https://<your-public-domain.com>/slack/interactions` (the **public**
+Caddy block — Slack's servers need to reach it from the open internet,
+same reasoning as Discord's Interactions Endpoint above).
+
+**d. Configure Interactivity:** App dashboard -> **Interactivity &
+Shortcuts** -> turn it on, same Request URL as step c
+(`/slack/interactions` — archer.py tells slash-command and button-click
+payloads apart by their shape, so one URL covers both; no separate
+registration script either, unlike Discord — Slack commands are configured
+entirely in this dashboard, not via an API call).
+
+**e. Fill in `/etc/archer/archer.env`** (from step 0) with
+`SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_OWNER`,
+`SLACK_CHANNEL_PASSENGER`, `SLACK_CHANNEL_FAMILY`,
+`SLACK_OWNER_USER_IDS`, `SLACK_PASSENGER_USER_IDS`,
+`SLACK_FAMILY_USER_IDS` (all comma-separated if more than one person per
+tier), and set `slack_config['enabled'] = True`. No new pip dependency —
+unlike Discord's `pynacl` requirement, Slack's HMAC-SHA256 scheme is
+stdlib-only (`hmac`/`hashlib`).
+
+**f. Restart the service:**
+```
+sudo systemctl restart archer
+```
+
+**Not yet verified against a live workspace** — same caveat as the
+Discord build: built and tested against Slack's documented request/
+response contract (30 passing tests, including real HMAC-SHA256 signature
+verification and tier-routing correctness), but never round-tripped
+against an actual Slack app, since this environment has no network path to
+Slack's API either. Before relying on it: save the Request URL in both the
+Slash Commands and Interactivity pages (Slack validates it on save, same
+as Discord), then confirm `/vstatus` returns different content to a Tier 1
+vs. Tier 3 user, and that a crash alert's buttons actually work, end to
+end, in a real workspace.
 
 ## Real open questions — resolved against the actual source
 

@@ -1539,7 +1539,7 @@ def update_awareness():
         if coolant > awareness['peak_coolant_temp']: awareness['peak_coolant_temp'] = coolant
 
         if oil > 215:   awareness['oil_trend'] = 'high'
-        elif oil > 205: awareness['oil_trend'] = 'warm'
+        elif oil < 190: awareness['oil_trend'] = 'low'
         else:           awareness['oil_trend'] = 'normal'
 
         score = 100
@@ -1972,11 +1972,16 @@ Truck data right now:
                 print(f"[AI] Gemini failed: {e}")
 
     # Try 4 — Local Ollama (Pi only; offline-emergency fallback)
+    # Measured on VM matching target hardware (4 cores/8GB, llama3.2:3b):
+    # 7-18s per response (cold start ~18s, warm ~6.9-8s) — confirms Groq/
+    # Cerebras/Gemini as primaries above was the right call, not a guess.
+    # Timeout is 25s (not ~18s) so a cold start isn't killed before it can
+    # answer — see TestLocalOllamaColdStart.
     if not response and _IS_PI:
         try:
             result = subprocess.run(
                 ['ollama', 'run', 'llama3.2', full_prompt],
-                capture_output=True, timeout=15,
+                capture_output=True, timeout=25,
                 encoding='utf-8', errors='replace'
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -3242,6 +3247,7 @@ def activate_parking_mode(location=''):
         title='PARKING MODE ON',
         channel='alerts',
         color=0x0055FF,
+        components=_DISCORD_PARKING_BUTTONS,
     )
     return msg
 
@@ -4672,6 +4678,7 @@ def check_crash():
             title='CRASH ALERT',
             channel='alerts',
             color=0xFF0000,
+            components=_DISCORD_CRASH_BUTTONS,
         )
 
 # ══════════════════════════════════════════
@@ -5322,6 +5329,48 @@ discord_config = {
     'last_sent':        {},     # alert_type -> timestamp
 }
 
+# ── DISCORD BOT (slash commands, alert buttons, digests) ──
+# Webhooks (above) are outbound-only and can't carry interactive buttons —
+# Discord only routes a component click back to the app for messages the
+# app itself sent, not arbitrary incoming webhooks. So button-bearing
+# alerts go out via the bot token instead; plain alerts keep using the
+# webhook path untouched.
+DISCORD_BOT_TOKEN         = os.environ.get('DISCORD_BOT_TOKEN', '')
+DISCORD_PUBLIC_KEY        = os.environ.get('DISCORD_PUBLIC_KEY', '')
+DISCORD_APPLICATION_ID    = os.environ.get('DISCORD_APPLICATION_ID', '')
+DISCORD_OWNER_ID          = os.environ.get('DISCORD_OWNER_ID', '')            # Discord user ID allowed to run commands/buttons
+DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')   # channel ID for button-bearing alerts
+DISCORD_DIGEST_HOUR       = int(os.environ.get('DISCORD_DIGEST_HOUR', '20'))  # 24h local hour for the daily digest
+
+_DISCORD_CRASH_BUTTONS = [{
+    'type': 1,  # action row
+    'components': [
+        {'type': 2, 'style': 3, 'label': "I'm OK",   'custom_id': 'crash_im_ok'},
+        {'type': 2, 'style': 4, 'label': 'Not OK',   'custom_id': 'crash_not_ok'},
+    ],
+}]
+_DISCORD_PARKING_BUTTONS = [{
+    'type': 1,
+    'components': [
+        {'type': 2, 'style': 4, 'label': 'Disarm', 'custom_id': 'parking_disarm'},
+    ],
+}]
+
+def _discord_verify_signature(signature, timestamp, body):
+    """Verify an inbound Discord interaction is genuinely from Discord
+    (Ed25519, per Discord's interactions security requirement)."""
+    if not DISCORD_PUBLIC_KEY or not signature or not timestamp:
+        return False
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+        VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY)).verify(
+            f'{timestamp}{body}'.encode(), bytes.fromhex(signature)
+        )
+        return True
+    except (BadSignatureError, ValueError, ImportError):
+        return False
+
 def discord_send(webhook_url, message, title='', color=0xCC0000):
     """Send a message to a Discord webhook."""
     if not webhook_url or not discord_config['enabled']:
@@ -5349,8 +5398,40 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
         print(f'[DISCORD] Failed: {str(e)[:60]}')
         return False
 
-def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000):
-    """Send alert with cooldown to prevent spam."""
+def discord_send_bot_message(channel_id, message, title='', color=0xCC0000, components=None):
+    """Send a message via the bot token — required for interactive buttons
+    (see the note above DISCORD_BOT_TOKEN for why webhooks can't do this)."""
+    if not DISCORD_BOT_TOKEN or not channel_id or not discord_config['enabled']:
+        return False
+    try:
+        payload = {
+            'embeds': [{
+                'title':       title or 'ARCHER',
+                'description': message,
+                'color':       color,
+                'footer':      {'text': f'{get_vehicle_name()} — {datetime.now().strftime("%I:%M %p")}'},
+            }]
+        }
+        if components:
+            payload['components'] = components
+        data = json.dumps(payload).encode()
+        req  = urllib.request.Request(
+            f'https://discord.com/api/v10/channels/{channel_id}/messages',
+            data    = data,
+            headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json'},
+            method  = 'POST'
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status in (200, 201)
+    except Exception as e:
+        print(f'[DISCORD] Bot message failed: {str(e)[:60]}')
+        return False
+
+def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000, components=None):
+    """Send alert with cooldown to prevent spam. Pass components= to attach
+    buttons — this routes through the bot token (see discord_send_bot_message)
+    instead of the plain webhook path, and needs DISCORD_BOT_TOKEN and
+    DISCORD_ALERTS_CHANNEL_ID set."""
     now = time.time()
     last = discord_config['last_sent'].get(alert_type, 0)
     if now - last < discord_config['cooldown_secs']:
@@ -5365,7 +5446,14 @@ def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC000
     except Exception as _e:
         print(f'[FCM] Alert dispatch failed: {str(_e)[:60]}')
 
+    slack_route_alert(alert_type, message, title, color)
+
     if not discord_config['enabled']:
+        return
+
+    if components and DISCORD_BOT_TOKEN and DISCORD_ALERTS_CHANNEL_ID:
+        discord_send_bot_message(DISCORD_ALERTS_CHANNEL_ID, message, title, color, components)
+        print(f'[DISCORD] Sent {alert_type} (with buttons) to alerts channel')
         return
 
     webhook = discord_config.get(f'webhook_{channel}') or discord_config['webhook_alerts']
@@ -5460,6 +5548,471 @@ def set_discord_webhook(channel, url):
         save_state()
         return f'Discord {channel} webhook set.'
     return f'Channels: alerts vitals radar build'
+
+def _build_discord_digest():
+    session_mins = round((time.time() - awareness['drive_session_start']) / 60)
+    return (
+        f'**Session** {session_mins} min | **Peak RPM** {awareness["peak_rpm"]} | '
+        f'**Peak boost** {awareness["peak_boost"]} PSI | **Peak oil** {awareness["peak_oil_temp"]}F\n'
+        f'**Drive quality** {awareness["drive_quality"]}/100\n'
+        f'**Best 0-60** {personal_bests["best_0_60"]}s | **Launches** {personal_bests["launch_count"]}\n'
+        f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+    )
+
+def discord_digest_monitor():
+    """Background thread — sends one daily digest at DISCORD_DIGEST_HOUR
+    local time. /digest sends the same content on demand."""
+    sent_on = None
+    while True:
+        now = datetime.now()
+        if discord_config['enabled'] and now.hour == DISCORD_DIGEST_HOUR and sent_on != now.date():
+            webhook = discord_config['webhook_vitals'] or discord_config['webhook_alerts']
+            discord_send(webhook, _build_discord_digest(), 'DAILY DIGEST', 0x8855FF)
+            sent_on = now.date()
+        time.sleep(60)
+
+# ── DISCORD SLASH COMMANDS / BUTTONS (HTTP interactions endpoint) ──
+# Discord POSTs interaction payloads here instead of Archer holding an
+# always-on gateway connection — simpler and lighter on an 8GB box, and
+# it's just another Flask route rather than a second long-running process.
+def _discord_reply(content, ephemeral=False):
+    data = {'content': content}
+    if ephemeral:
+        data['flags'] = 64  # EPHEMERAL
+    return jsonify({'type': 4, 'data': data})
+
+def _discord_deferred_ask(interaction, question):
+    """Runs ask_archer() off the request thread and PATCHes the deferred
+    reply in — ask_archer can fall through to local Ollama (measured 7-18s,
+    see archer.py:1974), which blows Discord's 3s interaction window."""
+    answer = ask_archer(question)
+    try:
+        data = json.dumps({'content': answer}).encode()
+        req = urllib.request.Request(
+            f'https://discord.com/api/v10/webhooks/{DISCORD_APPLICATION_ID}/{interaction["token"]}/messages/@original',
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='PATCH',
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        print(f'[DISCORD] Deferred /ask edit failed: {str(e)[:60]}')
+
+def _discord_handle_command(interaction, authorized):
+    if not authorized:
+        return _discord_reply('Not authorized.', ephemeral=True)
+
+    name = interaction.get('data', {}).get('name', '')
+    opts = {o['name']: o.get('value') for o in interaction.get('data', {}).get('options', [])}
+
+    if name == 'status':
+        msg = (
+            f'**RPM** {truck_state["rpm"]} | **Oil** {truck_state["oil_temp"]}F | '
+            f'**Coolant** {truck_state["coolant_temp"]}F | **Boost** {truck_state["boost"]} PSI | '
+            f'**Battery** {truck_state["battery_main"]}V | **Ethanol** {truck_state["ethanol"]}%\n'
+            f'**Score** {awareness["drive_quality"]}/100 | '
+            f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+        return _discord_reply(msg)
+
+    if name == 'ask':
+        question = (opts.get('question') or '').strip()
+        if not question:
+            return _discord_reply('Ask what?', ephemeral=True)
+        threading.Thread(target=_discord_deferred_ask, args=(interaction, question), daemon=True).start()
+        return jsonify({'type': 5})  # DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+
+    if name == 'parking':
+        action = opts.get('action', '')
+        if action == 'arm':
+            msg = activate_parking_mode()
+        elif action == 'disarm':
+            msg = deactivate_parking_mode()
+        else:
+            msg = 'Usage: /parking arm|disarm'
+        return _discord_reply(msg)
+
+    if name == 'digest':
+        return _discord_reply(_build_discord_digest())
+
+    return _discord_reply(f'Unknown command: {name}', ephemeral=True)
+
+def _discord_handle_component(interaction, authorized):
+    if not authorized:
+        return _discord_reply('Not authorized.', ephemeral=True)
+
+    custom_id = interaction.get('data', {}).get('custom_id', '')
+
+    if custom_id == 'crash_im_ok':
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'confirmed_ok'
+        return _discord_reply('Good to hear. Logged.')
+
+    if custom_id == 'crash_not_ok':
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'needs_attention'
+        return _discord_reply("Logged as needs attention. Archer can't place calls — call for help directly if needed.")
+
+    if custom_id == 'parking_disarm':
+        return _discord_reply(deactivate_parking_mode())
+
+    return _discord_reply('Unknown action.', ephemeral=True)
+
+@display_app.route('/discord/interactions', methods=['POST'])
+def discord_interactions():
+    signature = request.headers.get('X-Signature-Ed25519', '')
+    timestamp = request.headers.get('X-Signature-Timestamp', '')
+    body      = request.get_data(as_text=True)
+
+    if not _discord_verify_signature(signature, timestamp, body):
+        return ('invalid request signature', 401)
+
+    interaction = request.get_json(silent=True) or {}
+    itype = interaction.get('type')
+
+    if itype == 1:  # PING — Discord's endpoint-verification handshake
+        return jsonify({'type': 1})
+
+    if not discord_config['enabled']:
+        return _discord_reply('Discord integration is disabled.', ephemeral=True)
+
+    member_or_user = interaction.get('member', {}).get('user', {}) or interaction.get('user', {})
+    user_id = member_or_user.get('id', '')
+    authorized = bool(DISCORD_OWNER_ID) and user_id == DISCORD_OWNER_ID
+
+    if itype == 2:  # APPLICATION_COMMAND
+        return _discord_handle_command(interaction, authorized)
+    if itype == 3:  # MESSAGE_COMPONENT
+        return _discord_handle_component(interaction, authorized)
+
+    return _discord_reply('Unsupported interaction.', ephemeral=True)
+
+# ══════════════════════════════════════════
+# SLACK BOT — ported from Discord above, plus tiered channel routing
+# ══════════════════════════════════════════
+# Same feature set as the Discord integration (slash commands, alert
+# buttons, digests), on Slack's actual request/response contract — not a
+# renamed copy of the Discord code, since the mechanisms genuinely differ
+# (HMAC-SHA256 signing vs Ed25519, Block Kit vs embeds, response_url vs
+# interaction-token webhook edits, form-encoded bodies vs raw JSON). The
+# Discord code above is untouched and still works if re-enabled — this is
+# additive, wired in as the new live path via slack_route_alert() below.
+slack_config = {'enabled': False}
+
+SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET', '')
+SLACK_BOT_TOKEN       = os.environ.get('SLACK_BOT_TOKEN', '')
+
+# Tier -> Slack channel ID. Tiers 1-3 only, by design — Valet has no
+# ongoing user who'd plausibly be in a Slack workspace, and Public/Fan is
+# explicitly no-login (see PRODUCT.md).
+SLACK_TIER_CHANNELS = {
+    1: os.environ.get('SLACK_CHANNEL_OWNER', ''),
+    2: os.environ.get('SLACK_CHANNEL_PASSENGER', ''),
+    3: os.environ.get('SLACK_CHANNEL_FAMILY', ''),
+}
+
+# Slack user ID -> tier. Slack has no equivalent of the web dashboard's
+# MAC-whitelist/JWT tier system, so this explicit, auditable mapping is the
+# source of truth for who's who in Slack specifically.
+def _slack_user_ids(env_var):
+    return {u.strip() for u in os.environ.get(env_var, '').split(',') if u.strip()}
+
+SLACK_OWNER_IDS     = _slack_user_ids('SLACK_OWNER_USER_IDS')
+SLACK_PASSENGER_IDS = _slack_user_ids('SLACK_PASSENGER_USER_IDS')
+SLACK_FAMILY_IDS    = _slack_user_ids('SLACK_FAMILY_USER_IDS')
+
+def _slack_user_tier(user_id):
+    if user_id in SLACK_OWNER_IDS:     return 1
+    if user_id in SLACK_PASSENGER_IDS: return 2
+    if user_id in SLACK_FAMILY_IDS:    return 3
+    return None
+
+def _slack_verify_signature(signature, timestamp, body):
+    """Verify an inbound Slack request — HMAC-SHA256 over 'v0:{ts}:{body}'
+    with the Signing Secret, per Slack's documented verification method
+    (api.slack.com/authentication/verifying-requests-from-slack). Also
+    rejects timestamps more than 5 minutes old, per the same doc's replay
+    guidance — not just the raw signature check."""
+    if not SLACK_SIGNING_SECRET or not signature or not timestamp:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > 60 * 5:
+        return False
+    basestring = f'v0:{timestamp}:{body}'.encode()
+    computed = 'v0=' + hmac.new(SLACK_SIGNING_SECRET.encode(), basestring, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, signature)
+
+def slack_post_message(channel, text, blocks=None):
+    """Send a message via chat.postMessage."""
+    if not SLACK_BOT_TOKEN or not channel or not slack_config['enabled']:
+        return False
+    try:
+        payload = {'channel': channel, 'text': text}
+        if blocks:
+            payload['blocks'] = blocks
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            'https://slack.com/api/chat.postMessage',
+            data=data,
+            headers={'Authorization': f'Bearer {SLACK_BOT_TOKEN}', 'Content-Type': 'application/json; charset=utf-8'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            result = json.loads(r.read())
+            if not result.get('ok'):
+                print(f'[SLACK] API error: {result.get("error")}')
+            return bool(result.get('ok'))
+    except Exception as e:
+        print(f'[SLACK] Send failed: {str(e)[:60]}')
+        return False
+
+# ── Tiered alert routing ──
+# Which tiers' channels a given alert_type reaches. This is new policy, not
+# derived from _filter_display_data_for_tier — that function only strips a
+# fixed set of location/surveillance fields from a dashboard dict at
+# tier>=3; it has no concept of "which alert types matter to which
+# audience," which is what this table decides. _filter_display_data_for_tier
+# IS reused, correctly, wherever this code touches display_data-shaped
+# fields (it isn't needed here since alerts are plain strings, not dicts).
+_SLACK_ALERT_TIERS = {
+    'oil_high':         (1,),
+    'bat_low':          (1,),
+    'battery_aux_low':  (1,),
+    'boost_high':       (1,),
+    'radar':            (1,),
+    'valet_rpm':        (1,),
+    'heat_soak':        (1,),
+    'trailer_sway':     (1,),
+    'new_record':       (1, 2),
+    'parking_armed':    (1, 2),
+    'parking_disarmed': (1, 2),
+    'request':          (1, 2),   # add_tier_notification — passenger request-system activity
+    'crash':            (1, 2, 3),
+    'tornado':          (1, 2, 3),
+    'storm':            (1, 2, 3),
+}
+_SLACK_ALERT_TIER_PREFIXES = {
+    # geofence alert_types are generated per-geofence-name (geofence_enter_<name>)
+    'geofence_enter_': (1,),
+    'geofence_exit_':  (1,),
+}
+
+def _slack_alert_tiers(alert_type):
+    if alert_type in _SLACK_ALERT_TIERS:
+        return _SLACK_ALERT_TIERS[alert_type]
+    for prefix, tiers in _SLACK_ALERT_TIER_PREFIXES.items():
+        if alert_type.startswith(prefix):
+            return tiers
+    return (1,)  # unrecognized alert types default to owner-only, not everyone
+
+_SLACK_CRASH_BUTTONS = [{
+    'type': 'actions',
+    'elements': [
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': "I'm OK"}, 'style': 'primary', 'action_id': 'crash_im_ok',  'value': 'crash_im_ok'},
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': 'Not OK'}, 'style': 'danger',  'action_id': 'crash_not_ok', 'value': 'crash_not_ok'},
+    ],
+}]
+_SLACK_PARKING_BUTTONS = [{
+    'type': 'actions',
+    'elements': [
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': 'Disarm'}, 'style': 'danger', 'action_id': 'parking_disarm', 'value': 'parking_disarm'},
+    ],
+}]
+_SLACK_ALERT_BUTTONS = {'crash': _SLACK_CRASH_BUTTONS, 'parking_armed': _SLACK_PARKING_BUTTONS}
+# Which tiers get the buttons, not just the alert text — e.g. parking
+# disarm is owner-only (mirrors parking_activate_route/deactivate_parking_mode's
+# existing tier>1 => 403), so only tier 1 gets that button at all; a
+# passenger clicking a button they were never shown isn't something to
+# design around, but not handing it to them in the first place is cleaner.
+_SLACK_ALERT_BUTTON_TIERS = {'crash': (1, 2), 'parking_armed': (1,)}
+
+def slack_route_alert(alert_type, message, title='', color=0xCC0000):
+    if not slack_config['enabled']:
+        return
+    buttons      = _SLACK_ALERT_BUTTONS.get(alert_type)
+    button_tiers = _SLACK_ALERT_BUTTON_TIERS.get(alert_type, ())
+    for tier in _slack_alert_tiers(alert_type):
+        channel = SLACK_TIER_CHANNELS.get(tier)
+        if not channel:
+            continue
+        blocks = [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': f'*{title or "ARCHER"}*\n{message}'}}]
+        if buttons and tier in button_tiers:
+            blocks = blocks + buttons
+        slack_post_message(channel, message, blocks)
+
+# ── Tiered command/digest content ──
+# Command availability per tier — max tier number allowed to invoke (lower
+# tier number = more access). 'parking' at 1 mirrors the existing Owner-only
+# check on parking_activate_route/parking_deactivate_route; calling
+# activate_parking_mode()/deactivate_parking_mode() directly here bypasses
+# that route's own get_request_tier() check, so it has to be re-enforced here.
+_SLACK_COMMAND_MAX_TIER = {'vstatus': 3, 'digest': 3, 'ask': 2, 'parking': 1}
+
+def _slack_vstatus_message(tier):
+    if tier == 1:
+        return (
+            f'*RPM* {truck_state["rpm"]} | *Oil* {truck_state["oil_temp"]}F | '
+            f'*Coolant* {truck_state["coolant_temp"]}F | *Boost* {truck_state["boost"]} PSI | '
+            f'*Battery* {truck_state["battery_main"]}V | *Ethanol* {truck_state["ethanol"]}%\n'
+            f'*Score* {awareness["drive_quality"]}/100 | '
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    if tier == 2:
+        return (
+            f'*Speed* {truck_state["speed"]} mph | '
+            f'*Music* {music_state["current_song"] if music_state["playing"] else "off"}\n'
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    # Tier 3 (Family) — safety-status only, no raw diagnostics. Matches the
+    # Family web dashboard's actual read-only behavior (PRODUCT.md), not
+    # just "slightly less than tier 2."
+    warnings = awareness['warnings_active']
+    status = 'All systems normal.' if not warnings else f'Active warnings: {", ".join(warnings)}.'
+    return f'{status}\n*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+
+def _slack_digest_message(tier):
+    if tier == 1:
+        return _build_discord_digest()  # identical "everything" content — reused, not re-implemented
+    if tier == 2:
+        return (
+            f'*Drive quality* {awareness["drive_quality"]}/100\n'
+            f'*Best 0-60* {personal_bests["best_0_60"]}s | *Launches* {personal_bests["launch_count"]}\n'
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    warnings = awareness['warnings_active']
+    status = 'No issues today.' if not warnings else f'Flagged: {", ".join(warnings)}.'
+    return f'{status}\n*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+
+def slack_digest_monitor():
+    """Background thread — sends one daily digest per tier channel at
+    DISCORD_DIGEST_HOUR (shared schedule with the Discord digest)."""
+    sent_on = None
+    while True:
+        now = datetime.now()
+        if slack_config['enabled'] and now.hour == DISCORD_DIGEST_HOUR and sent_on != now.date():
+            for tier, channel in SLACK_TIER_CHANNELS.items():
+                if channel:
+                    slack_post_message(channel, _slack_digest_message(tier))
+            sent_on = now.date()
+        time.sleep(60)
+
+# ── Slash commands / block actions (one shared HTTP endpoint) ──
+def _slack_reply_json(text, blocks=None, ephemeral=True):
+    data = {'response_type': 'ephemeral' if ephemeral else 'in_channel', 'text': text}
+    if blocks:
+        data['blocks'] = blocks
+    return jsonify(data)
+
+def _slack_deferred_ask(response_url, question):
+    """Runs ask_archer() off the request thread and posts to response_url —
+    same reason as Discord's deferred /ask: ask_archer can fall through to
+    local Ollama (measured 7-18s, see archer.py:1974), which blows past
+    Slack's own short initial-response window."""
+    answer = ask_archer(question)
+    try:
+        data = json.dumps({'response_type': 'ephemeral', 'text': answer, 'replace_original': True}).encode()
+        req = urllib.request.Request(response_url, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        print(f'[SLACK] Deferred /ask reply failed: {str(e)[:60]}')
+
+def _slack_handle_command(form):
+    user_id = form.get('user_id', '')
+    tier = _slack_user_tier(user_id)
+    if tier is None:
+        return _slack_reply_json('Not authorized.')
+
+    command  = form.get('command', '').lstrip('/')
+    max_tier = _SLACK_COMMAND_MAX_TIER.get(command)
+    if max_tier is None:
+        return _slack_reply_json(f'Unknown command: {command}')
+    if tier > max_tier:
+        return _slack_reply_json('Not authorized for your tier.')
+
+    if command == 'vstatus':
+        return _slack_reply_json(_slack_vstatus_message(tier))
+
+    if command == 'digest':
+        return _slack_reply_json(_slack_digest_message(tier))
+
+    if command == 'ask':
+        question = (form.get('text') or '').strip()
+        if not question:
+            return _slack_reply_json('Ask what?')
+        threading.Thread(target=_slack_deferred_ask, args=(form.get('response_url', ''), question), daemon=True).start()
+        return _slack_reply_json('Thinking...')
+
+    if command == 'parking':
+        action = (form.get('text') or '').strip().lower()
+        if action == 'arm':
+            msg = activate_parking_mode()
+        elif action == 'disarm':
+            msg = deactivate_parking_mode()
+        else:
+            msg = 'Usage: /parking arm|disarm'
+        return _slack_reply_json(msg)
+
+    return _slack_reply_json(f'Unknown command: {command}')
+
+def _slack_handle_block_action(payload):
+    user_id = (payload.get('user') or {}).get('id', '')
+    tier = _slack_user_tier(user_id)
+    if tier is None:
+        return _slack_reply_json('Not authorized.')
+
+    actions   = payload.get('actions') or []
+    action_id = actions[0].get('action_id', '') if actions else ''
+
+    if action_id == 'crash_im_ok':
+        if tier > 2:
+            return _slack_reply_json('Not authorized for your tier.')
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'confirmed_ok'
+        return _slack_reply_json('Good to hear. Logged.')
+
+    if action_id == 'crash_not_ok':
+        if tier > 2:
+            return _slack_reply_json('Not authorized for your tier.')
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'needs_attention'
+        return _slack_reply_json("Logged as needs attention. Archer can't place calls — call for help directly if needed.")
+
+    if action_id == 'parking_disarm':
+        if tier != 1:
+            return _slack_reply_json('Owner only.')
+        return _slack_reply_json(deactivate_parking_mode())
+
+    return _slack_reply_json('Unknown action.')
+
+@display_app.route('/slack/interactions', methods=['POST'])
+def slack_interactions():
+    timestamp = request.headers.get('X-Slack-Request-Timestamp', '')
+    signature = request.headers.get('X-Slack-Signature', '')
+    body      = request.get_data(as_text=True)
+
+    if not _slack_verify_signature(signature, timestamp, body):
+        return ('invalid request signature', 401)
+
+    if not slack_config['enabled']:
+        return _slack_reply_json('Slack integration is disabled.')
+
+    form = request.form
+    if 'payload' in form:
+        try:
+            payload = json.loads(form['payload'])
+        except ValueError:
+            return ('bad payload', 400)
+        return _slack_handle_block_action(payload)
+
+    if 'command' in form:
+        return _slack_handle_command(form)
+
+    return ('unrecognized request', 400)
 
 # ── ARCHER MEMORY FUNCTIONS ──────────────
 def log_moment(category, description):
@@ -12195,6 +12748,8 @@ def main():
     threading.Thread(target=voice_monitor,       daemon=True).start()
     threading.Thread(target=run_display_server,  daemon=True).start()
     threading.Thread(target=discord_monitor,     daemon=True).start()
+    threading.Thread(target=discord_digest_monitor, daemon=True).start()
+    threading.Thread(target=slack_digest_monitor,   daemon=True).start()
     threading.Thread(target=openclaw_monitor,    daemon=True).start()
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()

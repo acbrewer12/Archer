@@ -2,7 +2,8 @@
 Archer test suite — covers backend routes, auth, tier system,
 smart_fallback, save/load state, and key data endpoints.
 """
-import os, sys, json, hashlib, hmac, secrets, tempfile, threading, time
+import os, sys, json, hashlib, hmac, secrets, subprocess, tempfile, threading, time
+import urllib.parse
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -406,6 +407,55 @@ class TestSmartFallback:
     def test_battery_keyword(self):
         result = archer.smart_fallback('battery voltage')
         assert isinstance(result, str) and len(result) > 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5b. Local Ollama cold-start fallback (archer.py:1974)
+# Real testing on hardware matching the target server confirmed a ~18s
+# cold-start latency for local Ollama. The subprocess timeout must clear
+# that, or a cold start silently loses to smart_fallback instead of
+# actually answering.
+# ═══════════════════════════════════════════════════════════════
+class TestLocalOllamaColdStart:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+        self._is_pi_backup = archer._IS_PI
+        archer._IS_PI = True
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        archer._IS_PI = self._is_pi_backup
+
+    def _fake_cold_start(self, cmd, capture_output, timeout, encoding, errors):
+        """Stands in for a real `ollama run` that takes ~18s to answer."""
+        if timeout < 18:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='Archer: cold start survived.', stderr=''
+        )
+
+    def test_confirmed_cold_start_gets_a_real_answer(self):
+        """A ~18s cold start must fit under the timeout so Ollama's actual
+        answer is used, not a silent fall-through to smart_fallback. Fails
+        again if the timeout ever regresses to (or below) the confirmed
+        18s cold-start latency — proving the fix, not just the changed
+        constant, is what's under test."""
+        with patch('subprocess.run', side_effect=self._fake_cold_start):
+            result = archer.ask_archer('how is the oil temp')
+
+        # A regressed <=18s timeout would raise TimeoutExpired above, get
+        # swallowed by ask_archer's bare except, and fall through to
+        # smart_fallback's generic oil text instead of this real answer.
+        assert result == 'cold start survived.'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2619,6 +2669,400 @@ class TestMaintenanceData:
         assert oil['last_mi'] == 140000
         assert oil['current_mi'] == 145200
         assert oil['interval_mi'] == 5000
+
+
+# ═══════════════════════════════════════════════════════════════
+# 48. Discord bot — interaction signature verification + commands
+# ═══════════════════════════════════════════════════════════════
+from nacl.signing import SigningKey  # noqa: E402
+
+
+class TestDiscordSignatureVerification:
+    def setup_method(self):
+        self._signing_key = SigningKey.generate()
+        self._backup = archer.DISCORD_PUBLIC_KEY
+        archer.DISCORD_PUBLIC_KEY = self._signing_key.verify_key.encode().hex()
+
+    def teardown_method(self):
+        archer.DISCORD_PUBLIC_KEY = self._backup
+
+    def test_valid_signature_accepted(self):
+        sig = self._signing_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":1}') is True
+
+    def test_tampered_body_rejected(self):
+        sig = self._signing_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":2}') is False
+
+    def test_wrong_key_rejected(self):
+        other_key = SigningKey.generate()
+        sig = other_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":1}') is False
+
+    def test_no_public_key_configured_rejected(self):
+        archer.DISCORD_PUBLIC_KEY = ''
+        assert archer._discord_verify_signature('aa' * 64, '1700000000', '{}') is False
+
+
+class TestDiscordInteractionsEndpoint:
+    def setup_method(self):
+        self._signing_key = SigningKey.generate()
+        self._backup = {
+            'public_key': archer.DISCORD_PUBLIC_KEY,
+            'owner_id':   archer.DISCORD_OWNER_ID,
+            'enabled':    archer.discord_config['enabled'],
+        }
+        archer.DISCORD_PUBLIC_KEY = self._signing_key.verify_key.encode().hex()
+        archer.DISCORD_OWNER_ID = 'owner-123'
+        archer.discord_config['enabled'] = True
+
+    def teardown_method(self):
+        archer.DISCORD_PUBLIC_KEY = self._backup['public_key']
+        archer.DISCORD_OWNER_ID = self._backup['owner_id']
+        archer.discord_config['enabled'] = self._backup['enabled']
+
+    def _signed_post(self, body_dict, timestamp='1700000000'):
+        body = json.dumps(body_dict)
+        sig = self._signing_key.sign(f'{timestamp}{body}'.encode()).signature.hex()
+        return archer.display_app.test_client().post(
+            '/discord/interactions',
+            data=body,
+            headers={
+                'Content-Type':         'application/json',
+                'X-Signature-Ed25519':  sig,
+                'X-Signature-Timestamp': timestamp,
+            },
+        )
+
+    def test_ping_returns_pong(self):
+        r = self._signed_post({'type': 1})
+        assert r.status_code == 200
+        assert json.loads(r.data) == {'type': 1}
+
+    def test_bad_signature_rejected(self):
+        r = archer.display_app.test_client().post(
+            '/discord/interactions',
+            data=json.dumps({'type': 1}),
+            headers={
+                'Content-Type':         'application/json',
+                'X-Signature-Ed25519':  'aa' * 64,
+                'X-Signature-Timestamp': '1700000000',
+            },
+        )
+        assert r.status_code == 401
+
+    def test_unauthorized_user_rejected_on_command(self):
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'stranger-999'}},
+        })
+        data = json.loads(r.data)
+        assert 'not authorized' in data['data']['content'].lower()
+        assert data['data']['flags'] == 64
+
+    def test_authorized_status_command_reports_real_oil_temp(self):
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert str(archer.truck_state['oil_temp']) in data['data']['content']
+
+    def test_unauthorized_button_rejected(self):
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'parking_disarm'},
+            'member': {'user': {'id': 'stranger-999'}},
+        })
+        data = json.loads(r.data)
+        assert 'not authorized' in data['data']['content'].lower()
+
+    def test_authorized_parking_disarm_button_disarms(self):
+        archer.parking_mode['active'] = True
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'parking_disarm'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        assert r.status_code == 200
+        assert archer.parking_mode['active'] is False
+
+    def test_authorized_crash_not_ok_button_flags_last_event(self):
+        archer.crash_detection['last_event'] = {'time': '1:00 PM', 'g': 4.0, 'speed': 30, 'road': 'Test Rd'}
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'crash_not_ok'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert archer.crash_detection['last_event']['status'] == 'needs_attention'
+        assert "can't place calls" in data['data']['content']
+
+    def test_disabled_integration_rejects_non_ping(self):
+        archer.discord_config['enabled'] = False
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert 'disabled' in data['data']['content'].lower()
+
+
+class TestDiscordDigest:
+    def test_build_digest_contains_key_fields(self):
+        msg = archer._build_discord_digest()
+        assert 'Peak RPM' in msg
+        assert 'Drive quality' in msg
+
+
+# ═══════════════════════════════════════════════════════════════
+# 49. Slack bot — signature verification + tiered command/alert routing
+# ═══════════════════════════════════════════════════════════════
+class TestSlackSignatureVerification:
+    def setup_method(self):
+        self._backup = archer.SLACK_SIGNING_SECRET
+        archer.SLACK_SIGNING_SECRET = 'test-signing-secret'
+
+    def teardown_method(self):
+        archer.SLACK_SIGNING_SECRET = self._backup
+
+    def _sign(self, timestamp, body, secret=b'test-signing-secret'):
+        basestring = f'v0:{timestamp}:{body}'.encode()
+        return 'v0=' + hmac.new(secret, basestring, hashlib.sha256).hexdigest()
+
+    def test_valid_signature_accepted(self):
+        ts = str(int(time.time()))
+        body = '{"type":"url_verification"}'
+        assert archer._slack_verify_signature(self._sign(ts, body), ts, body) is True
+
+    def test_tampered_body_rejected(self):
+        ts = str(int(time.time()))
+        sig = self._sign(ts, '{"a":1}')
+        assert archer._slack_verify_signature(sig, ts, '{"a":2}') is False
+
+    def test_wrong_secret_rejected(self):
+        ts = str(int(time.time()))
+        body = '{"a":1}'
+        sig = self._sign(ts, body, secret=b'wrong-secret')
+        assert archer._slack_verify_signature(sig, ts, body) is False
+
+    def test_stale_timestamp_rejected(self):
+        ts = str(int(time.time()) - 600)  # 10 minutes old — outside the 5 min window
+        body = '{"a":1}'
+        assert archer._slack_verify_signature(self._sign(ts, body), ts, body) is False
+
+    def test_no_signing_secret_configured_rejected(self):
+        archer.SLACK_SIGNING_SECRET = ''
+        assert archer._slack_verify_signature('v0=' + 'a' * 64, str(int(time.time())), '{}') is False
+
+
+class TestSlackUserTier:
+    def setup_method(self):
+        self._backup = (archer.SLACK_OWNER_IDS, archer.SLACK_PASSENGER_IDS, archer.SLACK_FAMILY_IDS)
+        archer.SLACK_OWNER_IDS     = {'U_OWNER'}
+        archer.SLACK_PASSENGER_IDS = {'U_PASSENGER'}
+        archer.SLACK_FAMILY_IDS    = {'U_FAMILY'}
+
+    def teardown_method(self):
+        archer.SLACK_OWNER_IDS, archer.SLACK_PASSENGER_IDS, archer.SLACK_FAMILY_IDS = self._backup
+
+    def test_owner_resolves_tier_1(self):
+        assert archer._slack_user_tier('U_OWNER') == 1
+
+    def test_passenger_resolves_tier_2(self):
+        assert archer._slack_user_tier('U_PASSENGER') == 2
+
+    def test_family_resolves_tier_3(self):
+        assert archer._slack_user_tier('U_FAMILY') == 3
+
+    def test_unknown_user_resolves_none(self):
+        assert archer._slack_user_tier('U_STRANGER') is None
+
+
+class TestSlackInteractionsEndpoint:
+    def setup_method(self):
+        self._backup = {
+            'signing_secret': archer.SLACK_SIGNING_SECRET,
+            'enabled':        archer.slack_config['enabled'],
+            'owner_ids':      archer.SLACK_OWNER_IDS,
+            'passenger_ids':  archer.SLACK_PASSENGER_IDS,
+            'family_ids':     archer.SLACK_FAMILY_IDS,
+        }
+        archer.SLACK_SIGNING_SECRET = 'test-signing-secret'
+        archer.slack_config['enabled'] = True
+        archer.SLACK_OWNER_IDS     = {'U_OWNER'}
+        archer.SLACK_PASSENGER_IDS = {'U_PASSENGER'}
+        archer.SLACK_FAMILY_IDS    = {'U_FAMILY'}
+
+    def teardown_method(self):
+        archer.SLACK_SIGNING_SECRET    = self._backup['signing_secret']
+        archer.slack_config['enabled'] = self._backup['enabled']
+        archer.SLACK_OWNER_IDS         = self._backup['owner_ids']
+        archer.SLACK_PASSENGER_IDS     = self._backup['passenger_ids']
+        archer.SLACK_FAMILY_IDS        = self._backup['family_ids']
+
+    def _form_body(self, **fields):
+        return urllib.parse.urlencode(fields)
+
+    def _signed_post(self, form_body):
+        ts = str(int(time.time()))
+        sig = 'v0=' + hmac.new(b'test-signing-secret', f'v0:{ts}:{form_body}'.encode(), hashlib.sha256).hexdigest()
+        return archer.display_app.test_client().post(
+            '/slack/interactions',
+            data=form_body,
+            content_type='application/x-www-form-urlencoded',
+            headers={'X-Slack-Signature': sig, 'X-Slack-Request-Timestamp': ts},
+        )
+
+    def test_bad_signature_rejected(self):
+        r = archer.display_app.test_client().post(
+            '/slack/interactions',
+            data=self._form_body(command='/vstatus', user_id='U_OWNER'),
+            content_type='application/x-www-form-urlencoded',
+            headers={'X-Slack-Signature': 'v0=' + 'a' * 64, 'X-Slack-Request-Timestamp': str(int(time.time()))},
+        )
+        assert r.status_code == 401
+
+    def test_unauthorized_user_rejected(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_STRANGER'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_owner_status_shows_full_diagnostics(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_OWNER'))
+        data = json.loads(r.data)
+        assert str(archer.truck_state['oil_temp']) in data['text']
+
+    def test_passenger_status_omits_raw_oil_temp(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_PASSENGER'))
+        data = json.loads(r.data)
+        assert 'Oil' not in data['text']
+        assert str(archer.truck_state['speed']) in data['text']
+
+    def test_family_status_has_no_numeric_diagnostics(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'RPM' not in data['text']
+        assert 'Oil' not in data['text']
+        assert 'Speed' not in data['text']
+
+    def test_parking_rejected_for_passenger(self):
+        r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_PASSENGER'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_parking_rejected_for_family(self):
+        r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_parking_allowed_for_owner(self):
+        archer.parking_mode['active'] = False
+        try:
+            r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_OWNER'))
+            assert r.status_code == 200
+            assert archer.parking_mode['active'] is True
+        finally:
+            archer.parking_mode['active'] = False
+
+    def test_ask_rejected_for_family(self):
+        r = self._signed_post(self._form_body(command='/ask', text='how is the truck', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_ask_deferred_for_passenger(self):
+        r = self._signed_post(self._form_body(
+            command='/ask', text='how is the truck', user_id='U_PASSENGER',
+            response_url='https://example.invalid/resp',
+        ))
+        data = json.loads(r.data)
+        assert data['text'] == 'Thinking...'
+
+    def test_block_action_parking_disarm_rejected_for_passenger(self):
+        payload = json.dumps({'user': {'id': 'U_PASSENGER'}, 'actions': [{'action_id': 'parking_disarm'}]})
+        r = self._signed_post(self._form_body(payload=payload))
+        data = json.loads(r.data)
+        assert 'owner only' in data['text'].lower()
+
+    def test_block_action_crash_im_ok_allowed_for_passenger(self):
+        archer.crash_detection['last_event'] = {'time': '1:00 PM', 'g': 4.0, 'speed': 30, 'road': 'Test Rd'}
+        payload = json.dumps({'user': {'id': 'U_PASSENGER'}, 'actions': [{'action_id': 'crash_im_ok'}]})
+        r = self._signed_post(self._form_body(payload=payload))
+        assert r.status_code == 200
+        assert archer.crash_detection['last_event']['status'] == 'confirmed_ok'
+
+    def test_disabled_integration_rejects_non_ping(self):
+        archer.slack_config['enabled'] = False
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_OWNER'))
+        data = json.loads(r.data)
+        assert 'disabled' in data['text'].lower()
+
+
+class TestSlackAlertRouting:
+    def setup_method(self):
+        self._backup = {
+            'enabled':  archer.slack_config['enabled'],
+            'channels': dict(archer.SLACK_TIER_CHANNELS),
+        }
+        archer.slack_config['enabled'] = True
+        archer.SLACK_TIER_CHANNELS[1] = 'C_OWNER'
+        archer.SLACK_TIER_CHANNELS[2] = 'C_PASSENGER'
+        archer.SLACK_TIER_CHANNELS[3] = 'C_FAMILY'
+
+    def teardown_method(self):
+        archer.slack_config['enabled'] = self._backup['enabled']
+        archer.SLACK_TIER_CHANNELS.clear()
+        archer.SLACK_TIER_CHANNELS.update(self._backup['channels'])
+
+    def test_owner_only_alert_does_not_reach_passenger_or_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('oil_high', 'Oil temp critical at 230F.', 'OIL WARNING')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER'}
+
+    def test_crash_alert_reaches_all_three_tiers(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER', 'C_PASSENGER', 'C_FAMILY'}
+
+    def test_crash_buttons_sent_to_owner_and_passenger_not_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        blocks_by_channel = {c.args[0]: c.args[2] for c in mock_send.call_args_list}
+        assert any(b['type'] == 'actions' for b in blocks_by_channel['C_OWNER'])
+        assert any(b['type'] == 'actions' for b in blocks_by_channel['C_PASSENGER'])
+        assert not any(b['type'] == 'actions' for b in blocks_by_channel['C_FAMILY'])
+
+    def test_parking_armed_reaches_owner_and_passenger_not_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('parking_armed', 'Parked at Home.', 'PARKING MODE ON')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER', 'C_PASSENGER'}
+
+    def test_disabled_integration_sends_nothing(self):
+        archer.slack_config['enabled'] = False
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        mock_send.assert_not_called()
+
+
+class TestSlackDigest:
+    def test_owner_digest_matches_discord_digest(self):
+        assert archer._slack_digest_message(1) == archer._build_discord_digest()
+
+    def test_passenger_digest_omits_peak_rpm(self):
+        msg = archer._slack_digest_message(2)
+        assert 'Peak RPM' not in msg
+        assert 'Drive quality' in msg
+
+    def test_family_digest_has_no_raw_numbers_field(self):
+        msg = archer._slack_digest_message(3)
+        assert 'Peak RPM' not in msg
+        assert 'Drive quality' not in msg
 
 
 if __name__ == '__main__':

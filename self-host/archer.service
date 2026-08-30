@@ -5,11 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Update these two paths to match the real install location and user
-# once this is running on the actual home server
-User=ayden
-WorkingDirectory=/home/ayden/Archer
-ExecStart=/usr/bin/python3 /home/ayden/Archer/archer.py
+# Runs as a dedicated `archer` system user, not your own login (ayden) —
+# same pattern archer-os/build.sh already uses for the in-truck image:
+# /etc/archer is root:archer mode 1770, so only this user (and root) can
+# read the HSM key and archer.env secrets. See self-host/README.md step 0
+# for the useradd/chown commands. Update WorkingDirectory/ExecStart below
+# if you clone somewhere other than /opt/archer.
+User=archer
+Group=archer
+WorkingDirectory=/opt/archer
+ExecStart=/usr/bin/python3 /opt/archer/archer.py
 
 # Confirmed from archer.py: `port = int(os.environ.get('PORT', 7860))` and
 # matches the Dockerfile (`PORT=7860 python3 archer.py`). Set explicitly here

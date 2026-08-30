@@ -42,6 +42,57 @@ GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 # Google Gemini API key (fallback AI provider).
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
+# ── DISCORD BOT (slash commands, alert buttons, digests) ───────────────────────
+
+# Bot token — needed only to register slash commands (discord_register_commands.py).
+DISCORD_BOT_TOKEN = os.environ.get('DISCORD_BOT_TOKEN', '')
+
+# Application public key, from the Discord Developer Portal — verifies that
+# requests to /discord/interactions genuinely came from Discord.
+DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
+
+# Application ID, from the Discord Developer Portal.
+DISCORD_APPLICATION_ID = os.environ.get('DISCORD_APPLICATION_ID', '')
+
+# Discord user ID allowed to run commands and click alert buttons.
+# Right-click your own name in Discord (Developer Mode on) -> Copy User ID.
+DISCORD_OWNER_ID = os.environ.get('DISCORD_OWNER_ID', '')
+
+# Channel ID for alerts that carry buttons (crash, parking armed) — these
+# go out via the bot token, not a webhook. Right-click the channel -> Copy
+# Channel ID.
+DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')
+
+# 24-hour local hour to send the daily digest (default 20 = 8 PM).
+# Shared by the Slack digest below — one schedule, not two.
+DISCORD_DIGEST_HOUR = os.environ.get('DISCORD_DIGEST_HOUR', '20')
+
+# ── SLACK BOT (slash commands, alert buttons, digests, tiered routing) ─────────
+# Replaces the Discord integration above as the live path — see
+# self-host/README.md "Slack bot setup". Discord's own env vars/code are
+# left intact and still work if you re-enable discord_config['enabled'].
+
+# Signing Secret, from the Slack app's Basic Information page — verifies
+# requests to /slack/interactions genuinely came from Slack.
+SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET', '')
+
+# Bot User OAuth Token (starts with xoxb-), from OAuth & Permissions after
+# installing the app to your workspace.
+SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN', '')
+
+# One Slack channel ID per tier (1-3 only — see self-host/README.md for why
+# Valet/Public aren't part of this).
+SLACK_CHANNEL_OWNER     = os.environ.get('SLACK_CHANNEL_OWNER', '')
+SLACK_CHANNEL_PASSENGER = os.environ.get('SLACK_CHANNEL_PASSENGER', '')
+SLACK_CHANNEL_FAMILY    = os.environ.get('SLACK_CHANNEL_FAMILY', '')
+
+# Comma-separated Slack user IDs allowed at each tier. Slack has no
+# equivalent of the web dashboard's MAC/JWT tier system, so this mapping is
+# the explicit source of truth for who's who in Slack.
+SLACK_OWNER_USER_IDS     = os.environ.get('SLACK_OWNER_USER_IDS', '')
+SLACK_PASSENGER_USER_IDS = os.environ.get('SLACK_PASSENGER_USER_IDS', '')
+SLACK_FAMILY_USER_IDS    = os.environ.get('SLACK_FAMILY_USER_IDS', '')
+
 # ── SPOTIFY ───────────────────────────────────────────────────────────────────
 
 # Create an app at developer.spotify.com, set redirect URI to:
