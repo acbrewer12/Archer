@@ -12523,26 +12523,34 @@ def obd_autodetect():
     """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
     Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
+    # Manual override (documented in config.py/archer.env.example) for adapters
+    # the scan below can't find — a Bluetooth OBDLink MX+ bound to /dev/rfcommN
+    # (see archer-os/obd-auth/obd_bt_bind.sh) doesn't expose the description/
+    # manufacturer strings comports() keyword-matches against, so it never
+    # gets auto-detected regardless of retries. When set, this is authoritative:
+    # the scan is skipped entirely, every loop iteration, not just tried once.
+    OBD_PORT = os.environ.get('OBD_PORT', '')
 
     while True:
-        # ── Scan for adapter ──────────────────────────────────
-        port_device = None
-        try:
-            import serial
-            import serial.tools.list_ports
-            for p in serial.tools.list_ports.comports():
-                desc = (p.description or '').lower()
-                mfr  = (p.manufacturer or '').lower()
-                if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
-                    port_device = p.device
-                    break
-        except ImportError:
-            time.sleep(10)
-            continue
-        except Exception as e:
-            print(f'[OBD] scan error: {e}')
-            time.sleep(5)
-            continue
+        # ── Scan for adapter (skipped if OBD_PORT overrides it) ──
+        port_device = OBD_PORT or None
+        if not port_device:
+            try:
+                import serial
+                import serial.tools.list_ports
+                for p in serial.tools.list_ports.comports():
+                    desc = (p.description or '').lower()
+                    mfr  = (p.manufacturer or '').lower()
+                    if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
+                        port_device = p.device
+                        break
+            except ImportError:
+                time.sleep(10)
+                continue
+            except Exception as e:
+                print(f'[OBD] scan error: {e}')
+                time.sleep(5)
+                continue
 
         if not port_device:
             time.sleep(5)

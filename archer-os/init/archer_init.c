@@ -17,6 +17,8 @@
  *
  *   4. Fork services:
  *        - NetworkManager (or wpa_supplicant) for WiFi/tethering
+ *        - bluetoothd + a bind of a previously-paired OBDLink MX+ to
+ *          /dev/rfcomm0 (see archer-os/obd-auth/obd_bt_pair.sh/obd_bt_bind.sh)
  *        - Archer Flask app (the actual truck AI)
  *
  *   5. Main loop: reap zombie children + handle shutdown signals
@@ -67,11 +69,12 @@
 static volatile int g_shutdown = 0;
 static volatile int g_shutdown_type = RB_POWER_OFF;
 
-static pid_t pid_network  = -1;
-static pid_t pid_avahi    = -1;
-static pid_t pid_archer   = -1;
-static pid_t pid_getty1   = -1;
-static pid_t pid_getty2   = -1;
+static pid_t pid_network    = -1;
+static pid_t pid_avahi      = -1;
+static pid_t pid_bluetooth  = -1;
+static pid_t pid_archer     = -1;
+static pid_t pid_getty1     = -1;
+static pid_t pid_getty2     = -1;
 
 /* ── logging ─────────────────────────────────────────────────────── */
 
@@ -706,7 +709,64 @@ static void start_services(void)
             WARN("NetworkManager failed to start");
     }
 
-    /* 3. Avahi daemon — mDNS, makes archer.local work on the LAN */
+    /* 2b. Bluetooth daemon — org.bluez on the system bus, needed to bind a
+     *     previously-paired OBDLink MX+ Bluetooth OBD-II adapter to a
+     *     serial device node. Path is the standard Debian bluez package
+     *     location. NOT verified against this specific image — no
+     *     Bluetooth hardware or booted VM was available while this was
+     *     written; confirm the path and that bluetoothd actually starts
+     *     before trusting this on real hardware. See
+     *     archer-os/obd-auth/obd_bt_pair.sh (one-time manual pairing) and
+     *     obd_bt_bind.sh (the rebind step run right below), same caveat. */
+    {
+        char *argv[] = { "/usr/lib/bluetooth/bluetoothd", "-n", NULL };
+        pid_bluetooth = spawn("/usr/lib/bluetooth/bluetoothd", argv, "/", 0, 0);
+        if (pid_bluetooth > 0)
+            LOG("bluetoothd started");
+        /* non-critical, same as avahi below — OBD still works over a
+         * directly-wired USB/serial adapter without this */
+    }
+
+    /* 2c. Bind a previously-paired OBDLink MX+ to /dev/rfcomm0, if
+     *     obd_bt_pair.sh has been run at least once (it writes the paired
+     *     MAC to /etc/archer/obd_bt_mac). obd_bt_bind.sh exits quietly if
+     *     that file doesn't exist — first boot before pairing is normal,
+     *     not an error. bluetoothd doesn't expose a socket to poll for
+     *     readiness the way dbus does, so this just gives it a moment. */
+    if (pid_bluetooth > 0) {
+        usleep(500000);  /* 500ms for bluetoothd to register on the bus */
+        const char *bind_script = "/opt/archer/archer-os/obd-auth/obd_bt_bind.sh";
+        if (!is_safe_to_run_as_root(bind_script)) {
+            WARN("obd_bt_bind.sh: skipped — not root-owned/is writable by 'archer'");
+        } else {
+            char *argv[] = { "/bin/bash", (char *)bind_script, NULL };
+            pid_t pid_bind = fork();
+            if (pid_bind == 0) {
+                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+                execv("/bin/bash", argv);
+                _exit(1);
+            } else if (pid_bind > 0) {
+                int waited = 0, bind_status = -1;
+                while (waited < 5) {
+                    pid_t r = waitpid(pid_bind, &bind_status, WNOHANG);
+                    if (r == pid_bind) break;
+                    sleep(1); waited++;
+                }
+                if (waited >= 5) {
+                    WARN("obd_bt_bind.sh: timed out, killing it — boot continues without a Bluetooth OBD bind");
+                    kill(pid_bind, SIGKILL);
+                    waitpid(pid_bind, NULL, 0);
+                } else if (WIFEXITED(bind_status) && WEXITSTATUS(bind_status) == 0) {
+                    LOG("obd_bt_bind.sh: ran (see kmsg for whether a bind actually happened)");
+                } else {
+                    WARN("obd_bt_bind.sh: exited non-zero — Bluetooth OBD bind likely failed");
+                }
+            }
+        }
+    }
+
+    /* 4. Avahi daemon — mDNS, makes archer.local work on the LAN */
     {
         char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
         pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
@@ -1104,8 +1164,9 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         while ((dead = waitpid(-1, NULL, WNOHANG)) > 0) {
             char msg[64];
             if      (dead == pid_archer)  { snprintf(msg, sizeof(msg), "Archer (pid %d) exited", dead); ERR(msg); pid_archer = -1; }
-            else if (dead == pid_network) { snprintf(msg, sizeof(msg), "NetworkManager (pid %d) exited", dead); WARN(msg); pid_network = -1; }
-            else if (dead == pid_avahi)   { snprintf(msg, sizeof(msg), "avahi (pid %d) exited", dead); WARN(msg); pid_avahi = -1; }
+            else if (dead == pid_network)   { snprintf(msg, sizeof(msg), "NetworkManager (pid %d) exited", dead); WARN(msg); pid_network = -1; }
+            else if (dead == pid_avahi)     { snprintf(msg, sizeof(msg), "avahi (pid %d) exited", dead); WARN(msg); pid_avahi = -1; }
+            else if (dead == pid_bluetooth) { snprintf(msg, sizeof(msg), "bluetoothd (pid %d) exited", dead); WARN(msg); pid_bluetooth = -1; }
             else if (dead == pid_getty1)  { pid_getty1 = -1; }
             else if (dead == pid_getty2)  { pid_getty2 = -1; }
         }

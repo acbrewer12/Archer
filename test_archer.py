@@ -3116,5 +3116,54 @@ class TestSlackDigest:
         assert 'Drive quality' not in msg
 
 
+# ═══════════════════════════════════════════════════════════════
+# 51. obd_autodetect() — OBD_PORT manual override (archer.py:12522)
+# Confirmed dead before this fix: the env var was documented in
+# config.py/archer.env.example/README as the fallback when autodetect
+# can't find an adapter (true for a Bluetooth OBDLink MX+ bound to
+# /dev/rfcommN — it exposes no description/manufacturer string for the
+# keyword scan to match), but obd_autodetect() never read it.
+# ═══════════════════════════════════════════════════════════════
+class TestObdPortOverride:
+    def test_obd_port_set_skips_scan_and_connects_there(self):
+        """When OBD_PORT is set, it must be used directly, every loop
+        iteration — not just consulted once alongside the scan."""
+        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0'}), \
+             patch('serial.tools.list_ports.comports') as mock_comports, \
+             patch('serial.Serial', side_effect=RuntimeError('boom')) as mock_serial_cls, \
+             patch('time.sleep', side_effect=RuntimeError('stop-loop')):
+            with pytest.raises(RuntimeError, match='stop-loop'):
+                archer.obd_autodetect()
+
+        mock_serial_cls.assert_called_once()
+        assert mock_serial_cls.call_args[0][0] == '/dev/rfcomm0'
+        mock_comports.assert_not_called()
+
+    def test_obd_port_unset_falls_back_to_scan(self):
+        """Regression guard: the override must not swallow the existing
+        autodetect behavior for USB adapters when it isn't set.
+
+        serial is stubbed as a bare MagicMock for the whole test session
+        (see the top of this file). `import serial.tools.list_ports` is a
+        real import statement, not attribute access, so it needs both
+        'serial.tools' and 'serial.tools.list_ports' registered in
+        sys.modules AND wired as real attributes on the fake 'serial'
+        module — a MagicMock auto-vivifies attribute access but that alone
+        doesn't satisfy the import statement's own module resolution."""
+        fake_tools = MagicMock()
+        fake_list_ports = MagicMock()
+        fake_list_ports.comports.return_value = []
+        fake_tools.list_ports = fake_list_ports
+        sys.modules['serial'].tools = fake_tools
+
+        with patch.dict(os.environ, {'OBD_PORT': ''}), \
+             patch.dict(sys.modules, {'serial.tools': fake_tools, 'serial.tools.list_ports': fake_list_ports}), \
+             patch('time.sleep', side_effect=RuntimeError('stop-loop')):
+            with pytest.raises(RuntimeError, match='stop-loop'):
+                archer.obd_autodetect()
+
+        fake_list_ports.comports.assert_called_once()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

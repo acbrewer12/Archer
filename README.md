@@ -258,9 +258,17 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 ## Troubleshooting
 
 ### OBD Not Connecting
-1. Check that OBDLink MX+ is paired via Bluetooth: `bluetoothctl paired-devices`
-2. Verify the port: `ls /dev/rfcomm* /dev/ttyUSB*`
-3. Set `OBD_PORT=/dev/rfcomm0` in `archer.env`
+A wired USB ELM327 is auto-detected — no setup needed. A Bluetooth OBDLink
+MX+ is not, and never will be: `obd_autodetect()` scans serial port
+description/manufacturer strings, which a Bluetooth RFCOMM device doesn't
+expose. For Bluetooth:
+1. Run `sudo bash /opt/archer/archer-os/obd-auth/obd_bt_pair.sh` once, via
+   the tty2 maintenance shell, to pair/trust the adapter and save its MAC
+   to `/etc/archer/obd_bt_mac`. `obd_bt_bind.sh` then re-binds
+   `/dev/rfcomm0` to it automatically on every subsequent boot.
+2. Verify the port after a reboot: `ls /dev/rfcomm* /dev/ttyUSB*`
+3. Set `OBD_PORT=/dev/rfcomm0` in `archer.env` — `obd_autodetect()` uses
+   this directly and skips the scan entirely when it's set.
 4. If no hardware available, set `USE_EMULATOR=true` for simulated data
 
 ### Mirror Display Not Showing

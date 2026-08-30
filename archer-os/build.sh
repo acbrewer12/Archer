@@ -166,7 +166,7 @@ POLICY
 chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
-    network-manager avahi-daemon dbus openssh-server isc-dhcp-client sudo
+    network-manager avahi-daemon dbus openssh-server isc-dhcp-client sudo bluez
 
 # X11 kiosk — pre-register Xorg permissions so the setuid-registration step
 # doesn't abort the build in restricted build environments (WSL2 etc.).
@@ -386,6 +386,16 @@ chroot "$MOUNT" chown -R archer:archer /opt/archer
 # assumption breaks and the interpreter would need the same treatment below.
 chroot "$MOUNT" chown root:root /opt/archer/archer-os/obd-auth/obd_auth_client.py
 chroot "$MOUNT" chmod 644 /opt/archer/archer-os/obd-auth/obd_auth_client.py
+
+# Same root-ownership requirement as obd_auth_client.py above — archer_init.c
+# execs obd_bt_bind.sh as root (needs it to bind a system Bluetooth device
+# node) and refuses to run anything that isn't root-owned and non-group/
+# world-writable. obd_bt_pair.sh is NOT run by archer_init.c (it's invoked
+# manually via sudo from the tty2 maintenance shell), so it doesn't need
+# this — just +x for direct invocation.
+chroot "$MOUNT" chown root:root /opt/archer/archer-os/obd-auth/obd_bt_bind.sh
+chroot "$MOUNT" chmod 644 /opt/archer/archer-os/obd-auth/obd_bt_bind.sh
+chroot "$MOUNT" chmod 755 /opt/archer/archer-os/obd-auth/obd_bt_pair.sh
 
 # /etc/archer holds both root-only secrets (obd_auth.key, used by the root-run
 # boot-time OBD auth handshake) and archer.py's own HSM master key / env file,
