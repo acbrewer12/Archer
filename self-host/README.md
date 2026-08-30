@@ -88,8 +88,10 @@ Ported to Slack per a stated preference for a more professional platform —
 see "Slack bot setup" below, which is now the live/intended integration.
 This section and the Discord code in archer.py (`discord_config`,
 `discord_alert`, `/discord/interactions`, etc.) are untouched and still
-work if you set `discord_config['enabled'] = True`; nothing here was
-deleted, just superseded. Originally, this replaced the earlier Mattermost
+work if you set `DISCORD_PUBLIC_KEY` (below) — `discord_config['enabled']`
+is computed from it automatically at boot, not something you flip by
+hand. Nothing here was deleted, just superseded. Originally, this replaced
+the earlier Mattermost
 self-hosting idea, which needed more RAM than this 8GB box has to spare.
 Archer's Discord integration is two independent pieces:
 
@@ -114,8 +116,9 @@ ID** the same way.
 
 **c. Fill in `/etc/archer/archer.env`** (from step 0) with `DISCORD_BOT_TOKEN`,
 `DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID`, `DISCORD_OWNER_ID`,
-`DISCORD_ALERTS_CHANNEL_ID`, and set `discord_config['enabled'] = True`
-(or wire a route/PIN command to flip it — it defaults off).
+`DISCORD_ALERTS_CHANNEL_ID`. Setting `DISCORD_PUBLIC_KEY` is what turns the
+integration on — `discord_config['enabled']` is computed from its presence
+at boot, no separate flag to flip.
 
 **d. Register the slash commands** (one-time, or whenever the command list
 in `discord_register_commands.py` changes):
@@ -200,7 +203,9 @@ entirely in this dashboard, not via an API call).
 `SLACK_CHANNEL_PASSENGER`, `SLACK_CHANNEL_FAMILY`,
 `SLACK_OWNER_USER_IDS`, `SLACK_PASSENGER_USER_IDS`,
 `SLACK_FAMILY_USER_IDS` (all comma-separated if more than one person per
-tier), and set `slack_config['enabled'] = True`. No new pip dependency —
+tier). Setting `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` is what turns
+the integration on — `slack_config['enabled']` is computed from both being
+present at boot, no separate flag to flip. No new pip dependency —
 unlike Discord's `pynacl` requirement, Slack's HMAC-SHA256 scheme is
 stdlib-only (`hmac`/`hashlib`).
 

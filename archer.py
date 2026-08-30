@@ -5312,7 +5312,7 @@ def is_openclaw_task(text):
 # DISCORD NOTIFICATIONS
 # ══════════════════════════════════════════
 discord_config = {
-    'enabled':          False,
+    'enabled':          False,  # computed below, once DISCORD_PUBLIC_KEY is read — never leave hardcoded
     'webhook_alerts':   '',     # #alerts channel webhook
     'webhook_vitals':   '',     # #vitals channel webhook
     'webhook_radar':    '',     # #radar channel webhook
@@ -5341,6 +5341,19 @@ DISCORD_APPLICATION_ID    = os.environ.get('DISCORD_APPLICATION_ID', '')
 DISCORD_OWNER_ID          = os.environ.get('DISCORD_OWNER_ID', '')            # Discord user ID allowed to run commands/buttons
 DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')   # channel ID for button-bearing alerts
 DISCORD_DIGEST_HOUR       = int(os.environ.get('DISCORD_DIGEST_HOUR', '20'))  # 24h local hour for the daily digest
+
+# This was hardcoded False above with nothing ever flipping it — dead
+# regardless of what's set in archer.env. DISCORD_PUBLIC_KEY is the one
+# credential every part of the bot needs (signature verification gates
+# /discord/interactions; the rest is reached only through it), so its
+# presence is what "configured" actually means here. Webhook-only alerts
+# (discord_send, no bot at all) are a separate, still-unwired path — see
+# the note on discord_config['webhook_alerts'] etc.: those have no env var
+# of their own yet, only set_discord_webhook(), which nothing calls.
+def _compute_discord_enabled():
+    return bool(DISCORD_PUBLIC_KEY)
+
+discord_config['enabled'] = _compute_discord_enabled()
 
 _DISCORD_CRASH_BUTTONS = [{
     'type': 1,  # action row
@@ -5698,10 +5711,21 @@ def discord_interactions():
 # interaction-token webhook edits, form-encoded bodies vs raw JSON). The
 # Discord code above is untouched and still works if re-enabled — this is
 # additive, wired in as the new live path via slack_route_alert() below.
-slack_config = {'enabled': False}
+slack_config = {'enabled': False}  # computed below, once the two credentials are read — never leave hardcoded
 
 SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET', '')
 SLACK_BOT_TOKEN       = os.environ.get('SLACK_BOT_TOKEN', '')
+
+# Same bug existed here as in Discord's enabled flag above: this dict was
+# defined before SLACK_SIGNING_SECRET/SLACK_BOT_TOKEN existed, so 'enabled'
+# could never have referenced them — hardcoded False regardless of what's
+# actually set in archer.env. Both credentials are required (signing
+# secret to verify anything reaches /slack/interactions genuinely from
+# Slack; bot token to post anything back), so both must be present.
+def _compute_slack_enabled():
+    return bool(SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN)
+
+slack_config['enabled'] = _compute_slack_enabled()
 
 # Tier -> Slack channel ID. Tiers 1-3 only, by design — Valet has no
 # ongoing user who'd plausibly be in a Slack workspace, and Public/Fan is

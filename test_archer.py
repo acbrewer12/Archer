@@ -2819,7 +2819,58 @@ class TestDiscordDigest:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 49. Slack bot — signature verification + tiered command/alert routing
+# 49. discord_config/slack_config['enabled'] — computed from real
+# credentials, not hardcoded (regression coverage for a real bug: both
+# dicts were defined before their credential constants existed in the
+# file, so 'enabled' was permanently False no matter what was set in
+# archer.env — confirmed live, then fixed by computing it once those
+# constants are actually read).
+# ═══════════════════════════════════════════════════════════════
+class TestIntegrationEnabledFlag:
+    def test_compute_slack_enabled_requires_both_credentials(self):
+        backup = (archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN)
+        try:
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = 'secret', 'xoxb-token'
+            assert archer._compute_slack_enabled() is True
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = 'secret', ''
+            assert archer._compute_slack_enabled() is False
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = '', 'xoxb-token'
+            assert archer._compute_slack_enabled() is False
+        finally:
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = backup
+
+    def test_compute_discord_enabled_requires_public_key(self):
+        backup = archer.DISCORD_PUBLIC_KEY
+        try:
+            archer.DISCORD_PUBLIC_KEY = 'key'
+            assert archer._compute_discord_enabled() is True
+            archer.DISCORD_PUBLIC_KEY = ''
+            assert archer._compute_discord_enabled() is False
+        finally:
+            archer.DISCORD_PUBLIC_KEY = backup
+
+    def test_real_process_with_credentials_boots_enabled(self):
+        """End-to-end reproduction of the exact reported bug: import archer
+        in a fresh process with real-looking credentials in the environment
+        and confirm both flags actually come up True — not just that the
+        compute function returns the right answer in isolation, which
+        wouldn't have caught the original bug (the function didn't exist;
+        the dict literal was never wired to anything)."""
+        env = dict(os.environ)
+        env['SLACK_SIGNING_SECRET'] = 'test-secret'
+        env['SLACK_BOT_TOKEN']      = 'xoxb-test-token'
+        env['DISCORD_PUBLIC_KEY']   = 'test-key'
+        result = subprocess.run(
+            [sys.executable, '-c',
+             "import archer; print(archer.slack_config['enabled'], archer.discord_config['enabled'])"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=os.path.dirname(os.path.abspath(archer.__file__)),
+        )
+        assert result.stdout.strip().endswith('True True'), result.stdout + result.stderr
+
+
+# ═══════════════════════════════════════════════════════════════
+# 50. Slack bot — signature verification + tiered command/alert routing
 # ═══════════════════════════════════════════════════════════════
 class TestSlackSignatureVerification:
     def setup_method(self):
