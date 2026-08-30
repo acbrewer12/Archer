@@ -5739,6 +5739,25 @@ SLACK_TIER_CHANNELS = {
 # Slack user ID -> tier. Slack has no equivalent of the web dashboard's
 # MAC-whitelist/JWT tier system, so this explicit, auditable mapping is the
 # source of truth for who's who in Slack specifically.
+#
+# KNOWN GAP, tracked deliberately, not forgotten: this is a static env-var
+# allowlist, not the dynamic one-time-code linking flow the web dashboard
+# already has for exactly this problem (generate_one_time_code() /
+# validate_one_time_code() / one_time_codes, archer.py ~L9874 — a Tier-1
+# owner generates a 6-digit code, the new person redeems it once, tier is
+# recorded, no server access needed). Real cost of the current shape:
+# revoking access means editing archer.env and restarting the service, not
+# an in-app decision; onboarding a new person needs whoever manages the
+# server, not just the Owner; and because tier assignment lives in infra
+# config rather than application state, deployed reality can quietly drift
+# from what anyone believes is currently authorized. Fine for the current
+# small, known set of users — worth replacing before the user base grows
+# or trust boundaries matter more. The real fix: a `/link <code>` Slack
+# command that calls validate_one_time_code() and persists user_id->tier
+# (replacing SLACK_*_USER_IDS entirely, not running both in parallel), a
+# revoke path from the existing device-management UI, and end-to-end tests
+# for that flow specifically — matching the rigor the rest of this
+# integration was held to.
 def _slack_user_ids(env_var):
     return {u.strip() for u in os.environ.get(env_var, '').split(',') if u.strip()}
 

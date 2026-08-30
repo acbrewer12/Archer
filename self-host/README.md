@@ -214,6 +214,19 @@ stdlib-only (`hmac`/`hashlib`).
 sudo systemctl restart archer
 ```
 
+**Known gap, tracked deliberately: revocation and onboarding are
+infra-level, not in-app.** `SLACK_*_USER_IDS` is a static env-var
+allowlist — adding or removing a person means editing `archer.env` and
+restarting the service, not a decision made inside Archer itself. The web
+dashboard already solves this exact problem with a self-service one-time-code
+flow (`generate_one_time_code()`/`validate_one_time_code()` in archer.py);
+Slack should eventually reuse it (a `/link <code>` command redeeming a
+code the Owner generates, replacing these env vars entirely) rather than
+running two parallel identity systems indefinitely. Fine as-is for a
+small, known set of users; worth doing before the user base grows or
+revocation needs to be instant. See the comment at `_slack_user_ids()` in
+archer.py for the concrete shape of the fix.
+
 **Not yet verified against a live workspace** — same caveat as the
 Discord build: built and tested against Slack's documented request/
 response contract (30 passing tests, including real HMAC-SHA256 signature
