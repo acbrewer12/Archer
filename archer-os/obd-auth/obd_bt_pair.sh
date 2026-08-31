@@ -23,16 +23,29 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "Powering on the Bluetooth adapter..."
-bluetoothctl power on
-bluetoothctl agent on
-bluetoothctl default-agent
+# Same risk as `devices` below, applied proactively rather than waiting to
+# confirm each one hangs individually: these are one-shot adapter-state
+# commands with no legitimate reason to ever take more than a moment, so
+# there's nothing to lose by guarding them the same way.
+timeout 5 bluetoothctl power on
+timeout 5 bluetoothctl agent on
+timeout 5 bluetoothctl default-agent
 
 echo "Scanning for 15 seconds — make sure the OBDLink MX+ is powered and discoverable..."
 timeout 15 bluetoothctl scan on || true
 
 echo
 echo "Discovered devices:"
-bluetoothctl devices
+# Confirmed hanging indefinitely on a VM with no working bluetoothd (found
+# via `ps aux` — the process just sat there, unlike `scan on` above, which
+# has its own timeout and completes fine even when nothing is discovered).
+# Unlike that one, a timeout here is a real failure, not a normal way for
+# the command to end — no `|| true`, let set -e stop the script rather
+# than falling through to a MAC prompt with nothing to actually pick from.
+if ! timeout 5 bluetoothctl devices; then
+    echo "bluetoothctl devices timed out — is bluetoothd actually running? (try: bluetoothctl show)" >&2
+    exit 1
+fi
 echo
 
 read -rp "Enter the OBDLink MX+'s MAC address from the list above: " MAC
