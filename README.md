@@ -139,6 +139,29 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
   no real ReSpeaker or booted Pi VM was available while this was built);
   actual multi-channel audio capture correctness is hardware-only and has
   not been verified against a physical array.
+  **PulseAudio is deliberately not part of this stack** — testing this on
+  the Pi VM surfaced PortAudio (which the voice code uses via `sounddevice`)
+  trying and failing to reach a PulseAudio server that was never installed
+  in the first place. Investigated rather than assumed: archer-os has no
+  D-Bus session bus and no systemd (`archer_init.c` is PID 1 — see
+  CLAUDE.md §10), and Pulse's autospawn mechanism depends on exactly that
+  kind of session infrastructure (an `XDG_RUNTIME_DIR`, normally set up by
+  a login/session manager neither of which exist here) — bolting it on
+  would fight the OS's own architecture for a single always-on ALSA
+  capture that never needed it. Fix: `libportaudio2` (the actual
+  dependency, previously missing from both build scripts too) is now
+  installed instead of `pulseaudio`, and `_pin_sounddevice_to_alsa()` in
+  archer.py points PortAudio's default device resolution at ALSA
+  explicitly so a failed Pulse probe during its own init can't affect real
+  device resolution.
+  **Genuinely open, not resolvable from where this was built**: whether
+  Debian bookworm's `libportaudio2` ARM64 package even compiles in Pulse
+  support, and whether a failed Pulse probe against an absent server is a
+  graceful "zero devices for that host API, continue normally" (the
+  documented, expected PortAudio behavior, and what this fix assumes) or
+  something more disruptive on that specific build — needs a real check on
+  the Pi VM (`python3 -c "import sounddevice; print(sounddevice.query_devices())"`
+  and see whether it returns a real device list or raises).
 
 ### Wiring Diagram (Arduino)
 

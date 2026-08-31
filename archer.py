@@ -138,10 +138,37 @@ from archer_state import (
 )
 csrf_required = _csrf_required_imported
 
+def _pin_sounddevice_to_alsa(sd_module):
+    """Point sounddevice's default host API at ALSA specifically.
+
+    archer-os has no D-Bus session bus and no systemd (see CLAUDE.md §10)
+    — deliberately, not an oversight — so there is no PulseAudio here and
+    none should be added: Pulse's autospawn/session model is exactly the
+    kind of session infrastructure this OS was built to avoid, and nothing
+    about a single always-on ALSA capture actually needs it. PortAudio
+    (which sounddevice wraps) still probes every host API it was compiled
+    with at Pa_Initialize(), Pulse included, and a failed probe against an
+    absent Pulse server is where the errors seen testing this came from.
+    Pinning the host API PortAudio resolves "default" devices against to
+    ALSA explicitly means that probe failure can't affect real device
+    resolution, regardless of what host APIs happen to be compiled into
+    whatever libportaudio2 build ships on the real image. See
+    _find_respeaker_device() for the same ALSA filter applied there.
+    Returns True if ALSA was found and pinned, False otherwise."""
+    for idx, hostapi in enumerate(sd_module.query_hostapis()):
+        if 'alsa' in (hostapi.get('name') or '').lower():
+            sd_module.default.hostapi = idx
+            return True
+    return False
+
 if _IS_PI:
     try:
         from vosk import Model as _VoskModel, KaldiRecognizer as _KaldiRec
         import sounddevice as _sd
+        try:
+            _pin_sounddevice_to_alsa(_sd)
+        except Exception as _e:
+            print(f'[VOICE] Could not pin ALSA host API (non-fatal): {_e}')
         _VOSK_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'vosk-model-small-en-us')
         _vosk_model = _VoskModel(_VOSK_MODEL_PATH) if os.path.exists(_VOSK_MODEL_PATH) else None
         _VOSK_AVAILABLE = _vosk_model is not None
@@ -504,10 +531,19 @@ mic_device = {'index': None, 'channels': 1, 'is_respeaker': False}
 def _find_respeaker_device():
     """Return (device_index, channel_count) for a connected ReSpeaker, or
     None if none is found — checked by name, not assumed to be whatever
-    the OS considers the default input device."""
+    the OS considers the default input device. Restricted to the ALSA
+    host API when one is present — a real USB ReSpeaker always shows up
+    there regardless of PulseAudio's state, so this costs nothing and
+    keeps a stray Pulse pseudo-device from ever being a candidate."""
     try:
         import sounddevice as _sd_scan
+        alsa_idx = next(
+            (i for i, api in enumerate(_sd_scan.query_hostapis()) if 'alsa' in (api.get('name') or '').lower()),
+            None,
+        )
         for idx, dev in enumerate(_sd_scan.query_devices()):
+            if alsa_idx is not None and dev.get('hostapi') != alsa_idx:
+                continue
             name = (dev.get('name') or '').lower()
             if dev.get('max_input_channels', 0) > 0 and any(kw in name for kw in RESPEAKER_KEYWORDS):
                 return idx, dev['max_input_channels']

@@ -3195,9 +3195,44 @@ class TestReSpeakerDeviceDiscovery:
         with patch('sounddevice.query_devices', return_value=fake_devices):
             assert archer._find_respeaker_device() is None
 
+    def test_prefers_alsa_over_a_same_named_device_on_another_hostapi(self):
+        """A same-named device reported under a non-ALSA host API (e.g. a
+        stray Pulse pseudo-device) must not be picked over the real ALSA
+        one, even when ALSA is present and working — see the comment on
+        _find_respeaker_device() for why this matters at all."""
+        fake_hostapis = [{'name': 'ALSA'}, {'name': 'pulse'}]
+        fake_devices = [
+            {'name': 'ReSpeaker via pulse', 'max_input_channels': 6, 'hostapi': 1},
+            {'name': 'ReSpeaker 4 Mic Array', 'max_input_channels': 6, 'hostapi': 0},
+        ]
+        with patch('sounddevice.query_hostapis', return_value=fake_hostapis), \
+             patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() == (1, 6)  # index 1 = the ALSA-hostapi device
+
     def test_scan_error_returns_none_not_raises(self):
         with patch('sounddevice.query_devices', side_effect=RuntimeError('no audio backend')):
             assert archer._find_respeaker_device() is None
+
+
+class TestPinSoundDeviceToAlsa:
+    """archer._pin_sounddevice_to_alsa() — the real answer to 'does
+    PulseAudio work on archer-os': no, and it isn't supposed to (no D-Bus
+    session bus, no systemd — see the docstring on this function in
+    archer.py). This points PortAudio's default device resolution at ALSA
+    explicitly so a failed Pulse probe during Pa_Initialize() can't affect
+    it, regardless of what host APIs a given libportaudio2 build has
+    compiled in."""
+
+    def test_pins_alsa_when_present(self):
+        fake_sd = MagicMock()
+        fake_sd.query_hostapis.return_value = [{'name': 'OSS'}, {'name': 'ALSA'}]
+        assert archer._pin_sounddevice_to_alsa(fake_sd) is True
+        assert fake_sd.default.hostapi == 1
+
+    def test_returns_false_when_no_alsa_hostapi(self):
+        fake_sd = MagicMock()
+        fake_sd.query_hostapis.return_value = [{'name': 'JACK Audio Connection Kit'}]
+        assert archer._pin_sounddevice_to_alsa(fake_sd) is False
 
 
 class TestExtractChannel:

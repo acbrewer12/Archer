@@ -145,11 +145,18 @@ mkdir -p "$MOUNT/boot/efi"
 mount "${LOOP}p2" "$MOUNT/boot/efi"
 
 # ── 4. Bootstrap minimal Debian ──────────────────────────────────
+# libportaudio2 (not pulseaudio) is what the ReSpeaker/Vosk voice stack
+# actually needs — sounddevice (Python) links against it. Deliberately no
+# PulseAudio here: archer-os has no D-Bus session bus and no systemd (see
+# CLAUDE.md §10), and Pulse's autospawn/session model is exactly the kind
+# of session infrastructure this OS was built to avoid. A single always-on
+# ALSA capture doesn't need it — see the ALSA host-API pin in archer.py
+# near `import sounddevice as _sd` for the rest of this decision.
 step "Bootstrapping Debian $DEBIAN_RELEASE (this takes ~5 minutes)..."
 debootstrap \
     --arch=amd64 \
     --include=systemd,systemd-sysv,udev,linux-image-amd64,grub-pc,grub-efi-amd64,\
-python3,python3-pip,python3-venv,ffmpeg,git,curl,alsa-utils \
+python3,python3-pip,python3-venv,ffmpeg,git,curl,alsa-utils,libportaudio2 \
     --exclude=man-db,manpages,info,vim-common,nano \
     "$DEBIAN_RELEASE" "$MOUNT" http://deb.debian.org/debian
 

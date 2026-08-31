@@ -134,12 +134,19 @@ mount "${LOOP}p3" "$MOUNT"
 mkdir -p "$MOUNT/boot/efi"
 mount "${LOOP}p2" "$MOUNT/boot/efi"
 
+# libportaudio2 (not pulseaudio) is what the ReSpeaker/Vosk voice stack
+# actually needs — see build.sh's copy of this comment for the full
+# reasoning (no D-Bus session bus, no systemd — Pulse doesn't belong here).
+# alsa-utils was missing from this list entirely (build.sh has had it;
+# this VM variant hadn't) — added to match, since audio testing on this
+# VM is specifically what surfaced the PulseAudio question in the first
+# place.
 step "Bootstrapping Debian $DEBIAN_RELEASE (~5 min)..."
 debootstrap \
     --arch=amd64 \
     --include=systemd,systemd-sysv,udev,linux-image-amd64,\
 grub-pc,grub-efi-amd64,python3,python3-pip,python3-venv,\
-ffmpeg,git,curl \
+ffmpeg,git,curl,alsa-utils,libportaudio2 \
     --exclude=man-db,manpages,info \
     "$DEBIAN_RELEASE" "$MOUNT" http://deb.debian.org/debian
 
