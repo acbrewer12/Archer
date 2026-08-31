@@ -480,7 +480,64 @@ try:
 except ImportError:
     mic_available = {'ok': False}
 
+# ReSpeaker mic array support. LOGIC-VERIFIED (this session, with a mocked
+# device list — no real ReSpeaker hardware or a booted Pi VM available):
+# device discovery by name, channel-count handling, and the fallback path
+# when no ReSpeaker is found. NOT hardware-verified: whether a real
+# ReSpeaker's actual multi-channel audio capture sounds right and
+# transcribes correctly — that needs the physical array in hand, same
+# caveat as the Bluetooth OBD work. See _find_respeaker_device() and
+# listen_once() below for exactly where that line falls.
+RESPEAKER_KEYWORDS = ('respeaker', 'seeed')
+# Which channel to feed the recognizer, out of however many the array
+# reports. Seeed's ReSpeaker USB Mic Array v2.0 (the most common one) is
+# 6-channel: 0-3 raw mic, 4 processed/beamformed, 5 playback loopback —
+# their own docs point at channel 0 for the simplest, most broadly
+# portable integration across ReSpeaker variants (2-mic, 4-mic, and the
+# 6-channel USB array all have a channel 0; not all have a "processed"
+# channel 4 in the same place). Override via env var for a specific model
+# where a different channel is known to work better.
+RESPEAKER_CHANNEL_INDEX = int(os.environ.get('RESPEAKER_CHANNEL_INDEX', '0'))
+
+mic_device = {'index': None, 'channels': 1, 'is_respeaker': False}
+
+def _find_respeaker_device():
+    """Return (device_index, channel_count) for a connected ReSpeaker, or
+    None if none is found — checked by name, not assumed to be whatever
+    the OS considers the default input device."""
+    try:
+        import sounddevice as _sd_scan
+        for idx, dev in enumerate(_sd_scan.query_devices()):
+            name = (dev.get('name') or '').lower()
+            if dev.get('max_input_channels', 0) > 0 and any(kw in name for kw in RESPEAKER_KEYWORDS):
+                return idx, dev['max_input_channels']
+    except Exception as e:
+        print(f'[VOICE] ReSpeaker device scan error: {e}')
+    return None
+
+def _extract_channel(raw_bytes, channel_index, num_channels):
+    """De-interleave one channel's int16 samples out of a multi-channel
+    raw PCM buffer (a ReSpeaker's 4-6 mic channels arrive interleaved —
+    feeding all of them straight to a mono-expecting recognizer produces
+    garbage, not just noisy audio)."""
+    import array
+    samples = array.array('h')
+    samples.frombytes(raw_bytes)
+    return samples[channel_index::num_channels].tobytes()
+
 def check_microphone():
+    found = _find_respeaker_device()
+    if found:
+        device_idx, channels = found
+        mic_device['index']        = device_idx
+        mic_device['channels']     = channels
+        mic_device['is_respeaker'] = True
+        mic_available['ok']        = True
+        print(f"[VOICE] ReSpeaker detected at device {device_idx} ({channels}ch, "
+              f"using channel {RESPEAKER_CHANNEL_INDEX}) — say 'Archer' to activate")
+        return
+
+    mic_device['is_respeaker'] = False
     try:
         import speech_recognition as sr
         with sr.Microphone() as source:
@@ -497,14 +554,24 @@ def listen_once(timeout=5, phrase_limit=8):
             import json as _json
             samplerate = 16000
             blocksize  = 8000
-            frames     = []
             max_frames = int(samplerate / blocksize * (timeout + phrase_limit))
             rec = _KaldiRec(_vosk_model, samplerate)
-            with _sd.RawInputStream(samplerate=samplerate, blocksize=blocksize,
-                                    dtype='int16', channels=1) as stream:
+            # channels=1, no device= when no ReSpeaker was found — identical
+            # to the pre-ReSpeaker behavior, unchanged, same default-device
+            # fallback spirit as "no microphone found, text input only".
+            stream_kwargs = {'samplerate': samplerate, 'blocksize': blocksize, 'dtype': 'int16'}
+            if mic_device['is_respeaker']:
+                stream_kwargs['device']   = mic_device['index']
+                stream_kwargs['channels'] = mic_device['channels']
+            else:
+                stream_kwargs['channels'] = 1
+            with _sd.RawInputStream(**stream_kwargs) as stream:
                 for _ in range(max_frames):
                     data, _ = stream.read(blocksize)
-                    if rec.AcceptWaveform(bytes(data)):
+                    raw = bytes(data)
+                    if mic_device['is_respeaker'] and mic_device['channels'] > 1:
+                        raw = _extract_channel(raw, RESPEAKER_CHANNEL_INDEX, mic_device['channels'])
+                    if rec.AcceptWaveform(raw):
                         result = _json.loads(rec.Result())
                         text = result.get('text', '').strip()
                         if text:
@@ -517,7 +584,17 @@ def listen_once(timeout=5, phrase_limit=8):
 
     try:
         import speech_recognition as sr
-        with sr.Microphone() as source:
+        # Device selection only — SpeechRecognition's Microphone always
+        # opens its PyAudio stream at channels=1 internally regardless of
+        # what the device actually supports (not something this codebase
+        # controls), so a ReSpeaker on this fallback path gets pointed at
+        # by device_index but doesn't get the same per-channel extraction
+        # the Vosk path above does. Real multi-channel handling on this
+        # path would need a system-level ALSA route/downmix, not an
+        # application-level fix — noted here rather than silently assumed
+        # to be solved.
+        mic_kwargs = {'device_index': mic_device['index']} if mic_device['is_respeaker'] else {}
+        with sr.Microphone(**mic_kwargs) as source:
             audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_limit)
         return recognizer.recognize_google(audio).lower()
     except Exception:

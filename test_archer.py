@@ -3165,5 +3165,161 @@ class TestObdPortOverride:
         fake_list_ports.comports.assert_called_once()
 
 
+# ═══════════════════════════════════════════════════════════════
+# 52. ReSpeaker mic array — device discovery, channel extraction,
+# check_microphone()/listen_once() wiring, and the fallback to existing
+# generic-microphone behavior when no ReSpeaker is found.
+#
+# LOGIC-VERIFIED here (mocked sounddevice/vosk — this session has no real
+# ReSpeaker hardware or a booted Pi VM). NOT hardware-verified: whether a
+# real ReSpeaker's actual multi-channel capture sounds right and
+# transcribes correctly. That needs the physical array in hand.
+# ═══════════════════════════════════════════════════════════════
+class TestReSpeakerDeviceDiscovery:
+    def test_finds_respeaker_by_name(self):
+        fake_devices = [
+            {'name': 'Built-in Microphone', 'max_input_channels': 1},
+            {'name': 'ReSpeaker 4 Mic Array (UAC1.0)', 'max_input_channels': 6},
+        ]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() == (1, 6)
+
+    def test_no_respeaker_returns_none(self):
+        fake_devices = [{'name': 'Built-in Microphone', 'max_input_channels': 1}]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() is None
+
+    def test_ignores_output_only_device_named_respeaker(self):
+        """A ReSpeaker's playback/output side shouldn't be picked as an input."""
+        fake_devices = [{'name': 'ReSpeaker 4 Mic Array', 'max_input_channels': 0}]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() is None
+
+    def test_scan_error_returns_none_not_raises(self):
+        with patch('sounddevice.query_devices', side_effect=RuntimeError('no audio backend')):
+            assert archer._find_respeaker_device() is None
+
+
+class TestExtractChannel:
+    def test_extracts_first_channel_from_interleaved_pcm(self):
+        import array
+        # 2 channels, 3 frames: ch0=[10,20,30], ch1=[100,200,300], interleaved
+        interleaved = array.array('h', [10, 100, 20, 200, 30, 300]).tobytes()
+        result = archer._extract_channel(interleaved, channel_index=0, num_channels=2)
+        assert array.array('h', result).tolist() == [10, 20, 30]
+
+    def test_extracts_second_channel_not_first(self):
+        import array
+        interleaved = array.array('h', [10, 100, 20, 200, 30, 300]).tobytes()
+        result = archer._extract_channel(interleaved, channel_index=1, num_channels=2)
+        assert array.array('h', result).tolist() == [100, 200, 300]
+
+
+class TestCheckMicrophoneReSpeaker:
+    def teardown_method(self):
+        archer.mic_device['index']        = None
+        archer.mic_device['channels']     = 1
+        archer.mic_device['is_respeaker'] = False
+        archer.mic_available['ok']        = False
+
+    def test_respeaker_found_sets_mic_device(self):
+        with patch('archer._find_respeaker_device', return_value=(2, 6)):
+            archer.check_microphone()
+        assert archer.mic_device == {'index': 2, 'channels': 6, 'is_respeaker': True}
+        assert archer.mic_available['ok'] is True
+
+    def test_no_respeaker_falls_back_to_generic_check(self):
+        """Same fallback spirit as 'no microphone found, text input only' —
+        a missing ReSpeaker must not break the existing generic path."""
+        fake_source = MagicMock()
+        fake_mic_cm = MagicMock()
+        fake_mic_cm.__enter__.return_value = fake_source
+        fake_mic_cm.__exit__.return_value = False
+        with patch('archer._find_respeaker_device', return_value=None), \
+             patch('speech_recognition.Microphone', return_value=fake_mic_cm), \
+             patch.object(archer.recognizer, 'adjust_for_ambient_noise'):
+            archer.check_microphone()
+        assert archer.mic_device['is_respeaker'] is False
+        assert archer.mic_available['ok'] is True
+
+
+class TestListenOnceReSpeakerChannelHandling:
+    def setup_method(self):
+        self._backup = {
+            'IS_PI':          getattr(archer, '_IS_PI', False),
+            'VOSK_AVAILABLE': getattr(archer, '_VOSK_AVAILABLE', False),
+            'KaldiRec':       getattr(archer, '_KaldiRec', None),
+            'vosk_model':     getattr(archer, '_vosk_model', None),
+            'sd':             getattr(archer, '_sd', None),
+        }
+        archer._IS_PI          = True
+        archer._VOSK_AVAILABLE = True
+        archer._vosk_model     = MagicMock()
+
+    def teardown_method(self):
+        archer._IS_PI          = self._backup['IS_PI']
+        archer._VOSK_AVAILABLE = self._backup['VOSK_AVAILABLE']
+        archer._KaldiRec       = self._backup['KaldiRec']
+        archer._vosk_model     = self._backup['vosk_model']
+        archer._sd             = self._backup['sd']
+        archer.mic_device['index']        = None
+        archer.mic_device['channels']     = 1
+        archer.mic_device['is_respeaker'] = False
+
+    def _fake_vosk_and_stream(self, frame_bytes):
+        fake_rec = MagicMock()
+        fake_rec.AcceptWaveform.return_value = False
+        fake_rec.FinalResult.return_value = '{"text": ""}'
+        archer._KaldiRec = MagicMock(return_value=fake_rec)
+
+        fake_stream = MagicMock()
+        fake_stream.read.return_value = (frame_bytes, False)
+        fake_stream_cm = MagicMock()
+        fake_stream_cm.__enter__.return_value = fake_stream
+        fake_stream_cm.__exit__.return_value = False
+        fake_sd = MagicMock()
+        fake_sd.RawInputStream.return_value = fake_stream_cm
+        archer._sd = fake_sd
+        return fake_rec, fake_sd
+
+    def test_respeaker_detected_opens_stream_with_its_device_and_channels(self):
+        archer.mic_device['index']        = 3
+        archer.mic_device['channels']     = 6
+        archer.mic_device['is_respeaker'] = True
+
+        import array
+        frame = array.array('h', [0] * 6).tobytes()  # one 6-channel sample-group
+        fake_rec, fake_sd = self._fake_vosk_and_stream(frame)
+
+        archer.listen_once(timeout=1, phrase_limit=1)
+
+        fake_sd.RawInputStream.assert_called_once()
+        _, kwargs = fake_sd.RawInputStream.call_args
+        assert kwargs['device'] == 3
+        assert kwargs['channels'] == 6
+
+        # Vosk must receive de-interleaved mono audio (one int16 sample =
+        # 2 bytes), not the raw 6-channel frame (12 bytes) — proves
+        # _extract_channel() actually ran before AcceptWaveform, not just
+        # that the right device/channels were requested.
+        for call in fake_rec.AcceptWaveform.call_args_list:
+            assert len(call.args[0]) == 2
+
+    def test_no_respeaker_falls_back_to_default_device_mono(self):
+        """Regression guard: must be identical to pre-ReSpeaker behavior —
+        channels=1, no device= at all — when nothing was detected."""
+        archer.mic_device['is_respeaker'] = False
+
+        import array
+        frame = array.array('h', [0]).tobytes()
+        fake_rec, fake_sd = self._fake_vosk_and_stream(frame)
+
+        archer.listen_once(timeout=1, phrase_limit=1)
+
+        _, kwargs = fake_sd.RawInputStream.call_args
+        assert kwargs['channels'] == 1
+        assert 'device' not in kwargs
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

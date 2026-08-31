@@ -131,6 +131,14 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
 - Arduino Uno — gauge/lighting control via `/dev/ttyACM0`
 - OLED display (SSD1306 I2C) — local fallback display when phone is not nearby
 - Mirror display — Raspberry Pi HDMI output for heads-up mirror mode
+- ReSpeaker mic array — auto-detected by device name (`check_microphone()`/
+  `listen_once()` in archer.py); falls back to whatever the OS considers
+  the default input device if none is found, same as the "no microphone
+  found, text input only" fallback already in place for that case. Device
+  discovery and channel handling are logic-verified (mocked device list —
+  no real ReSpeaker or booted Pi VM was available while this was built);
+  actual multi-channel audio capture correctness is hardware-only and has
+  not been verified against a physical array.
 
 ### Wiring Diagram (Arduino)
 

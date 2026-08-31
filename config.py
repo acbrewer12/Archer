@@ -123,6 +123,16 @@ OBD_PORT = os.environ.get('OBD_PORT', '')
 # Arduino serial port for gauge/lighting control. Auto-detected if not set.
 ARDUINO_PORT = os.environ.get('ARDUINO_PORT', '')
 
+# A ReSpeaker mic array (any model with "ReSpeaker"/"Seeed" in its device
+# name) is auto-detected by check_microphone()/listen_once() in archer.py
+# — nothing to set for that. This only controls which of the array's
+# channels gets fed to the recognizer once one is found: default 0 (the
+# first raw mic channel — present on every ReSpeaker variant, the safest
+# default). Override for a specific model where a different channel is
+# known to work better (e.g. channel 4 = processed/beamformed audio on
+# the 6-channel ReSpeaker USB Mic Array v2.0).
+RESPEAKER_CHANNEL_INDEX = os.environ.get('RESPEAKER_CHANNEL_INDEX', '0')
+
 # ── FEATURE FLAGS ─────────────────────────────────────────────────────────────
 
 # Set to 'true' to enable OBD emulator (no real OBD hardware needed).
