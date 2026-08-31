@@ -145,16 +145,24 @@ def _pin_sounddevice_to_alsa(sd_module):
     — deliberately, not an oversight — so there is no PulseAudio here and
     none should be added: Pulse's autospawn/session model is exactly the
     kind of session infrastructure this OS was built to avoid, and nothing
-    about a single always-on ALSA capture actually needs it. PortAudio
-    (which sounddevice wraps) still probes every host API it was compiled
-    with at Pa_Initialize(), Pulse included, and a failed probe against an
-    absent Pulse server is where the errors seen testing this came from.
-    Pinning the host API PortAudio resolves "default" devices against to
-    ALSA explicitly means that probe failure can't affect real device
-    resolution, regardless of what host APIs happen to be compiled into
-    whatever libportaudio2 build ships on the real image. See
-    _find_respeaker_device() for the same ALSA filter applied there.
-    Returns True if ALSA was found and pinned, False otherwise."""
+    about a single always-on ALSA capture actually needs it.
+
+    LIMIT, confirmed live on a Pi VM, not assumed: this only helps if
+    `import sounddevice` itself succeeds. It doesn't always — PortAudio
+    calls Pa_Initialize() unconditionally at import time (sounddevice.py's
+    own code, not something archer.py controls or can run anything before),
+    and on that VM it raised sounddevice.PortAudioError there, hard-failing
+    the whole import, because the Pulse host API failed to init — even
+    though ALSA had genuine working hardware underneath (confirmed
+    separately via arecord -l). This function runs after that import
+    already either succeeded or failed, so it cannot rescue a failed one;
+    it only affects default-device resolution for a *successful* import
+    that has multiple usable host APIs. The actual guard against a failed
+    import crashing Archer is the broad `except Exception` around the
+    `import sounddevice` call site, not this function. See
+    _find_respeaker_device() for the same ALSA filter applied to device
+    selection specifically. Returns True if ALSA was found and pinned,
+    False otherwise."""
     for idx, hostapi in enumerate(sd_module.query_hostapis()):
         if 'alsa' in (hostapi.get('name') or '').lower():
             sd_module.default.hostapi = idx
@@ -172,7 +180,18 @@ if _IS_PI:
         _VOSK_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'vosk-model-small-en-us')
         _vosk_model = _VoskModel(_VOSK_MODEL_PATH) if os.path.exists(_VOSK_MODEL_PATH) else None
         _VOSK_AVAILABLE = _vosk_model is not None
-    except ImportError:
+    except Exception as _voice_init_err:
+        # Confirmed live on the Pi VM: `import sounddevice` itself can raise
+        # sounddevice.PortAudioError — Pa_Initialize() fails hard when ANY
+        # compiled-in host API fails to init (Pulse, here), even though ALSA
+        # has genuine working hardware underneath. That's not an ImportError,
+        # so the narrower `except ImportError:` this used to be would have
+        # let it escape uncaught and crash the entire `import archer` at
+        # startup — not just disable Vosk. Broadened deliberately, not by
+        # habit: this whole block exists so a broken optional voice backend
+        # degrades to the SpeechRecognition/PyAudio fallback, never to a
+        # dead server.
+        print(f'[VOICE] Vosk/sounddevice init failed (non-fatal, falling back): {_voice_init_err}')
         _VOSK_AVAILABLE = False
         _vosk_model     = None
 

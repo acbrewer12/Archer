@@ -148,20 +148,34 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
   kind of session infrastructure (an `XDG_RUNTIME_DIR`, normally set up by
   a login/session manager neither of which exist here) — bolting it on
   would fight the OS's own architecture for a single always-on ALSA
-  capture that never needed it. Fix: `libportaudio2` (the actual
-  dependency, previously missing from both build scripts too) is now
-  installed instead of `pulseaudio`, and `_pin_sounddevice_to_alsa()` in
-  archer.py points PortAudio's default device resolution at ALSA
-  explicitly so a failed Pulse probe during its own init can't affect real
-  device resolution.
-  **Genuinely open, not resolvable from where this was built**: whether
-  Debian bookworm's `libportaudio2` ARM64 package even compiles in Pulse
-  support, and whether a failed Pulse probe against an absent server is a
-  graceful "zero devices for that host API, continue normally" (the
-  documented, expected PortAudio behavior, and what this fix assumes) or
-  something more disruptive on that specific build — needs a real check on
-  the Pi VM (`python3 -c "import sounddevice; print(sounddevice.query_devices())"`
-  and see whether it returns a real device list or raises).
+  capture that never needed it.
+  **Confirmed, not assumed, via the same VM: PortAudio's Pa_Initialize()
+  fails hard, not gracefully, when the Pulse host API can't reach a
+  server** — even with genuine working ALSA hardware underneath (a
+  VMware-emulated Ensoniq AudioPCI card, confirmed independently via
+  `arecord -l`). That corrects the original assumption in this section
+  (and in `_pin_sounddevice_to_alsa()`'s original docstring) that PortAudio
+  would degrade gracefully; on Debian's `libportaudio2` build it doesn't.
+  Two consequences, both fixed:
+  1. `import sounddevice` itself can raise `sounddevice.PortAudioError` —
+     not an `ImportError` — so the narrow `except ImportError:` this
+     codebase used around Vosk/sounddevice setup would have let it escape
+     uncaught and **crashed the entire `import archer` at startup**, not
+     just disabled Vosk. Broadened to `except Exception:`, confirmed with
+     a test that fails against the narrow version before confirming it
+     passes against the fix.
+  2. `_pin_sounddevice_to_alsa()` (still correct and still kept — it helps
+     default-device resolution when the import *does* succeed) cannot
+     rescue a failed import; its docstring now says so explicitly instead
+     of the disproven "probe failure can't affect it" framing.
+  **Still open — a real fix for Vosk/ReSpeaker to actually work, not just
+  fail safely**: the confirmed root cause is that Debian's `libportaudio2`
+  package compiles in Pulse support that hard-fails without a running
+  server. The reliable fix is building PortAudio from source without Pulse
+  support, replacing the `apt`-installed package — genuinely not something
+  verifiable from where this was built (no C compiler, no network access to
+  fetch/build PortAudio, no way to confirm the exact configure flag). Not
+  yet implemented; tracked as a follow-up rather than guessed at blind.
 
 ### Wiring Diagram (Arduino)
 

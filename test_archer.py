@@ -3356,5 +3356,49 @@ class TestListenOnceReSpeakerChannelHandling:
         assert 'device' not in kwargs
 
 
+# ═══════════════════════════════════════════════════════════════
+# 53. Voice init (archer.py:164) — a non-ImportError during vosk/sounddevice
+# setup must not crash the whole `import archer`.
+#
+# Confirmed live on a Pi VM: `import sounddevice` itself can raise
+# sounddevice.PortAudioError — Pa_Initialize() fails hard when any
+# compiled-in host API (Pulse, there) fails to init, even with genuine
+# working ALSA hardware underneath (a VMware-emulated Ensoniq AudioPCI
+# card, confirmed separately via arecord -l). That's not an ImportError,
+# so the `except ImportError:` this block used to have would have let it
+# escape uncaught and crash Archer at startup, not just disable Vosk.
+# ═══════════════════════════════════════════════════════════════
+class TestVoiceInitBroadException:
+    def test_non_import_error_during_voice_init_does_not_crash_archer_import(self, tmp_path):
+        # Fake vosk — succeeds, so execution reaches the sounddevice import
+        # (which comes after it in archer.py's real import order).
+        (tmp_path / 'vosk.py').write_text(
+            'class Model:\n'
+            '    def __init__(self, *a, **k): pass\n'
+            'class KaldiRecognizer:\n'
+            '    def __init__(self, *a, **k): pass\n'
+        )
+        # Fake sounddevice — raises AT IMPORT TIME, not ImportError, matching
+        # the real sounddevice.PortAudioError shape confirmed on the Pi VM:
+        # a plain Exception subclass, raised from the module's own top-level
+        # code during `import sounddevice`, not from any function call.
+        (tmp_path / 'sounddevice.py').write_text(
+            'class PortAudioError(Exception):\n'
+            '    pass\n'
+            'raise PortAudioError("Error initializing PortAudio: Unanticipated host error")\n'
+        )
+
+        env = dict(os.environ)
+        env['PYTHONPATH'] = str(tmp_path) + os.pathsep + env.get('PYTHONPATH', '')
+        result = subprocess.run(
+            [sys.executable, '-c',
+             "import platform; platform.system = lambda: 'Linux'; platform.machine = lambda: 'armv7l'; "
+             "import archer; print('IMPORT_OK', archer._VOSK_AVAILABLE)"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=os.path.dirname(os.path.abspath(archer.__file__)),
+        )
+        assert 'IMPORT_OK False' in result.stdout, result.stdout + result.stderr
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
