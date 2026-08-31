@@ -27,9 +27,30 @@ echo "Powering on the Bluetooth adapter..."
 # confirm each one hangs individually: these are one-shot adapter-state
 # commands with no legitimate reason to ever take more than a moment, so
 # there's nothing to lose by guarding them the same way.
-timeout 5 bluetoothctl power on
-timeout 5 bluetoothctl agent on
-timeout 5 bluetoothctl default-agent
+#
+# Confirmed live: the timeouts themselves work (exit 124 when bluetoothd
+# isn't reachable), but under set -e that killed the script silently —
+# this is a manual, tty2-shell tool, so a person needs to see WHY it
+# stopped, not just land back at a bare prompt. archer-os has no systemd
+# (archer_init.c is PID 1 — see its header), so there's no `systemctl
+# status bluetooth` to point at; archer_init's own bluetoothd start/exit
+# log lines go to /run/archer_init.log and dmesg instead (see ilog() in
+# archer_init.c) — that's what these messages point to.
+timeout 5 bluetoothctl power on || {
+    echo "ERROR: bluetoothctl power on timed out — is bluetoothd running at all?" >&2
+    echo "Check: ps aux | grep bluetoothd   or   cat /run/archer_init.log" >&2
+    exit 1
+}
+timeout 5 bluetoothctl agent on || {
+    echo "ERROR: bluetoothctl agent on timed out — bluetoothd isn't responding." >&2
+    echo "Check: ps aux | grep bluetoothd   or   cat /run/archer_init.log" >&2
+    exit 1
+}
+timeout 5 bluetoothctl default-agent || {
+    echo "ERROR: bluetoothctl default-agent timed out — bluetoothd isn't responding." >&2
+    echo "Check: ps aux | grep bluetoothd   or   cat /run/archer_init.log" >&2
+    exit 1
+}
 
 echo "Scanning for 15 seconds — make sure the OBDLink MX+ is powered and discoverable..."
 timeout 15 bluetoothctl scan on || true
@@ -42,10 +63,11 @@ echo "Discovered devices:"
 # Unlike that one, a timeout here is a real failure, not a normal way for
 # the command to end — no `|| true`, let set -e stop the script rather
 # than falling through to a MAC prompt with nothing to actually pick from.
-if ! timeout 5 bluetoothctl devices; then
-    echo "bluetoothctl devices timed out — is bluetoothd actually running? (try: bluetoothctl show)" >&2
+timeout 5 bluetoothctl devices || {
+    echo "ERROR: bluetoothctl devices timed out — is bluetoothd actually running?" >&2
+    echo "Check: ps aux | grep bluetoothd   or   cat /run/archer_init.log" >&2
     exit 1
-fi
+}
 echo
 
 read -rp "Enter the OBDLink MX+'s MAC address from the list above: " MAC
