@@ -175,6 +175,50 @@ chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     network-manager avahi-daemon dbus openssh-server isc-dhcp-client sudo bluez
 
+# ── PortAudio, rebuilt from source without PulseAudio support ─────
+# Debian's libportaudio2 (installed above, via debootstrap) compiles in
+# Pulse support by default ("--with-pulseaudio" autodetects it whenever
+# libpulse-dev is present at build time) — confirmed live on a Pi VM that
+# this makes PortAudio's Pa_Initialize() fail HARD, not gracefully, the
+# moment no Pulse server is reachable, even with genuine working ALSA
+# hardware underneath. archer-os deliberately has no PulseAudio (see the
+# note above `import sounddevice as _sd` in archer.py) — belt and
+# suspenders here, not either/or: pass --without-pulseaudio explicitly
+# (durable even if libpulse-dev is ever pulled in later by something
+# unrelated — the same kind of silent architectural drift this project
+# tries to avoid elsewhere) AND never install libpulse-dev in this chroot
+# either (so autodetect would skip Pulse on its own regardless). Installs
+# to /usr/local, which Debian's default ld.so.conf search order already
+# prefers over apt's /usr/lib copy, so nothing needs to be done to make
+# this version take precedence — and if this build ever fails, apt's
+# libportaudio2 quietly remains as a working (if Pulse-fragile) fallback
+# rather than leaving no PortAudio at all.
+step "Building PortAudio from source without PulseAudio support..."
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    build-essential libasound2-dev pkg-config 2>&1 || \
+    log "WARNING: PortAudio build deps failed to install — Vosk/ReSpeaker may hit the Pulse hard-fail issue"
+PA_TARBALL="pa_stable_v190700_20210406.tgz"
+if chroot "$MOUNT" bash -c "cd /tmp && curl -fsSLO https://files.portaudio.com/archives/$PA_TARBALL"; then
+    chroot "$MOUNT" bash -c "
+        set -e
+        cd /tmp
+        tar xzf $PA_TARBALL
+        cd portaudio
+        ./configure --without-pulseaudio
+        make -j\$(nproc)
+        make install
+        ldconfig
+    " 2>&1 || log "WARNING: PortAudio from-source build failed — apt's libportaudio2 remains as fallback (Pulse hard-fail issue may still occur)"
+    chroot "$MOUNT" rm -rf /tmp/portaudio "/tmp/$PA_TARBALL"
+else
+    log "WARNING: Could not download PortAudio source — apt's libportaudio2 remains as fallback (Pulse hard-fail issue may still occur)"
+fi
+# Purge build-only deps to keep the image lean — same spirit as the
+# dpkg.cfg.d/99archer-build cleanup a few lines down.
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get purge -y -qq \
+    build-essential libasound2-dev pkg-config 2>&1 || true
+chroot "$MOUNT" apt-get autoremove -y -qq 2>&1 || true
+
 # X11 kiosk — pre-register Xorg permissions so the setuid-registration step
 # doesn't abort the build in restricted build environments (WSL2 etc.).
 # Tell dpkg not to set setuid on Xorg (0755 instead of 4755). /usr/bin/Xorg

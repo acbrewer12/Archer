@@ -169,6 +169,39 @@ chmod +x "$MOUNT/usr/sbin/policy-rc.d"
 DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
     network-manager avahi-daemon dbus sudo isc-dhcp-client curl bluez
 
+# ── PortAudio, rebuilt from source without PulseAudio support ─────
+# See build.sh's copy of this comment for the full reasoning (confirmed
+# live on this exact VM: Pa_Initialize() fails hard, not gracefully, when
+# Pulse can't reach a server, even with genuine working ALSA hardware
+# underneath — archer-os deliberately has no PulseAudio). Belt and
+# suspenders: --without-pulseaudio explicitly, and libpulse-dev never
+# installed either. Installs to /usr/local, which Debian's ld.so.conf
+# already prefers over apt's /usr/lib copy; apt's libportaudio2 stays as
+# a fallback if this build ever fails.
+step "Building PortAudio from source without PulseAudio support..."
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get install -y -qq \
+    build-essential libasound2-dev pkg-config 2>&1 || \
+    log "WARNING: PortAudio build deps failed to install — Vosk/ReSpeaker may hit the Pulse hard-fail issue"
+PA_TARBALL="pa_stable_v190700_20210406.tgz"
+if chroot "$MOUNT" bash -c "cd /tmp && curl -fsSLO https://files.portaudio.com/archives/$PA_TARBALL"; then
+    chroot "$MOUNT" bash -c "
+        set -e
+        cd /tmp
+        tar xzf $PA_TARBALL
+        cd portaudio
+        ./configure --without-pulseaudio
+        make -j\$(nproc)
+        make install
+        ldconfig
+    " 2>&1 || log "WARNING: PortAudio from-source build failed — apt's libportaudio2 remains as fallback (Pulse hard-fail issue may still occur)"
+    chroot "$MOUNT" rm -rf /tmp/portaudio "/tmp/$PA_TARBALL"
+else
+    log "WARNING: Could not download PortAudio source — apt's libportaudio2 remains as fallback (Pulse hard-fail issue may still occur)"
+fi
+DEBIAN_FRONTEND=noninteractive chroot "$MOUNT" apt-get purge -y -qq \
+    build-essential libasound2-dev pkg-config 2>&1 || true
+chroot "$MOUNT" apt-get autoremove -y -qq 2>&1 || true
+
 # X11 kiosk — pre-register Xorg permissions so WSL2 setuid block doesn't abort
 mkdir -p "$MOUNT/var/lib/dpkg"
 # Tell dpkg not to set setuid on Xorg (0755 instead of 4755). /usr/bin/Xorg

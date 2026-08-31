@@ -168,14 +168,26 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
      default-device resolution when the import *does* succeed) cannot
      rescue a failed import; its docstring now says so explicitly instead
      of the disproven "probe failure can't affect it" framing.
-  **Still open — a real fix for Vosk/ReSpeaker to actually work, not just
-  fail safely**: the confirmed root cause is that Debian's `libportaudio2`
-  package compiles in Pulse support that hard-fails without a running
-  server. The reliable fix is building PortAudio from source without Pulse
-  support, replacing the `apt`-installed package — genuinely not something
-  verifiable from where this was built (no C compiler, no network access to
-  fetch/build PortAudio, no way to confirm the exact configure flag). Not
-  yet implemented; tracked as a follow-up rather than guessed at blind.
+  **Resolved**: both build scripts now build PortAudio from source with
+  `--without-pulseaudio` (confirmed as a real flag against a live Pi VM's
+  PortAudio source — default is `[autodetect]`, not always-on) right after
+  installing `libportaudio2` via `apt`. Belt and suspenders, not either/or:
+  the explicit flag stays correct even if `libpulse-dev` is ever pulled in
+  transitively later by something unrelated (the same kind of silent
+  architectural drift this project tries to avoid elsewhere); never
+  installing `libpulse-dev` in the chroot means autodetect would skip
+  Pulse on its own regardless of the flag. Installs to `/usr/local`, which
+  Debian's default `ld.so.conf` search order already prefers over apt's
+  copy — nothing else needs to change for it to take effect. If the
+  from-source build ever fails (network, a changed tarball URL), it warns
+  and falls back to apt's `libportaudio2` rather than aborting the image
+  build; that fallback still has the Pulse hard-fail issue, same as
+  before this fix, not a new problem.
+  **Still not verifiable from where this was built**: the from-source
+  build itself has never actually run — no C compiler, no network access
+  to fetch PortAudio, in this environment. Confirm it on the Pi VM before
+  trusting it: `python3 -c "import sounddevice; print(sounddevice.query_devices())"`
+  should now return a real device list with no PortAudioError at all.
 
 ### Wiring Diagram (Arduino)
 

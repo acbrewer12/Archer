@@ -55,6 +55,17 @@ sys.stdout = _TeeWriter(sys.stdout)
 sys.stderr = _TeeWriter(sys.stderr)
 
 # ── PLATFORM DETECTION ───────────────────
+# FLAGGED, not resolved: both archer-os/build.sh and build-vm.sh
+# debootstrap `--arch=amd64`, so `platform.machine()` reports 'x86_64' on
+# the actual built image, which never starts with 'arm' — meaning _IS_PI
+# would be False there regardless of what hardware it's installed on, and
+# everything gated behind it (Vosk, ReSpeaker, Piper TTS, the whole local
+# voice stack this session's work went into) would never actually run.
+# Found while investigating the PulseAudio/PortAudio work above; not
+# something this session resolved, since it's unclear which side is
+# wrong — PRODUCT.md says "Raspberry Pi 4" (ARM) in several places, but
+# the build scripts have targeted amd64 the whole time. Worth deciding
+# deliberately rather than leaving unreconciled.
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
 
