@@ -2114,7 +2114,39 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] Gemini failed: {e}")
 
-    # Try 4 — Local Ollama (Pi only; offline-emergency fallback)
+    # Try 4 — OpenRouter (QUATERNARY: OpenAI-compatible gateway, added as a
+    # genuine 4th waterfall step, not a replacement for Groq/Cerebras/Gemini —
+    # those are kept as independent providers deliberately, per the "different
+    # provider for true redundancy" reasoning already on the Cerebras step
+    # above; collapsing them into one OpenRouter key would trade that
+    # redundancy for a single upstream account/billing point of failure.
+    # Model choice (meta-llama/llama-3.3-70b-instruct) is a reasonable
+    # default, not a requirement — swap it for whatever OpenRouter model/
+    # routing preference is actually wanted.
+    if not response:
+        OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+        if OPENROUTER_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "meta-llama/llama-3.3-70b-instruct",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] OpenRouter llama-3.3-70b")
+            except Exception as e:
+                print(f"[AI] OpenRouter failed: {e}")
+
+    # Try 5 — Local Ollama (Pi only; offline-emergency fallback)
     # Measured on VM matching target hardware (4 cores/8GB, llama3.2:3b):
     # 7-18s per response (cold start ~18s, warm ~6.9-8s) — confirms Groq/
     # Cerebras/Gemini as primaries above was the right call, not a guess.
@@ -2133,7 +2165,7 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 5 — Smart fallback
+    # Try 6 — Smart fallback
     if not response:
         response = smart_fallback(user_input)
         print("[AI] Fallback")
@@ -6556,6 +6588,20 @@ Archer says:"""
                         req = urllib.request.Request(
                             'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
                             data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req, timeout=10) as r:
+                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                    except Exception:
+                        pass
+            if not response:
+                OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+                if OPENROUTER_KEY:
+                    try:
+                        payload = json.dumps({'model': 'meta-llama/llama-3.3-70b-instruct',
+                                              'messages': [{'role': 'user', 'content': prompt}],
+                                              'max_tokens': 80, 'temperature': 0.8}).encode()
+                        req = urllib.request.Request(
+                            'https://openrouter.ai/api/v1/chat/completions',
+                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json'})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -11287,18 +11333,18 @@ def boot_status():
 
     # 5. AI backend
     hf_ok   = bool(os.environ.get('HF_TOKEN', '').strip())
-    groq_ok = bool(os.environ.get('GROQ_API_KEY', '').strip())
-    if hf_ok and groq_ok:
-        ai_detail = 'HuggingFace + Groq'
-    elif hf_ok:
-        ai_detail = 'HuggingFace'
-    elif groq_ok:
-        ai_detail = 'Groq'
-    else:
-        ai_detail = 'local fallback only'
+    _AI_PROVIDER_KEYS = {
+        'GROQ_API_KEY':       'Groq',
+        'CEREBRAS_API_KEY':   'Cerebras',
+        'GEMINI_API_KEY':     'Gemini',
+        'OPENROUTER_API_KEY': 'OpenRouter',
+    }
+    providers_ok = [name for var, name in _AI_PROVIDER_KEYS.items() if os.environ.get(var, '').strip()]
+    detail_parts = (['HuggingFace'] if hf_ok else []) + providers_ok
+    ai_detail = ' + '.join(detail_parts) if detail_parts else 'local fallback only'
     all_checks.append({
         'id': 'ai', 'label': 'AI BACKEND',
-        'status': 'ok' if (hf_ok or groq_ok) else 'warn',
+        'status': 'ok' if (hf_ok or providers_ok) else 'warn',
         'detail': ai_detail,
     })
 

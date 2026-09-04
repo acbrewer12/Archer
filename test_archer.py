@@ -420,7 +420,7 @@ class TestLocalOllamaColdStart:
     def setup_method(self):
         self._env_backup = {
             k: os.environ.get(k)
-            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY')
+            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
         }
         for k in self._env_backup:
             os.environ[k] = ''
@@ -456,6 +456,136 @@ class TestLocalOllamaColdStart:
         # swallowed by ask_archer's bare except, and fall through to
         # smart_fallback's generic oil text instead of this real answer.
         assert result == 'cold start survived.'
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5c. OpenRouter — 4th fallback step (archer.py: ask_archer, "Try 4")
+# Added as a genuine extra waterfall step alongside Groq/Cerebras/Gemini,
+# not a replacement for them, so it needs the same three things proven
+# about it: it's actually reached, it doesn't jump the queue ahead of an
+# earlier provider that already answered, and its own failure still falls
+# through instead of raising.
+# ═══════════════════════════════════════════════════════════════
+class TestOpenRouterFallback:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+        # Keep Ollama's Pi-only step out of play so these tests isolate
+        # OpenRouter the same way TestLocalOllamaColdStart isolates Ollama.
+        self._is_pi_backup = archer._IS_PI
+        archer._IS_PI = False
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        archer._IS_PI = self._is_pi_backup
+
+    def _fake_response(self, text):
+        body = json.dumps({'choices': [{'message': {'content': text}}]}).encode()
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = body
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_used_when_only_openrouter_key_set(self):
+        """With Groq/Cerebras/Gemini all unset and no Pi/Ollama, OpenRouter
+        is the one live provider left before smart_fallback — confirms it's
+        actually wired into the waterfall, not just present in the diff."""
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', return_value=self._fake_response('OpenRouter answered.')) as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        assert 'OpenRouter answered' in result
+        assert 'openrouter.ai' in mock_urlopen.call_args[0][0].full_url
+
+    def test_not_called_when_earlier_provider_succeeds(self):
+        """Groq succeeding must short-circuit the waterfall — OpenRouter
+        should never be hit if an earlier provider already answered."""
+        os.environ['GROQ_API_KEY'] = 'test-key'
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', return_value=self._fake_response('Groq answered.')) as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        assert 'Groq answered' in result
+        assert mock_urlopen.call_count == 1
+        assert 'groq.com' in mock_urlopen.call_args[0][0].full_url
+
+    def test_falls_through_to_smart_fallback_on_openrouter_failure(self):
+        """OpenRouter erroring (bad key, timeout, etc.) must not crash the
+        request — it should fall through to smart_fallback like every other
+        provider's failure does."""
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', side_effect=OSError('boom')):
+            result = archer.ask_archer('how is the oil temp')
+        assert isinstance(result, str) and len(result) > 0
+
+    def test_skipped_entirely_when_key_unset(self):
+        """No OPENROUTER_API_KEY at all -> urlopen must never be called for
+        it; falls straight through to smart_fallback."""
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        mock_urlopen.assert_not_called()
+        assert isinstance(result, str) and len(result) > 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5d. Boot health check — AI BACKEND status (archer.py:11334-11346)
+# Must report ok when ANY of the four cloud providers is configured, not
+# just Groq — this is exactly the gap flagged during the OpenRouter audit:
+# a Cerebras/Gemini/OpenRouter-only setup used to still show "warn: local
+# fallback only" despite having a real provider configured.
+# ═══════════════════════════════════════════════════════════════
+class TestBootStatusAIBackend:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('HF_TOKEN', 'GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _ai_check(self):
+        r = client.get('/boot/status')
+        data = json.loads(r.data)
+        return next(c for c in data['checks'] if c['id'] == 'ai')
+
+    def test_warn_when_nothing_configured(self):
+        check = self._ai_check()
+        assert check['status'] == 'warn'
+        assert check['detail'] == 'local fallback only'
+
+    def test_ok_when_only_cerebras_configured(self):
+        """The regression case: pre-fix code only checked Groq, so a
+        Cerebras-only setup still reported warn/local-fallback."""
+        os.environ['CEREBRAS_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'Cerebras' in check['detail']
+
+    def test_ok_when_only_openrouter_configured(self):
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'OpenRouter' in check['detail']
+
+    def test_lists_multiple_configured_providers(self):
+        os.environ['GROQ_API_KEY'] = 'test-key'
+        os.environ['GEMINI_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'Groq' in check['detail'] and 'Gemini' in check['detail']
 
 
 # ═══════════════════════════════════════════════════════════════

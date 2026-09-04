@@ -42,6 +42,12 @@ GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 # Google Gemini API key (fallback AI provider).
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
+# OpenRouter API key — OpenAI-compatible gateway, tried as a 4th fallback
+# step after Groq/Cerebras/Gemini (kept separate from those on purpose, not
+# a replacement — see the comment on the OpenRouter step in ask_archer()).
+# Get one at openrouter.ai/keys.
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+
 # ── DISCORD BOT (slash commands, alert buttons, digests) ───────────────────────
 
 # Bot token — needed only to register slash commands (discord_register_commands.py).
