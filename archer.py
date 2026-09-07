@@ -5619,6 +5619,51 @@ DISCORD_OWNER_ID          = os.environ.get('DISCORD_OWNER_ID', '')            # 
 DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')   # channel ID for button-bearing alerts
 DISCORD_DIGEST_HOUR       = int(os.environ.get('DISCORD_DIGEST_HOUR', '20'))  # 24h local hour for the daily digest
 
+# ── DISCORD PER-TIER USER IDS (DM fan-out) ──
+# Same static-allowlist pattern as Slack's SLACK_OWNER_USER_IDS/etc — a
+# known, deliberate shortcut, not an oversight: revocation means editing
+# archer.env and restarting, not something a person does in-app. That
+# tradeoff was accepted once already for Slack (see
+# self-host/README.md "Known gap, tracked deliberately"); this repeats it
+# for Discord rather than building the real one-time-code linking flow,
+# by the same explicit choice, not by not noticing the shortcut existed.
+#
+# DISCORD_OWNER_ID above is a DIFFERENT, older concept — it gates who can
+# run slash commands / click alert buttons (singular, one owner). These
+# four are who gets DMed by discord_dm_fanout() based on alert severity
+# (plural, one list per tier) — unrelated purposes, deliberately not
+# merged into one setting.
+#
+# Unlike Slack (which only tracks tiers 1-3, since it has no Tier-4/valet
+# channel), this goes to Tier 4 too: the fan-out model here sweeps a full
+# 1-4 threshold ("Tier 3 alert reaches 1-3, not 4"), so excluding Tier 4
+# needs a real roster to exclude *from*, not just an absent list.
+def _discord_user_ids(env_var):
+    return {u.strip() for u in os.environ.get(env_var, '').split(',') if u.strip()}
+
+DISCORD_OWNER_IDS     = _discord_user_ids('DISCORD_OWNER_USER_IDS')
+DISCORD_PASSENGER_IDS = _discord_user_ids('DISCORD_PASSENGER_USER_IDS')
+DISCORD_FAMILY_IDS    = _discord_user_ids('DISCORD_FAMILY_USER_IDS')
+DISCORD_VALET_IDS     = _discord_user_ids('DISCORD_VALET_USER_IDS')
+
+def _discord_user_tier(user_id):
+    if user_id in DISCORD_OWNER_IDS:     return 1
+    if user_id in DISCORD_PASSENGER_IDS: return 2
+    if user_id in DISCORD_FAMILY_IDS:    return 3
+    if user_id in DISCORD_VALET_IDS:     return 4
+    return None
+
+def _discord_all_known_users():
+    """Every Discord user ID with a known tier, deduplicated (a user
+    appearing in more than one list — a misconfiguration, not a supported
+    case — resolves to whichever list is checked last below)."""
+    users = {}
+    for uid in DISCORD_OWNER_IDS:     users[uid] = 1
+    for uid in DISCORD_PASSENGER_IDS: users[uid] = 2
+    for uid in DISCORD_FAMILY_IDS:    users[uid] = 3
+    for uid in DISCORD_VALET_IDS:     users[uid] = 4
+    return users
+
 # This was hardcoded False above with nothing ever flipping it — dead
 # regardless of what's set in archer.env. DISCORD_PUBLIC_KEY is the one
 # credential every part of the bot needs (signature verification gates
@@ -5717,7 +5762,81 @@ def discord_send_bot_message(channel_id, message, title='', color=0xCC0000, comp
         print(f'[DISCORD] Bot message failed: {str(e)[:60]}')
         return False
 
-def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000, components=None):
+def _discord_dm_channel_id(user_id):
+    """Open (or fetch the existing) DM channel with a user. Discord has no
+    single 'send this user a DM' endpoint — you create/fetch the DM channel
+    first, then post to it like any other channel (discord_send_bot_message
+    works unchanged on the returned ID)."""
+    if not DISCORD_BOT_TOKEN or not user_id:
+        return None
+    try:
+        req = urllib.request.Request(
+            'https://discord.com/api/v10/users/@me/channels',
+            data=json.dumps({'recipient_id': user_id}).encode(),
+            headers={'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read()).get('id')
+    except Exception as e:
+        print(f'[DISCORD] Could not open DM channel for {user_id}: {str(e)[:60]}')
+        return None
+
+def _discord_send_dm(user_id, message, title=''):
+    channel_id = _discord_dm_channel_id(user_id)
+    if not channel_id:
+        return False
+    return discord_send_bot_message(channel_id, message, title)
+
+def discord_dm_fanout(alert_type, message, min_tier=None, extra_data=None, title=''):
+    """The one function every Discord alert path goes through to decide who
+    gets DMed and to send it — no call site builds its own recipient list.
+
+    Different fan-out model than Slack's, deliberately: slack_route_alert()
+    posts once per qualifying TIER CHANNEL (everyone in that channel sees
+    one shared message). This DMs every INDIVIDUAL known Discord user whose
+    tier is <= min_tier — a real many-recipient fan-out (e.g. a Tier-3
+    alert reaches the Tier-1, Tier-2, AND Tier-3 people, as separate DMs),
+    not a single owner DM and not a shared channel post.
+
+    min_tier: highest tier number that should receive this alert (3 means
+    "Tiers 1, 2, 3 — not 4"). Fails closed to 1 (owner only) if missing or
+    not a real tier number — an alert this function can't confidently scope
+    goes to the owner alone, never broadens by assumption.
+
+    extra_data: optional dict of _DISPLAY_DATA_SENSITIVE_FIELDS-shaped keys
+    (gps_lat/gps_lon/gps_name/etc — see _filter_display_data_for_tier) to
+    attach per-recipient, filtered per-recipient by their own tier — same
+    source of truth the dashboard itself uses for what a given tier sees,
+    not a separate redaction rule invented here. A dict with different key
+    names filters nothing; this only does real work when a caller shapes
+    its data to match.
+    """
+    if not discord_config['enabled'] or not DISCORD_BOT_TOKEN:
+        return
+    try:
+        threshold = int(min_tier)
+        if threshold < 1:
+            threshold = 1
+    except (TypeError, ValueError):
+        threshold = 1
+
+    for user_id, tier in _discord_all_known_users().items():
+        if tier > threshold:
+            continue
+        recipient_message = message
+        if extra_data:
+            filtered = _filter_display_data_for_tier(dict(extra_data), tier)
+            extra_lines = []
+            if filtered.get('gps_lat') is not None and filtered.get('gps_lon') is not None:
+                extra_lines.append(f"https://maps.google.com/?q={filtered['gps_lat']},{filtered['gps_lon']}")
+            if filtered.get('gps_name'):
+                extra_lines.append(f"Location: {filtered['gps_name']}")
+            if extra_lines:
+                recipient_message = message + '\n' + '\n'.join(extra_lines)
+        _discord_send_dm(user_id, recipient_message, title)
+
+def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000, components=None, extra_data=None):
     """Send alert with cooldown to prevent spam. Pass components= to attach
     buttons — this routes through the bot token (see discord_send_bot_message)
     instead of the plain webhook path, and needs DISCORD_BOT_TOKEN and
@@ -5737,6 +5856,14 @@ def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC000
         print(f'[FCM] Alert dispatch failed: {str(_e)[:60]}')
 
     slack_route_alert(alert_type, message, title, color)
+
+    # DM fan-out is independent of the channel-post path below — reuses
+    # _SLACK_ALERT_TIERS as the one shared alert-severity policy table
+    # (max() of its tuple = the highest tier that should see this alert)
+    # rather than a second, Discord-only table that could drift out of
+    # sync with Slack's. _slack_alert_tiers() already defaults unrecognized
+    # alert_types to (1,), so the fail-closed behavior here comes for free.
+    discord_dm_fanout(alert_type, message, max(_slack_alert_tiers(alert_type)), extra_data, title)
 
     if not discord_config['enabled']:
         return

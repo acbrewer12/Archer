@@ -64,6 +64,16 @@ DISCORD_APPLICATION_ID = os.environ.get('DISCORD_APPLICATION_ID', '')
 # Right-click your own name in Discord (Developer Mode on) -> Copy User ID.
 DISCORD_OWNER_ID = os.environ.get('DISCORD_OWNER_ID', '')
 
+# Comma-separated Discord user IDs at each tier, DMed directly by
+# discord_dm_fanout() based on alert severity — a different, plural
+# concept from DISCORD_OWNER_ID above (which just gates who can run
+# commands). Same static-allowlist tradeoff as Slack's *_USER_IDS below:
+# revocation means editing this and restarting, not an in-app action.
+DISCORD_OWNER_USER_IDS     = os.environ.get('DISCORD_OWNER_USER_IDS', '')
+DISCORD_PASSENGER_USER_IDS = os.environ.get('DISCORD_PASSENGER_USER_IDS', '')
+DISCORD_FAMILY_USER_IDS    = os.environ.get('DISCORD_FAMILY_USER_IDS', '')
+DISCORD_VALET_USER_IDS     = os.environ.get('DISCORD_VALET_USER_IDS', '')
+
 # Channel ID for alerts that carry buttons (crash, parking armed) — these
 # go out via the bot token, not a webhook. Right-click the channel -> Copy
 # Channel ID.

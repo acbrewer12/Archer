@@ -2949,6 +2949,169 @@ class TestDiscordDigest:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Discord per-tier DM fan-out (archer.py: discord_dm_fanout(),
+# _discord_user_tier(), _discord_send_dm()). Different fan-out model than
+# Slack's per-requester one — this DMs every individually-known user whose
+# tier qualifies, not one channel post.
+# ═══════════════════════════════════════════════════════════════
+class TestDiscordUserTier:
+    def setup_method(self):
+        self._backup = (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+                         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS)
+        archer.DISCORD_OWNER_IDS     = {'D_OWNER'}
+        archer.DISCORD_PASSENGER_IDS = {'D_PASSENGER'}
+        archer.DISCORD_FAMILY_IDS    = {'D_FAMILY'}
+        archer.DISCORD_VALET_IDS     = {'D_VALET'}
+
+    def teardown_method(self):
+        (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS) = self._backup
+
+    def test_owner_resolves_tier_1(self):
+        assert archer._discord_user_tier('D_OWNER') == 1
+
+    def test_passenger_resolves_tier_2(self):
+        assert archer._discord_user_tier('D_PASSENGER') == 2
+
+    def test_family_resolves_tier_3(self):
+        assert archer._discord_user_tier('D_FAMILY') == 3
+
+    def test_valet_resolves_tier_4(self):
+        assert archer._discord_user_tier('D_VALET') == 4
+
+    def test_unknown_user_resolves_none(self):
+        assert archer._discord_user_tier('D_STRANGER') is None
+
+    def test_all_known_users_mapping(self):
+        assert archer._discord_all_known_users() == {
+            'D_OWNER': 1, 'D_PASSENGER': 2, 'D_FAMILY': 3, 'D_VALET': 4,
+        }
+
+
+class TestDiscordDMFanout:
+    def setup_method(self):
+        self._backup_ids = (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+                             archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS)
+        archer.DISCORD_OWNER_IDS     = {'D1'}
+        archer.DISCORD_PASSENGER_IDS = {'D2'}
+        archer.DISCORD_FAMILY_IDS    = {'D3'}
+        archer.DISCORD_VALET_IDS     = {'D4'}
+        self._backup_enabled = archer.discord_config['enabled']
+        archer.discord_config['enabled'] = True
+        self._backup_token = archer.DISCORD_BOT_TOKEN
+        archer.DISCORD_BOT_TOKEN = 'test-bot-token'
+
+    def teardown_method(self):
+        (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS) = self._backup_ids
+        archer.discord_config['enabled'] = self._backup_enabled
+        archer.DISCORD_BOT_TOKEN = self._backup_token
+
+    def test_tier_3_alert_reaches_1_2_3_not_4(self):
+        """The requirement's own example: a Tier 3 alert must reach Tiers
+        1, 2, 3 as real, separate DMs — and correctly exclude Tier 4."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('crash', 'Impact detected.', min_tier=3)
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1', 'D2', 'D3'}
+
+    def test_fail_closed_when_min_tier_missing(self):
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('unknown_alert', 'Something happened.', min_tier=None)
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1'}
+
+    def test_fail_closed_when_min_tier_not_a_real_tier_number(self):
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('weird', 'x', min_tier='not-a-tier')
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1'}
+
+    def test_disabled_config_sends_nothing(self):
+        archer.discord_config['enabled'] = False
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('crash', 'x', min_tier=3)
+        mock_dm.assert_not_called()
+
+    def test_extra_data_filtered_per_recipient_tier(self):
+        """Tier 1/2 recipients (<3) keep the GPS fields; Tier 3 (>=3) gets
+        them stripped by _filter_display_data_for_tier — the same source
+        of truth the dashboard itself uses for what a tier sees, not a
+        redaction rule invented here."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout(
+                'crash', 'Impact detected.', min_tier=3,
+                extra_data={'gps_lat': 40.7128, 'gps_lon': -74.0060, 'gps_name': 'Home'},
+            )
+        messages = {c.args[0]: c.args[1] for c in mock_dm.call_args_list}
+        assert '40.7128' in messages['D1'] and 'Home' in messages['D1']
+        assert '40.7128' in messages['D2'] and 'Home' in messages['D2']
+        assert '40.7128' not in messages['D3'] and 'Home' not in messages['D3']
+
+    def test_mismatched_extra_data_keys_filter_nothing(self):
+        """A dict shaped with different key names (plain 'lat'/'lon' rather
+        than 'gps_lat'/'gps_lon') isn't redacted at all — proves the reuse
+        is real, not cosmetic: only the exact _DISPLAY_DATA_SENSITIVE_FIELDS
+        names do anything."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout(
+                'crash', 'Impact detected.', min_tier=3,
+                extra_data={'lat': 40.7128, 'lon': -74.0060},
+            )
+        messages = {c.args[0]: c.args[1] for c in mock_dm.call_args_list}
+        assert messages['D1'] == 'Impact detected.'
+        assert messages['D3'] == 'Impact detected.'
+
+
+class TestDiscordDMChannelMechanics:
+    """Confirms DMs actually go through Discord's real two-step DM flow —
+    open/fetch the DM channel, then message that channel id — not a
+    fabricated shortcut."""
+
+    def setup_method(self):
+        self._backup_token = archer.DISCORD_BOT_TOKEN
+        archer.DISCORD_BOT_TOKEN = 'test-bot-token'
+        self._backup_enabled = archer.discord_config['enabled']
+        archer.discord_config['enabled'] = True
+
+    def teardown_method(self):
+        archer.DISCORD_BOT_TOKEN = self._backup_token
+        archer.discord_config['enabled'] = self._backup_enabled
+
+    def _fake_response(self, body_dict, status=200):
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(body_dict).encode()
+        cm.__enter__.return_value.status = status
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_opens_real_dm_channel_before_sending(self):
+        """Discord has no single 'DM this user_id' endpoint — must POST
+        /users/@me/channels with recipient_id first, then message the
+        channel id that comes back. Confirms both calls happen, in order,
+        with the right shapes."""
+        responses = [
+            self._fake_response({'id': 'DM_CHANNEL_123'}),
+            self._fake_response({'id': 'MSG_1'}),
+        ]
+        with patch('urllib.request.urlopen', side_effect=responses) as mock_urlopen:
+            ok = archer._discord_send_dm('D_USER', 'Hello')
+        assert ok is True
+        assert mock_urlopen.call_count == 2
+        first_req  = mock_urlopen.call_args_list[0].args[0]
+        second_req = mock_urlopen.call_args_list[1].args[0]
+        assert first_req.full_url == 'https://discord.com/api/v10/users/@me/channels'
+        assert json.loads(first_req.data)['recipient_id'] == 'D_USER'
+        assert second_req.full_url == 'https://discord.com/api/v10/channels/DM_CHANNEL_123/messages'
+
+    def test_dm_channel_open_failure_does_not_attempt_to_message(self):
+        with patch('urllib.request.urlopen', side_effect=OSError('network down')) as mock_urlopen:
+            ok = archer._discord_send_dm('D_USER', 'Hello')
+        assert ok is False
+        assert mock_urlopen.call_count == 1  # never got to the message step
+
+
+# ═══════════════════════════════════════════════════════════════
 # 49. discord_config/slack_config['enabled'] — computed from real
 # credentials, not hardcoded (regression coverage for a real bug: both
 # dicts were defined before their credential constants existed in the
