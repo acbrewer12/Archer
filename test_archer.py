@@ -3530,5 +3530,243 @@ class TestVoiceInitBroadException:
         assert 'IMPORT_OK False' in result.stdout, result.stdout + result.stderr
 
 
+# ═══════════════════════════════════════════════════════════════
+# Panic mode / lockdown (archer.py: lockdown_state, activate_panic_mode(),
+# _panic_lockdown_active(), POST /panic/activate)
+#
+# Hard constraint under test, not a preference: activate_panic_mode() must
+# never call ask_archer(), casual_monitor(), or any AI provider — it has to
+# keep working even if Groq/Cerebras/Gemini/OpenRouter/local Ollama are all
+# down simultaneously. TestPanicModeAiIndependence proves that directly.
+# ═══════════════════════════════════════════════════════════════
+class TestPanicModeAiIndependence:
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_does_not_call_ask_archer_or_casual_monitor(self):
+        with patch('archer.ask_archer') as mock_ask, \
+             patch('archer.casual_monitor') as mock_casual:
+            result = archer.activate_panic_mode(120)
+        mock_ask.assert_not_called()
+        mock_casual.assert_not_called()
+        assert result['active'] is True
+
+    def test_succeeds_with_every_ai_provider_simultaneously_down(self):
+        """Blank all four cloud keys and make both urlopen (Groq/Cerebras/
+        Gemini/OpenRouter/Slack all go through it) and subprocess.run
+        (Ollama) raise — activate_panic_mode() must still fully succeed,
+        since it never calls into any of that machinery to begin with."""
+        env_keys = ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        backup = {k: os.environ.get(k) for k in env_keys}
+        for k in env_keys:
+            os.environ[k] = ''
+        try:
+            with patch('urllib.request.urlopen', side_effect=OSError('network down')), \
+                 patch('subprocess.run', side_effect=OSError('ollama down')):
+                result = archer.activate_panic_mode(120)
+        finally:
+            for k, v in backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        assert result['active'] is True
+        assert archer.lockdown_state['active'] is True
+
+
+class TestPanicModeCore:
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+        self._location_backup = dict(archer.location_data)
+        self._channel_backup = archer.SLACK_CHANNEL_PANIC
+        self._slack_enabled_backup = archer.slack_config['enabled']
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+        archer.location_data.clear()
+        archer.location_data.update(self._location_backup)
+        archer.SLACK_CHANNEL_PANIC = self._channel_backup
+        archer.slack_config['enabled'] = self._slack_enabled_backup
+
+    def test_posts_directly_to_panic_channel_not_tier_channels(self):
+        """Must bypass slack_route_alert()'s tier fan-out entirely — a
+        single call to the one dedicated channel, not a loop over tiers."""
+        archer.SLACK_CHANNEL_PANIC = 'C_PANIC'
+        with patch('archer.slack_post_message') as mock_send:
+            archer.activate_panic_mode(120)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == 'C_PANIC'
+
+    def test_snapshots_current_location(self):
+        archer.location_data['lat'] = 40.7128
+        archer.location_data['lon'] = -74.0060
+        archer.location_data['location_name'] = 'Home'
+        archer.activate_panic_mode(120)
+        assert archer.lockdown_state['location'] == {
+            'lat': 40.7128, 'lon': -74.0060, 'name': 'Home',
+        }
+
+    def test_sets_relay_control_disabled_flag(self):
+        assert archer.lockdown_state['relay_control_disabled'] is False
+        archer.activate_panic_mode(120)
+        assert archer.lockdown_state['relay_control_disabled'] is True
+
+    def test_window_seconds_recorded(self):
+        result = archer.activate_panic_mode(300)
+        assert result['window_secs'] == 300
+        assert archer.lockdown_state['window_secs'] == 300
+
+    def test_window_clamped_to_max(self):
+        result = archer.activate_panic_mode(999999)
+        assert result['window_secs'] == archer.PANIC_WINDOW_MAX_SECS
+
+    def test_window_clamped_to_min(self):
+        result = archer.activate_panic_mode(1)
+        assert result['window_secs'] == archer.PANIC_WINDOW_MIN_SECS
+
+
+class TestPanicModeExpiry:
+    """Confirms the lockdown expires on its own — no manual reset call
+    needed once expires_at passes (archer.py:_panic_lockdown_active)."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_active_immediately_after_activation(self):
+        archer.activate_panic_mode(120)
+        assert archer._panic_lockdown_active() is True
+
+    def test_expires_once_window_passes_without_manual_reset(self):
+        archer.activate_panic_mode(120)
+        # Simulate the window having already elapsed — no call to any
+        # "deactivate" function, just time passing.
+        archer.lockdown_state['expires_at'] = time.time() - 1
+        assert archer._panic_lockdown_active() is False
+        # And the flag itself flips off as a side effect of the check,
+        # matching _check_lockout()'s lazy-expiry pattern in obd_gatekeeper.py.
+        assert archer.lockdown_state['active'] is False
+
+    def test_still_active_before_window_passes(self):
+        archer.activate_panic_mode(120)
+        archer.lockdown_state['expires_at'] = time.time() + 60
+        assert archer._panic_lockdown_active() is True
+
+
+class TestPanicModeBlocksRegistration:
+    """The actual, live-controllable lock: register_mac() and
+    register_device_endpoint() both refuse new grants while a lockdown is
+    active, then work normally again once it expires."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+        archer.one_time_codes.clear()
+
+    def test_register_mac_blocked_during_lockdown(self):
+        archer.activate_panic_mode(120)
+        code = archer.generate_one_time_code('Visitor', 3)
+        r = client.post('/register_mac', json={'code': code, 'mac': 'AA:BB:CC:DD:EE:FF'})
+        d = json.loads(r.data)
+        assert d['success'] is False
+        assert 'panic' in d['error'].lower()
+
+    def test_register_mac_master_code_also_blocked_during_lockdown(self):
+        """Even the Tier-1 master code must not grant a session during a
+        lockdown — the whole point is no new device gets in, period."""
+        archer._master_code_enabled = True
+        archer._master_code = '999999'
+        try:
+            archer.activate_panic_mode(120)
+            r = client.post('/register_mac', json={'code': '999999', 'mac': 'AA:BB:CC:DD:EE:00'})
+            d = json.loads(r.data)
+            assert d['success'] is False
+        finally:
+            archer._master_code_enabled = False
+            archer._master_code = None
+
+    def test_register_device_blocked_during_lockdown(self):
+        """/register_device requires Tier 1 already — the panic check must
+        still block even an authenticated owner, since the whole point is
+        no new device gets a grant, period."""
+        archer.activate_panic_mode(120)
+        c = _authed_client(1, 'Owner')
+        r = c.post('/register_device', json={'fingerprint': 'fp-panic-test', 'name': 'Visitor', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['ok'] is False
+        assert 'panic' in d['error'].lower()
+
+    def test_register_mac_works_again_after_lockdown_expires(self):
+        archer.activate_panic_mode(120)
+        archer.lockdown_state['expires_at'] = time.time() - 1  # force expiry
+        code = archer.generate_one_time_code('Visitor', 3)
+        # Real success reaches save_mac_whitelist(), which writes
+        # mac_whitelist.json to disk — mock it so the test doesn't leave
+        # that file behind in the repo root.
+        with patch('archer.save_mac_whitelist'), patch('archer.load_mac_whitelist', return_value={}):
+            r = client.post('/register_mac', json={'code': code, 'mac': 'AA:BB:CC:DD:EE:01'})
+        d = json.loads(r.data)
+        assert d['success'] is True
+
+    def test_register_device_works_when_no_lockdown_active(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/register_device', json={'fingerprint': 'fp-no-lockdown', 'name': 'Visitor', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+
+class TestPanicActivateRoute:
+    """POST /panic/activate itself: owner-tier gate and the Tailscale/
+    loopback network gate, independent of each other."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_owner_from_loopback_succeeds(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['active'] is True
+
+    def test_owner_from_tailscale_range_succeeds(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={}, environ_overrides={'REMOTE_ADDR': '100.111.157.35'})
+        assert r.status_code == 200
+
+    def test_owner_from_public_ip_rejected(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={}, environ_overrides={'REMOTE_ADDR': '203.0.113.5'})
+        assert r.status_code == 403
+        assert archer.lockdown_state['active'] is False
+
+    def test_non_owner_tier_from_loopback_rejected(self):
+        c = _authed_client(2, 'Passenger')
+        r = c.post('/panic/activate', json={})
+        assert r.status_code == 403
+        assert archer.lockdown_state['active'] is False
+
+    def test_window_minutes_passed_through(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={'window_minutes': 5})
+        d = json.loads(r.data)
+        assert d['window_secs'] == 300
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

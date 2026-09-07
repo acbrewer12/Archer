@@ -99,6 +99,11 @@ SLACK_OWNER_USER_IDS     = os.environ.get('SLACK_OWNER_USER_IDS', '')
 SLACK_PASSENGER_USER_IDS = os.environ.get('SLACK_PASSENGER_USER_IDS', '')
 SLACK_FAMILY_USER_IDS    = os.environ.get('SLACK_FAMILY_USER_IDS', '')
 
+# Single dedicated channel for panic-mode alerts (POST /panic/activate).
+# Bypasses the tier-based channel routing above entirely — not part of the
+# owner/passenger/family split.
+SLACK_CHANNEL_PANIC = os.environ.get('SLACK_CHANNEL_PANIC', '')
+
 # ── SPOTIFY ───────────────────────────────────────────────────────────────────
 
 # Create an app at developer.spotify.com, set redirect URI to:

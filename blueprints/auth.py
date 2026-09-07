@@ -24,6 +24,8 @@ def _a():
 @csrf_required
 def register_device_endpoint():
     a = _a()
+    if a._panic_lockdown_active():
+        return jsonify({'ok': False, 'error': 'New device registration is locked (panic mode active)'})
     # Tier 1 only — the public registration path is /register_mac with invite codes
     ok, _ = a.require_tier1(request)
     if not ok:
@@ -117,6 +119,8 @@ def register_mac():
     import re as _re
     from datetime import datetime
     a = _a()
+    if a._panic_lockdown_active():
+        return jsonify({'success': False, 'error': 'New device registration is locked (panic mode active)'})
     data = request.json or {}
     code = data.get('code', '').strip()
     mac  = data.get('mac', '').upper()

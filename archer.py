@@ -2921,6 +2921,14 @@ module_states = {
 active_faults = []   # {code, desc, module, severity, injected_at}
 
 # ── GATEKEEPER STATE ──────────────────────────────────────
+# NOTE: this dict is display-only — it is never written anywhere in this
+# file. pi/obd_gatekeeper.py is a separate, standalone process on the Pi
+# (serial HMAC auth + its own GPIO relay) with no network listener and no
+# IPC path to archer.py; the only live thing this process does is shell out
+# to `systemctl is-active obd_gatekeeper` (see obd_auth_status()) to check
+# whether that daemon is running. There is no way to command it to lock
+# from here today — see lockdown_state below for what actually can be
+# locked live, and PANIC MODE's docstring for why the two get conflated.
 gatekeeper_state = {
     'auth_state':        'LOCKED',    # LOCKED / UNLOCKED
     'key_type':          None,        # OWNER / MECHANIC / READONLY
@@ -2929,6 +2937,100 @@ gatekeeper_state = {
     'last_seen':         None,
     'lockout_until':     None,
 }
+
+# ── PANIC MODE (lockdown) ─────────────────────────────────
+# Named "lockdown_state" (not "panic_state") to avoid colliding with the
+# unrelated compustar['panic_active'] flag below — that one is the
+# Compustar alarm's own horn/light panic-button state, a completely
+# different feature that predates this one.
+#
+# Deliberately does NOT call ask_archer(), casual_monitor(), or any AI
+# provider (Groq/Cerebras/Gemini/OpenRouter/local Ollama) — every action in
+# activate_panic_mode() is a direct, local, non-LLM operation, so this
+# keeps working correctly even if all five are down simultaneously. Treat
+# any future edit that makes this depend on the AI chain, even indirectly,
+# as a bug — see TestPanicModeAiIndependence.
+#
+# "Locks the OBD2 Gatekeeper" (as originally scoped) turned out to name
+# the wrong subsystem — pi/obd_gatekeeper.py has no live control channel
+# from here (see gatekeeper_state's note above). What this actually locks
+# is the real, live-controllable equivalent: new device pairings/tier
+# grants via register_mac() / register_device_endpoint().
+lockdown_state = {
+    'active':                 False,
+    'activated_at':           None,
+    'expires_at':             None,
+    'window_secs':            None,
+    'location':               {'lat': None, 'lon': None, 'name': None},
+    # Not wired to anything yet — there is no voice-initiated GPIO relay
+    # control anywhere in this codebase today (confirmed by searching the
+    # whole repo for GPIO/relay use; the only real one is
+    # pi/obd_gatekeeper.py's own relay, gated by HMAC auth + a physical
+    # switch, never by voice). This flag is the safety hook that feature
+    # will need to check once it's built — set here now, deliberately,
+    # so it isn't forgotten and retrofitted in after the fact.
+    'relay_control_disabled': False,
+}
+
+PANIC_WINDOW_DEFAULT_SECS = 30 * 60
+PANIC_WINDOW_MIN_SECS     = 60
+PANIC_WINDOW_MAX_SECS     = 4 * 3600
+
+def _panic_lockdown_active() -> bool:
+    """True if a panic lockdown window is currently in effect.
+
+    Expires lazily on access, the same way obd_gatekeeper.py's own
+    _check_lockout() and archer.py's _revoked_tokens cleanup already work —
+    no background thread/timer needed, and no manual reset required once
+    expires_at passes."""
+    if not lockdown_state['active']:
+        return False
+    if lockdown_state['expires_at'] and time.time() >= lockdown_state['expires_at']:
+        lockdown_state['active'] = False
+        return False
+    return True
+
+def activate_panic_mode(window_secs=PANIC_WINDOW_DEFAULT_SECS):
+    """Trigger panic/lockdown mode. See the module note above lockdown_state
+    for the hard AI-independence constraint — nothing below may call
+    ask_archer(), casual_monitor(), or any AI provider, even indirectly.
+
+    - Blocks new device pairings/tier grants for the window (register_mac()
+      and register_device_endpoint() both check _panic_lockdown_active()),
+      including via the Tier-1 master code.
+    - Posts directly to SLACK_CHANNEL_PANIC via slack_post_message(),
+      bypassing slack_route_alert()'s normal tier-based channel fan-out.
+    - Snapshots the truck's current last-known location — same
+      location_data fields activate_parking_mode() already uses.
+    - Sets relay_control_disabled (see lockdown_state's own comment).
+    """
+    window_secs = max(PANIC_WINDOW_MIN_SECS, min(PANIC_WINDOW_MAX_SECS, int(window_secs)))
+    now = time.time()
+    lockdown_state['active']       = True
+    lockdown_state['activated_at'] = now
+    lockdown_state['expires_at']   = now + window_secs
+    lockdown_state['window_secs']  = window_secs
+    lockdown_state['location'] = {
+        'lat':  location_data.get('lat'),
+        'lon':  location_data.get('lon'),
+        'name': location_data.get('location_name') or 'unknown location',
+    }
+    lockdown_state['relay_control_disabled'] = True
+
+    lat  = lockdown_state['location']['lat']
+    lon  = lockdown_state['location']['lon']
+    name = lockdown_state['location']['name']
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    minutes = window_secs // 60
+    message = (
+        f'\U0001F6A8 PANIC MODE ACTIVATED — {name}\n'
+        f'New device pairings locked for {minutes} min.'
+        + (f'\n{maps_link}' if maps_link else '')
+    )
+    slack_post_message(SLACK_CHANNEL_PANIC, message)
+    log_security('PANIC_MODE_ACTIVATED', window_secs=window_secs, lat=lat, lon=lon)
+    print(f'[PANIC] Activated — locked for {minutes} min, location: {name}')
+    return {'active': True, 'expires_at': lockdown_state['expires_at'], 'window_secs': window_secs}
 
 # ── EMULATOR FLAG ─────────────────────────────────────────
 USE_EMULATOR = True   # False when real OBDLink MX+ is detected
@@ -5910,6 +6012,12 @@ SLACK_TIER_CHANNELS = {
     2: os.environ.get('SLACK_CHANNEL_PASSENGER', ''),
     3: os.environ.get('SLACK_CHANNEL_FAMILY', ''),
 }
+
+# Single dedicated channel for panic-mode alerts — deliberately NOT part of
+# SLACK_TIER_CHANNELS. activate_panic_mode() posts here directly via
+# slack_post_message(), bypassing slack_route_alert()'s tier-based fan-out
+# entirely, per the "one specific, single high-priority channel" requirement.
+SLACK_CHANNEL_PANIC = os.environ.get('SLACK_CHANNEL_PANIC', '')
 
 # Slack user ID -> tier. Slack has no equivalent of the web dashboard's
 # MAC-whitelist/JWT tier system, so this explicit, auditable mapping is the
@@ -9354,6 +9462,11 @@ def build_part_remove():
     return jsonify({'ok': True, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
 
+# NOTE (found while wiring panic mode's registration lock, not fixed here —
+# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
+# own /register_device, which Werkzeug's url_map dispatches to instead
+# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
+# The panic-mode lockdown check lives on the blueprint's version, not here.
 @display_app.route('/register_device', methods=['POST'])
 @csrf_required
 def register_device_endpoint():
@@ -10424,6 +10537,11 @@ async function submitCode() {{
 </script>
 </body></html>"""
 
+# NOTE (found while wiring panic mode's registration lock, not fixed here —
+# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
+# own /register_mac, which Werkzeug's url_map dispatches to instead
+# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
+# The panic-mode lockdown check lives on the blueprint's version, not here.
 @display_app.route('/register_mac', methods=['POST'])
 @_limiter.limit('5 per minute; 20 per hour')
 @csrf_required
@@ -12479,6 +12597,55 @@ def compustar_status_route():
         'last_trigger': compustar['last_trigger'],
         'trigger_count': len(compustar['trigger_log']),
     })
+
+# ── PANIC MODE (lockdown) ROUTE ───────────────────────────
+def _is_tailscale_or_loopback(remote_addr: str) -> bool:
+    """Network-level guard for the panic endpoint, independent of tier auth.
+
+    Caddy is bound to the tailnet IP for the self-hosted deployment, which
+    already keeps outside traffic off the dashboard — but archer.py's own
+    listener is still bound to 0.0.0.0 (a separately tracked, still-open
+    gap: archer.py's run_display_server() passes host='0.0.0.0'), so relying
+    on Caddy's bind alone would not actually stop something reaching this
+    endpoint directly on archer.py's own port. This is the app-level
+    backstop for that gap, scoped to exactly this one sensitive endpoint
+    rather than a blanket fix — loopback stays allowed for local testing,
+    same as the rest of the dashboard's existing loopback exemptions.
+    """
+    import ipaddress
+    if remote_addr in ('127.0.0.1', '::1'):
+        return True
+    try:
+        return ipaddress.ip_address(remote_addr) in ipaddress.ip_network('100.64.0.0/10')
+    except ValueError:
+        return False
+
+@display_app.route('/panic/activate', methods=['POST'])
+@_limiter.limit('5 per minute')
+@csrf_required
+def panic_activate_route():
+    """POST /panic/activate — trigger panic/lockdown mode.
+
+    Owner (Tier 1) only, and only reachable over Tailscale or loopback (see
+    _is_tailscale_or_loopback()). Hard constraint, not a preference: this
+    must keep working even if Groq/Cerebras/Gemini/OpenRouter/local Ollama
+    are all down at once — activate_panic_mode() never calls ask_archer(),
+    casual_monitor(), or any AI provider. See TestPanicModeAiIndependence.
+
+    JSON body: {window_minutes?: int} — defaults to 30, clamped 1-240.
+    """
+    from flask import request as flask_request
+    if not _is_tailscale_or_loopback(flask_request.remote_addr or ''):
+        return jsonify({'error': 'Not reachable from this network'}), 403
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data = flask_request.get_json(silent=True) or {}
+    try:
+        window_secs = int(data.get('window_minutes', PANIC_WINDOW_DEFAULT_SECS // 60)) * 60
+    except (TypeError, ValueError):
+        window_secs = PANIC_WINDOW_DEFAULT_SECS
+    result = activate_panic_mode(window_secs)
+    return jsonify(result)
 
 # ── AMBIENT LIGHTING ──────────────────────────────────────
 @display_app.route('/ambient/set', methods=['POST'])
