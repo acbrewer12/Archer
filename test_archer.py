@@ -3100,6 +3100,14 @@ class TestDiscordDMChannelMechanics:
         assert mock_urlopen.call_count == 2
         first_req  = mock_urlopen.call_args_list[0].args[0]
         second_req = mock_urlopen.call_args_list[1].args[0]
+        # Regression check for a real, confirmed bug: Cloudflare's bot
+        # protection in front of Discord's API 403s any request using
+        # Python's default urllib User-Agent (HTTP 403, error code 1010) —
+        # found live while running discord_register_commands.py. Every
+        # Discord API call must carry a real User-Agent or it silently
+        # fails the same way.
+        assert first_req.get_header('User-agent') == archer._DISCORD_USER_AGENT
+        assert second_req.get_header('User-agent') == archer._DISCORD_USER_AGENT
         assert first_req.full_url == 'https://discord.com/api/v10/users/@me/channels'
         assert json.loads(first_req.data)['recipient_id'] == 'D_USER'
         assert second_req.full_url == 'https://discord.com/api/v10/channels/DM_CHANNEL_123/messages'

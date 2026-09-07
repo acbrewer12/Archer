@@ -5619,6 +5619,13 @@ DISCORD_OWNER_ID          = os.environ.get('DISCORD_OWNER_ID', '')            # 
 DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')   # channel ID for button-bearing alerts
 DISCORD_DIGEST_HOUR       = int(os.environ.get('DISCORD_DIGEST_HOUR', '20'))  # 24h local hour for the daily digest
 
+# Without this, Cloudflare's bot protection in front of Discord's API
+# rejects the request outright (HTTP 403, error code 1010) before it ever
+# reaches Discord — confirmed live via discord_register_commands.py, not a
+# guess. Python's default urllib User-Agent triggers it; every Discord API
+# call in this file needs this same header for the same reason.
+_DISCORD_USER_AGENT = 'DiscordBot (https://github.com/archer, 1.0)'
+
 # ── DISCORD PER-TIER USER IDS (DM fan-out) ──
 # Same static-allowlist pattern as Slack's SLACK_OWNER_USER_IDS/etc — a
 # known, deliberate shortcut, not an oversight: revocation means editing
@@ -5724,7 +5731,7 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
         req  = urllib.request.Request(
             webhook_url,
             data    = data,
-            headers = {'Content-Type': 'application/json'},
+            headers = {'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
             method  = 'POST'
         )
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -5753,7 +5760,7 @@ def discord_send_bot_message(channel_id, message, title='', color=0xCC0000, comp
         req  = urllib.request.Request(
             f'https://discord.com/api/v10/channels/{channel_id}/messages',
             data    = data,
-            headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json'},
+            headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
             method  = 'POST'
         )
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -5773,7 +5780,7 @@ def _discord_dm_channel_id(user_id):
         req = urllib.request.Request(
             'https://discord.com/api/v10/users/@me/channels',
             data=json.dumps({'recipient_id': user_id}).encode(),
-            headers={'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json'},
+            headers={'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
             method='POST',
         )
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -6008,7 +6015,7 @@ def _discord_deferred_ask(interaction, question):
         req = urllib.request.Request(
             f'https://discord.com/api/v10/webhooks/{DISCORD_APPLICATION_ID}/{interaction["token"]}/messages/@original',
             data=data,
-            headers={'Content-Type': 'application/json'},
+            headers={'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
             method='PATCH',
         )
         with urllib.request.urlopen(req, timeout=10):

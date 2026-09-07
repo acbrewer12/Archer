@@ -55,7 +55,16 @@ def main():
     req = urllib.request.Request(
         f'https://discord.com/api/v10/applications/{APP_ID}/commands',
         data=data,
-        headers={'Authorization': f'Bot {BOT_TOKEN}', 'Content-Type': 'application/json'},
+        headers={
+            'Authorization': f'Bot {BOT_TOKEN}',
+            'Content-Type': 'application/json',
+            # Without this, Cloudflare's bot protection in front of Discord's
+            # API rejects the request outright (HTTP 403, error code 1010)
+            # before it ever reaches Discord — confirmed live, not a guess.
+            # Python's default urllib User-Agent triggers it; any real
+            # identifying string (Discord's own recommended format) clears it.
+            'User-Agent': 'DiscordBot (https://github.com/archer, 1.0)',
+        },
         method='PUT',
     )
     with urllib.request.urlopen(req, timeout=15) as r:
