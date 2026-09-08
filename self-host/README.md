@@ -8,11 +8,11 @@ This is the piece that makes self-hosting safe instead of scary. Archer has two 
 
 **Private (family — phone, watch, Roku):** routed through **Tailscale**, a private mesh network between specifically-approved devices. No ports opened to the public internet, no exposed attack surface, no static IP needed. Devices connect as if they're on the home network, from anywhere.
 
-**Public (the fan page, meant for strangers by design):** this one genuinely needs to stay internet-reachable, so it gets the traditional treatment — **Caddy** as a reverse proxy (automatic HTTPS via Let's Encrypt, far less config than nginx+certbot) plus **Dynamic DNS** to handle a home IP that changes periodically.
+**Public (the fan page, meant for strangers by design):** this one genuinely needs to stay internet-reachable, so it gets its own Caddy block on a plain HTTP port (80) — no domain name, no Let's Encrypt, no Dynamic DNS. A bare port has no "host" for Caddy to provision a certificate for, and deliberately not giving it one avoids Caddy's automatic-HTTPS behavior, which does trigger the moment a site address gets an actual hostname/IP instead of a bare port — confirmed live, the hard way, in this exact deployment (it silently switches the site to expect TLS and starts provisioning its own internal CA cert instead of just serving plain HTTP).
 
 Treating these the same way is what makes self-hosting feel like it requires hardening a whole server against the internet. Splitting them means the private, more-important side barely needs traditional security work at all.
 
-Both Caddy blocks proxy to the **same** archer.py process and port — there's only one backend. Tier separation (owner / passenger / family / valet) happens entirely inside archer.py itself via `get_request_tier()` (MAC whitelist, signed JWT cookie, or owner PIN), the exact same way it already works on the public HuggingFace Space today with no network-level gating at all. See "Real open questions" below for what this changed from the original draft.
+Both Caddy blocks proxy to the **same** archer.py process and port — there's only one backend. Tier separation (owner / passenger / family / valet) happens inside archer.py itself via `get_request_tier()` (MAC whitelist, signed JWT cookie, or owner PIN) either way, but **the public block is also path-restricted at the Caddy layer** to an explicit allowlist of routes confirmed public-safe (`/fans`, `/fan`, `/register`, `/csrf_token`, `/register_mac`, `/fans/ask`, `/fans/react`, `/fans/stats`, `/display_data`) — everything else 404s before it ever reaches archer.py. This changed from an earlier draft that proxied the whole app on both blocks and relied on archer.py's tier system alone (matching the existing, ungated HuggingFace Space deployment) — reconsidered once the panic-mode endpoint's own network-level check turned out to depend on treating loopback as trusted, which a whole-app-proxied public block would have silently undermined for every route, not just the fan page. See `Caddyfile`'s own comments for the full reasoning.
 
 ## Setup steps, in order
 
@@ -62,7 +62,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo 
 sudo apt update && sudo apt install caddy
 ```
 
-**3. Fill in and deploy the Caddyfile** (in this folder) — replace every `<placeholder>` with real values once the Tailnet name and public domain are known. Generate basic-auth password hashes with `caddy hash-password`. Deploy with:
+**3. Fill in and deploy the Caddyfile** (in this folder) — replace `<your-tailscale-ip>` with the server's actual Tailscale IP (`tailscale ip -4`). No domain name or DNS is needed for either block — the private block binds that IP directly, the public block is plain HTTP on a bare port 80. Deploy with:
 ```
 sudo cp Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
@@ -78,9 +78,9 @@ sudo systemctl start archer
 journalctl -u archer -f
 ```
 
-**5. Set up Dynamic DNS** for the public fan page only (the private side doesn't need this — Tailscale handles its own addressing). Specific steps depend on the router/ISP; most home routers have built-in DDNS client support for common providers.
+**5. Forward port 80 on the router** to this box, for the public fan page block. The private side needs no port-forwarding at all — Tailscale handles its own addressing entirely off the public internet.
 
-**6. Everyone signs in at the same URL.** Once steps 1-4 are done, every family member visits the same `<machine>.<tailnet>.ts.net` address (past Caddy's basic-auth prompt) and archer.py routes each of them to their own tier's dashboard automatically based on their registered device/JWT — no separate per-tier URLs to hand out.
+**6. Everyone signs in at the same URL.** Once steps 1-4 are done, every family member visits the same `<tailscale-ip>:8080` address and archer.py routes each of them to their own tier's dashboard automatically based on their registered device/JWT — no separate per-tier URLs to hand out.
 
 ## Discord bot setup (legacy — superseded by Slack below, code left in place)
 

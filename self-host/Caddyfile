@@ -4,49 +4,77 @@
 # current source: exactly one Flask() instance and one .run() call, at the
 # bottom of archer.py). Tiers 1-4 are NOT separate servers on separate
 # ports - they're all routes on the same app, and get_request_tier()
-# resolves which dashboard a visitor sees from their MAC/JWT/PIN. So every
-# family member hits the SAME url below; no tier-specific subdomains needed.
+# resolves which dashboard a visitor sees from their MAC/JWT/PIN.
 #
-# PRIVATE (family): Tailscale-only, reachable as a *.ts.net MagicDNS name -
-# never touches the public internet, no port-forwarding, no exposed attack
-# surface. Basic auth added as a second layer - not strictly required for
-# Tailscale-only traffic, but cheap insurance against a leaked/forwarded
-# Tailscale invite being the only thing standing between a stranger and
-# Archer's own tier auth.
+# PRIVATE (family): Tailscale-only. Bound to the box's own Tailscale IP,
+# not a domain name - confirmed working in production this way. A bare
+# `:8080 { bind <ip> ... }` site address does NOT trigger Caddy's automatic
+# HTTPS (a bare port has no "host" for Caddy to provision a certificate
+# for); giving it an actual hostname or IP AS THE SITE ADDRESS instead of
+# via `bind` does trigger it and breaks plain HTTP - confirmed live, the
+# hard way, in this exact deployment. Don't "simplify" this back to
+# `<ip>:8080 { reverse_proxy ... }` - it looks equivalent and isn't.
 #
-# PUBLIC (fan page): genuinely internet-facing, needs real Let's Encrypt
-# HTTPS, no auth in front of it - archer.py's own routing already treats
-# /fans as the one public-by-design route and gates everything else with
-# its tier system, exactly like the existing HuggingFace Space deployment
-# does today with no network-level gating at all.
+# PUBLIC (fan page): genuinely internet-facing, on a different port so it
+# never collides with the private block above. Path-restricted at THIS
+# layer to an explicit allowlist, deliberately NOT "reverse_proxy the
+# whole app and let archer.py's tier system be the only gate" (that was
+# this file's original design, matching the existing HuggingFace Space
+# deployment's lack of network-level gating - see git history / README
+# "Real open questions" for that reasoning). Diverges from it on purpose:
+# once Caddy reverse-proxies a request, it arrives at Flask as 127.0.0.1
+# regardless of the real client's address, which silently neuters any
+# route that treats loopback as trusted (e.g. panic mode's
+# _is_tailscale_or_loopback() network gate - Tier-1 JWT auth still blocks
+# an unauthenticated caller, but the IP-level backstop stops meaning
+# anything for traffic that arrived through a whole-app-proxied public
+# block). An explicit path allowlist means a route that was never meant to
+# be internet-facing gets a 404 from Caddy before it ever reaches
+# archer.py, independent of whatever archer.py's own auth does or doesn't
+# catch.
 #
-# Replace every placeholder below (marked with <>) with real values once
-# Tailscale/DNS are set up.
+# Replace every placeholder below (marked with <>) with real values.
 
 # --- PRIVATE: family access (phone, watch, Roku) ---
-<your-tailscale-machine-name>.<your-tailnet-name>.ts.net {
+:8080 {
+    bind <your-tailscale-ip>
+
     # 7860 confirmed from archer.py: `port = int(os.environ.get('PORT', 7860))`,
     # and matches the Dockerfile's `PORT=7860 python3 archer.py`. Override with
     # self-host/archer.service's PORT env var if you ever change it — keep
     # this port number in sync with that file if you do.
     reverse_proxy 127.0.0.1:7860
-
-    basicauth /* {
-        # Generate with: caddy hash-password
-        # This protects against a leaked Tailscale invite being enough
-        # on its own to reach Archer - a second, independent factor
-        ayden <REPLACE_WITH_BCRYPT_HASH>
-    }
 }
 
 # --- PUBLIC: fan page, genuinely internet-facing ---
-# Requires: real domain name, DNS A record pointing at this server's
-# public IP, and ports 80/443 actually forwarded on the router - none
-# of which apply to the private block above.
-<your-public-domain.com> {
-    reverse_proxy 127.0.0.1:7860
-    # No basicauth here on purpose - this is meant to be public. archer.py's
-    # own tier system (owner PIN / MAC whitelist / JWT) is what protects
-    # everything past the public /fans page, the same as it already does
-    # for anyone hitting the public HuggingFace Space today.
+# Requires ports 80 actually forwarded/reachable on this box - separate
+# from Tailscale entirely, no domain name or DNS record needed for plain
+# HTTP on a bare port (see the note above on why NOT to give this block an
+# actual hostname/IP as its site address).
+#
+# The allowlist below is every route confirmed, by reading the actual
+# code, to be both (a) designed to be public - blueprints/fans.py's own
+# header comment: "All routes here are public (no tier auth required)" -
+# and (b) free of the fields _filter_display_data_for_tier() exists to
+# protect (destination/gps_lat/gps_lon/gps_name/surveillance/cameras/
+# valet_events/parking_active/parking_loc). /display_data is included
+# because the fan page's own embedded JS depends on it for the live vitals
+# ticker (archer_fan.html fetches it directly) and because an anonymous
+# caller resolves to tier 4 there, which the filter strips those same
+# fields for - confirmed via TestDisplayDataSensitiveFieldFiltering, not
+# assumed. Nothing else archer.py serves is in this list; add a route here
+# only after the same two checks, not by widening the path matcher.
+:80 {
+    @public path /fans /fan /register /csrf_token /register_mac /fans/ask /fans/react /fans/stats /display_data
+    # `route` is required here, not optional style — Caddy's Caddyfile
+    # directives run in a fixed built-in order, NOT the order written in
+    # this file, and `respond` runs before `reverse_proxy` in that order.
+    # Without `route`, respond 404 fires unconditionally for every request
+    # regardless of the matcher, before reverse_proxy ever gets a chance -
+    # confirmed live with a throwaway instance on scratch ports, the exact
+    # failure mode this comment exists to prevent someone from reintroducing.
+    route {
+        reverse_proxy @public 127.0.0.1:7860
+        respond 404
+    }
 }

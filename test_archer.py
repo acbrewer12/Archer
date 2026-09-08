@@ -254,6 +254,39 @@ class TestDisplayDataLoopback:
             assert 'text/event-stream' in r.content_type
 
 
+class TestDisplayDataSensitiveFieldFiltering:
+    """The public Caddyfile block's entire safety argument for exposing
+    /display_data rests on this: a tier>=3 caller (which is what any
+    anonymous request resolves to — see TestDisplayDataLoopback, and note
+    that once Caddy reverse-proxies a request, it arrives at Flask as
+    127.0.0.1 regardless of the original caller's real address, so this is
+    also what a genuine public-internet visitor resolves to) must never
+    see GPS, surveillance, camera, or parking/valet fields. Verified
+    end-to-end through the real route, not just _filter_display_data_for_tier()
+    called directly in isolation."""
+
+    _SENSITIVE = ('destination', 'gps_lat', 'gps_lon', 'gps_name',
+                  'surveillance', 'cameras', 'valet_events',
+                  'parking_active', 'parking_loc')
+
+    def test_tier_4_caller_never_sees_sensitive_fields(self):
+        r = client.get('/display_data')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        for field in self._SENSITIVE:
+            assert field not in d, f'{field} leaked to a tier-4/anonymous caller'
+
+    def test_tier_1_owner_still_sees_sensitive_fields(self):
+        """Contrast case — proves the filter discriminates by tier rather
+        than always stripping (or something else deleting these fields for
+        everyone, which would hide a real regression as a false pass on
+        the test above)."""
+        r = _authed_client(1, 'Owner').get('/display_data')
+        d = json.loads(r.data)
+        for field in self._SENSITIVE:
+            assert field in d, f'{field} missing even for the owner'
+
+
 # ═══════════════════════════════════════════════════════════════
 # 3. /voice_command tier restrictions
 # ═══════════════════════════════════════════════════════════════
