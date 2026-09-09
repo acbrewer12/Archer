@@ -122,8 +122,22 @@ if (!$wslFeatOk) {
     if ($vmFeature.State -ne "Enabled") {
         dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
     }
+    # SECURITY: HKCU (not HKLM) — this toolkit targets shared/"any Windows PC"
+    # scenarios (see usb-tools/README.txt). An HKLM RunOnce entry fires for
+    # WHICHEVER user next logs in interactively after the reboot, not
+    # necessarily the admin who launched this installer — on a shared PC
+    # that could be a different, less-trusted user, and the pending install
+    # would silently execute in their session with -ExecutionPolicy Bypass.
+    # HKCU scopes the resume to this same user's registry hive only. Since
+    # this script requires elevation (#Requires -RunAsAdministrator) run by
+    # an interactively logged-on admin, HKCU here still resolves to that
+    # admin's own profile (UAC elevation keeps the same user's hive — it is
+    # not a different account), so resume logic is unaffected: the RunOnce
+    # command line is self-contained (re-invokes this script by its full
+    # path) and every check below is re-derived from disk/OS state via
+    # Test-Path / Get-WindowsOptionalFeature, not from anything HKLM-only.
     Set-ItemProperty `
-        -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
+        -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
         -Name "ArcherInstall" `
         -Value "powershell -ExecutionPolicy Bypass -WindowStyle Normal -File `"$($MyInvocation.MyCommand.Path)`""
     Write-Host ""

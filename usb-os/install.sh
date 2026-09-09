@@ -1,8 +1,30 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════
 #  ARCHER USB OS — One-shot installer
-#  Run on a fresh Ubuntu Server boot:
-#    curl -fsSL https://raw.githubusercontent.com/acbrewer12/Archer/claude/archer-truck-ai-system-TlfGE/usb-os/install.sh | sudo bash
+#
+#  SECURITY: Do NOT curl-pipe this straight into `sudo bash`. This repo
+#  has no published release checksums or signatures yet (see the
+#  TODO(release process) note below), so piping an unverified script
+#  fetched over HTTPS straight into a root shell hands arbitrary code
+#  execution to anyone who can push to $REPO/$REF — on hardware with
+#  real OBD/GPIO/remote-start control over a vehicle. Until signed
+#  releases exist, download first, verify, then run:
+#
+#    curl -fsSL -o /tmp/archer-install.sh \
+#      https://raw.githubusercontent.com/acbrewer12/Archer/<PINNED_TAG_OR_SHA>/usb-os/install.sh
+#    curl -fsSL -o /tmp/archer-install.sh.sha256 \
+#      https://raw.githubusercontent.com/acbrewer12/Archer/<PINNED_TAG_OR_SHA>/usb-os/install.sh.sha256
+#    sha256sum -c /tmp/archer-install.sh.sha256   # must say "OK" before continuing
+#    sudo bash /tmp/archer-install.sh --yes
+#
+#  TODO(release process): this project currently has no tagged-release
+#  convention (checked `git tag -l` / `git log`: only an unrelated
+#  `latest-apk` tag exists, nothing like a `usb-os-vX.Y.Z`). Once one
+#  exists, publish install.sh.sha256 (ideally with a detached GPG
+#  signature, install.sh.sha256.asc, signed by a known Archer release
+#  key) alongside every tagged release so the checksum step above has
+#  something real to verify against. Until that infrastructure exists,
+#  this comment documents the gap rather than papering over it.
 # ═══════════════════════════════════════════════════════
 set -e
 
@@ -10,12 +32,78 @@ ARCHER_DIR="/opt/archer"
 ARCHER_PORT=5000
 ARCHER_USER="archer"
 REPO="https://github.com/acbrewer12/Archer.git"
-BRANCH="claude/archer-truck-ai-system-TlfGE"
+
+# ── Pin to a specific ref, not a floating branch ─────────
+# SECURITY: REF must point at a specific commit SHA or (once a tagging
+# convention exists) a tag like "tags/vX.Y.Z" — never a mutable branch
+# name such as "main" or a long-lived feature branch. Anyone who can
+# push to a branch this points at controls what runs as root on this
+# truck's OBD/GPIO/remote-start hardware on every install. Re-pin this
+# by hand when you want to move to newer code; don't let it silently
+# track a branch HEAD.
+REF="${ARCHER_REF:-claude/archer-truck-ai-system-TlfGE}"
+
+ASSUME_YES=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) ASSUME_YES=true ;;
+    esac
+done
 
 echo ""
 echo "  ╔══════════════════════════════════╗"
 echo "  ║     ARCHER TRUCK AI — SETUP      ║"
 echo "  ╚══════════════════════════════════╝"
+echo ""
+
+# ── Resolve + confirm the exact commit before touching anything ────
+RESOLVED_SHA=$(git ls-remote "$REPO" "$REF" 2>/dev/null | awk '{print $1}' | head -n1)
+if [ -z "$RESOLVED_SHA" ]; then
+    # REF didn't resolve as a branch/tag on the remote — assume it's
+    # already a commit SHA (git clone will fail below if it's not).
+    RESOLVED_SHA="$REF"
+fi
+echo "  This will install code at commit: $RESOLVED_SHA"
+echo "  (ref: $REF)"
+
+# ── Signature check — see pi/ota_update.sh's ONE-TIME SETUP comment for how
+# to configure commit signing/trust. Until that's done, this always fails,
+# which is why --yes alone is NOT enough to skip the human confirmation
+# below: an unattended/cron run with no real verification and no human
+# watching would otherwise be able to silently apply anything pushed to
+# $REF, on hardware with real OBD/GPIO/remote-start control.
+SIGNATURE_VERIFIED=false
+if command -v gpg &>/dev/null; then
+    TMP_VERIFY_DIR=$(mktemp -d)
+    if git clone --bare --quiet "$REPO" "$TMP_VERIFY_DIR" 2>/dev/null \
+        && git -C "$TMP_VERIFY_DIR" verify-commit "$RESOLVED_SHA" &>/dev/null; then
+        SIGNATURE_VERIFIED=true
+        echo "  Signature check passed — $RESOLVED_SHA is GPG-signed by a trusted key."
+    fi
+    rm -rf "$TMP_VERIFY_DIR"
+fi
+
+if [ "$SIGNATURE_VERIFIED" != "true" ]; then
+    if [ "$ASSUME_YES" = "true" ]; then
+        echo "  REFUSING: --yes was given but $RESOLVED_SHA is not a trusted GPG-signed"
+        echo "  commit, so this cannot proceed unattended. Either configure commit"
+        echo "  signing (see pi/ota_update.sh) or re-run without --yes to confirm by hand."
+        exit 1
+    fi
+    if [ -r /dev/tty ]; then
+        printf "  Continue? [y/N] "
+        read -r CONFIRM </dev/tty
+    else
+        CONFIRM="n"
+    fi
+    case "$CONFIRM" in
+        y|Y) ;;
+        *)
+            echo "  Aborted."
+            exit 1
+            ;;
+    esac
+fi
 echo ""
 
 # ── System packages ──────────────────────────────────────
@@ -34,9 +122,12 @@ usermod -aG audio $ARCHER_USER
 # ── Clone repo ───────────────────────────────────────────
 echo "[3/5] Cloning Archer..."
 if [ -d "$ARCHER_DIR/.git" ]; then
-    git -C "$ARCHER_DIR" pull origin "$BRANCH" --quiet
+    git -C "$ARCHER_DIR" fetch origin "$REF" --quiet
+    git -C "$ARCHER_DIR" reset --hard FETCH_HEAD --quiet
 else
-    git clone --branch "$BRANCH" --depth 1 "$REPO" "$ARCHER_DIR" --quiet
+    git clone --no-checkout --depth 1 "$REPO" "$ARCHER_DIR" --quiet
+    git -C "$ARCHER_DIR" fetch --depth 1 origin "$REF" --quiet
+    git -C "$ARCHER_DIR" checkout --quiet FETCH_HEAD
 fi
 chown -R $ARCHER_USER:$ARCHER_USER "$ARCHER_DIR"
 

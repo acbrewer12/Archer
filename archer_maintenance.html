@@ -402,7 +402,7 @@ async function fetchMaintenance() {
   try {
     const [dispR, maintR] = await Promise.all([
       fetch('/display_data').then(r=>r.json()).catch(()=>({})),
-      fetch('/maintenance').then(r=>r.json()).catch(()=>null)
+      fetch('/maintenance/data').then(r=>r.json()).catch(()=>null)
     ]);
     _displayData = dispR;
 

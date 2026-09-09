@@ -7,6 +7,8 @@ blueprints.  CSRF protection comes from archer_state.csrf_required, which
 is the single authoritative source shared with archer.py.
 """
 import json
+import time as _time
+import secrets as _secrets
 import urllib.parse
 
 from flask import Blueprint, jsonify, request
@@ -15,16 +17,30 @@ from archer_state import _limiter, csrf_required
 
 bp = Blueprint('spotify', __name__)
 
+# Single-use OAuth 'state' tokens issued by /spotify/login and consumed by
+# /spotify/callback — prevents an attacker from completing their own Spotify
+# authorization and having it stored as the vehicle's one global connection.
+_oauth_states = {}   # state -> expiry unix time
+_OAUTH_STATE_TTL = 600
+
 
 def _a():
     import archer as _archer
     return _archer
 
 
+def _tier_ok_for_media(req):
+    """Playback controls are open to Tier 1-3; Tier 4 (valet, 'speed display
+    only' per docs) should not get owner-equivalent media control."""
+    return _a().get_request_tier(req) <= 3
+
+
 @bp.route('/spotify/dj', methods=['POST'])
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_dj_toggle():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     a = _a()
     dj = a.dj_state
     dj['enabled'] = not dj['enabled']
@@ -36,9 +52,13 @@ def spotify_dj_toggle():
     return jsonify({'enabled': dj['enabled']})
 
 
-@bp.route('/spotify/disconnect')
+@bp.route('/spotify/disconnect', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
 def spotify_disconnect():
     a = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     a.spotify_tokens['access_token']  = None
     a.spotify_tokens['refresh_token'] = None
     a.spotify_tokens['expires_at']    = 0
@@ -48,6 +68,13 @@ def spotify_disconnect():
 @bp.route('/spotify/login')
 def spotify_login():
     a = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    now = _time.time()
+    for k in [k for k, exp in list(_oauth_states.items()) if exp < now]:
+        del _oauth_states[k]
+    state = _secrets.token_urlsafe(24)
+    _oauth_states[state] = now + _OAUTH_STATE_TTL
     redirect_uri = a.SPOTIFY_REDIRECT_URI or f'{request.scheme}://{request.host}/spotify/callback'
     params = urllib.parse.urlencode({
         'client_id':     a.SPOTIFY_CLIENT_ID,
@@ -55,6 +82,7 @@ def spotify_login():
         'redirect_uri':  redirect_uri,
         'scope':         a.SPOTIFY_SCOPES,
         'show_dialog':   'true',
+        'state':         state,
     })
     return json.dumps({'redirect': f'https://accounts.spotify.com/authorize?{params}'}), 200, {'Content-Type': 'application/json'}
 
@@ -65,6 +93,11 @@ def spotify_callback():
     a = _a()
     code  = request.args.get('code')
     error = request.args.get('error')
+    state = request.args.get('state', '')
+    now   = _time.time()
+    valid_state = state and _oauth_states.pop(state, 0) > now
+    if not valid_state:
+        return '<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: invalid or expired state — start the connection again from the owner dashboard.</h2>', 403
     if error or not code:
         return f'<h2 style="font-family:monospace;color:#cc0000;background:#000;padding:20px">Spotify auth failed: {error}</h2>'
     if a.spotify_tokens['access_token'] and time.time() < a.spotify_tokens['expires_at']:
@@ -149,6 +182,8 @@ def spotify_status():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_play():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     _a().spotify_api('PUT', 'me/player/play')
     return jsonify({'ok': True})
 
@@ -157,6 +192,8 @@ def spotify_play():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_pause():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     _a().spotify_api('PUT', 'me/player/pause')
     return jsonify({'ok': True})
 
@@ -165,6 +202,8 @@ def spotify_pause():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_next():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     _a().spotify_api('POST', 'me/player/next')
     return jsonify({'ok': True})
 
@@ -173,6 +212,8 @@ def spotify_next():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_prev():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     _a().spotify_api('POST', 'me/player/previous')
     return jsonify({'ok': True})
 
@@ -181,6 +222,8 @@ def spotify_prev():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_volume():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     vol = int((request.json or {}).get('volume', 50))
     vol = max(0, min(100, vol))
     _a().spotify_api('PUT', f'me/player/volume?volume_percent={vol}')
@@ -191,6 +234,8 @@ def spotify_volume():
 @_limiter.limit('60 per minute')
 @csrf_required
 def spotify_seek():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     pos_ms = max(0, int((request.json or {}).get('position_ms', 0)))
     _a().spotify_api('PUT', f'me/player/seek?position_ms={pos_ms}')
     return jsonify({'ok': True})
@@ -247,6 +292,8 @@ def spotify_playlists():
 @_limiter.limit('20 per minute')
 @csrf_required
 def spotify_dj_intensity():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     a = _a()
     mode = (request.json or {}).get('mode', 'auto')
     if mode not in ('auto', 'calm', 'moderate', 'aggressive'):
@@ -259,6 +306,8 @@ def spotify_dj_intensity():
 @_limiter.limit('20 per minute')
 @csrf_required
 def spotify_play_playlist():
+    if not _tier_ok_for_media(request):
+        return jsonify({'error': 'Not authorized'}), 403
     playlist_id = (request.json or {}).get('playlist_id', '')
     if playlist_id and isinstance(playlist_id, str) and len(playlist_id) < 64:
         _a().spotify_api('PUT', 'me/player/play', {'context_uri': f'spotify:playlist:{playlist_id}'})

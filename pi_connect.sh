@@ -53,8 +53,23 @@ if ! command -v ttyd &> /dev/null; then
     sudo apt-get install -y ttyd
 fi
 
-# Start ttyd on port 7682 (local Pi terminal)
-ttyd -p 7682 -t fontSize=13 -t theme='{"background":"#0a0a0a","foreground":"#ff3333"}' bash &
+# openssl generates the one-time ttyd session password below
+if ! command -v openssl &> /dev/null; then
+    echo "[PI] Installing openssl..."
+    sudo apt-get install -y openssl
+fi
+
+# ttyd is about to be tunneled to the public internet via ngrok, so it must
+# never be started without authentication. Generate a fresh random password
+# for this run only — it is never written to any file that gets committed
+# to git, and it changes every time this script runs.
+TTYD_USER="archer"
+TTYD_PASS="$(openssl rand -base64 18)"
+echo "[PI] ttyd login for this session — user: $TTYD_USER   password: $TTYD_PASS"
+echo "[PI] (save this now — it's shown once, regenerated every run, and stored nowhere)"
+
+# Start ttyd on port 7682 (local Pi terminal), protected with the credentials above
+ttyd -p 7682 -c "${TTYD_USER}:${TTYD_PASS}" -t fontSize=13 -t theme='{"background":"#0a0a0a","foreground":"#ff3333"}' bash &
 TTYD_PID=$!
 echo "[PI] ttyd started on port 7682 (PID $TTYD_PID)"
 

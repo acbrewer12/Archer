@@ -131,6 +131,63 @@ Auth is done by MAC address (auto-login for registered devices), owner PIN, or i
 - Arduino Uno — gauge/lighting control via `/dev/ttyACM0`
 - OLED display (SSD1306 I2C) — local fallback display when phone is not nearby
 - Mirror display — Raspberry Pi HDMI output for heads-up mirror mode
+- ReSpeaker mic array — auto-detected by device name (`check_microphone()`/
+  `listen_once()` in archer.py); falls back to whatever the OS considers
+  the default input device if none is found, same as the "no microphone
+  found, text input only" fallback already in place for that case. Device
+  discovery and channel handling are logic-verified (mocked device list —
+  no real ReSpeaker or booted Pi VM was available while this was built);
+  actual multi-channel audio capture correctness is hardware-only and has
+  not been verified against a physical array.
+  **PulseAudio is deliberately not part of this stack** — testing this on
+  the Pi VM surfaced PortAudio (which the voice code uses via `sounddevice`)
+  trying and failing to reach a PulseAudio server that was never installed
+  in the first place. Investigated rather than assumed: archer-os has no
+  D-Bus session bus and no systemd (`archer_init.c` is PID 1 — see
+  CLAUDE.md §10), and Pulse's autospawn mechanism depends on exactly that
+  kind of session infrastructure (an `XDG_RUNTIME_DIR`, normally set up by
+  a login/session manager neither of which exist here) — bolting it on
+  would fight the OS's own architecture for a single always-on ALSA
+  capture that never needed it.
+  **Confirmed, not assumed, via the same VM: PortAudio's Pa_Initialize()
+  fails hard, not gracefully, when the Pulse host API can't reach a
+  server** — even with genuine working ALSA hardware underneath (a
+  VMware-emulated Ensoniq AudioPCI card, confirmed independently via
+  `arecord -l`). That corrects the original assumption in this section
+  (and in `_pin_sounddevice_to_alsa()`'s original docstring) that PortAudio
+  would degrade gracefully; on Debian's `libportaudio2` build it doesn't.
+  Two consequences, both fixed:
+  1. `import sounddevice` itself can raise `sounddevice.PortAudioError` —
+     not an `ImportError` — so the narrow `except ImportError:` this
+     codebase used around Vosk/sounddevice setup would have let it escape
+     uncaught and **crashed the entire `import archer` at startup**, not
+     just disabled Vosk. Broadened to `except Exception:`, confirmed with
+     a test that fails against the narrow version before confirming it
+     passes against the fix.
+  2. `_pin_sounddevice_to_alsa()` (still correct and still kept — it helps
+     default-device resolution when the import *does* succeed) cannot
+     rescue a failed import; its docstring now says so explicitly instead
+     of the disproven "probe failure can't affect it" framing.
+  **Resolved**: both build scripts now build PortAudio from source with
+  `--without-pulseaudio` (confirmed as a real flag against a live Pi VM's
+  PortAudio source — default is `[autodetect]`, not always-on) right after
+  installing `libportaudio2` via `apt`. Belt and suspenders, not either/or:
+  the explicit flag stays correct even if `libpulse-dev` is ever pulled in
+  transitively later by something unrelated (the same kind of silent
+  architectural drift this project tries to avoid elsewhere); never
+  installing `libpulse-dev` in the chroot means autodetect would skip
+  Pulse on its own regardless of the flag. Installs to `/usr/local`, which
+  Debian's default `ld.so.conf` search order already prefers over apt's
+  copy — nothing else needs to change for it to take effect. If the
+  from-source build ever fails (network, a changed tarball URL), it warns
+  and falls back to apt's `libportaudio2` rather than aborting the image
+  build; that fallback still has the Pulse hard-fail issue, same as
+  before this fix, not a new problem.
+  **Still not verifiable from where this was built**: the from-source
+  build itself has never actually run — no C compiler, no network access
+  to fetch PortAudio, in this environment. Confirm it on the Pi VM before
+  trusting it: `python3 -c "import sounddevice; print(sounddevice.query_devices())"`
+  should now return a real device list with no PortAudioError at all.
 
 ### Wiring Diagram (Arduino)
 
@@ -258,9 +315,17 @@ Say any of these after the wake word (or via the Android app push-to-talk):
 ## Troubleshooting
 
 ### OBD Not Connecting
-1. Check that OBDLink MX+ is paired via Bluetooth: `bluetoothctl paired-devices`
-2. Verify the port: `ls /dev/rfcomm* /dev/ttyUSB*`
-3. Set `OBD_PORT=/dev/rfcomm0` in `archer.env`
+A wired USB ELM327 is auto-detected — no setup needed. A Bluetooth OBDLink
+MX+ is not, and never will be: `obd_autodetect()` scans serial port
+description/manufacturer strings, which a Bluetooth RFCOMM device doesn't
+expose. For Bluetooth:
+1. Run `sudo bash /opt/archer/archer-os/obd-auth/obd_bt_pair.sh` once, via
+   the tty2 maintenance shell, to pair/trust the adapter and save its MAC
+   to `/etc/archer/obd_bt_mac`. `obd_bt_bind.sh` then re-binds
+   `/dev/rfcomm0` to it automatically on every subsequent boot.
+2. Verify the port after a reboot: `ls /dev/rfcomm* /dev/ttyUSB*`
+3. Set `OBD_PORT=/dev/rfcomm0` in `archer.env` — `obd_autodetect()` uses
+   this directly and skips the scan entirely when it's set.
 4. If no hardware available, set `USE_EMULATOR=true` for simulated data
 
 ### Mirror Display Not Showing

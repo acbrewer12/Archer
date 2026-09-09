@@ -17,6 +17,19 @@ When Archer OS boots and connects via USB serial:
   5. Correct key → "AUTH_OK" + switch to transparent ELM327 proxy mode
      Wrong key   → silence, port stays locked
 
+Scoped access (post-auth command filtering): once a key authenticates, its
+scope is looked up via key_manager.py (KEYS_DIR metadata: OWNER / MECHANIC /
+READONLY, with "permissions" and optional "expires"). Every subsequent OBD
+command is checked against that scope before being forwarded to the real
+bus — a READONLY key cannot send anything but read requests, a MECHANIC key
+additionally gets DTC-clear but not actuator/security commands, and a key
+that key_manager.py has marked expired is rejected outright even though the
+HMAC still matches. A key that HMAC-authenticates but has no key_manager.py
+record at all (e.g. one deployed via archer-os/obd-auth/keygen.sh, which
+predates key_manager.py) is treated as full OWNER access for backward
+compatibility. See the "command scope enforcement" section below for exactly
+what is and isn't filtered.
+
 Replay protection: The timestamp-in-MAC means a captured challenge+response
 pair cannot be reused once the 30-second window closes, even if the nonce
 is somehow intercepted.
@@ -29,6 +42,7 @@ session, then remove line 2.
 
 Install as a systemd service on the Pi:
   sudo cp obd_gatekeeper.py /opt/archer/obd_gatekeeper.py
+  sudo cp key_manager.py /opt/archer/key_manager.py    # needed for scope lookup
   sudo cp obd_gatekeeper.service /etc/systemd/system/
   sudo systemctl enable --now obd_gatekeeper
 
@@ -48,6 +62,7 @@ import time
 import logging
 import signal
 import threading
+from typing import List, Optional
 
 # RPi.GPIO is optional — runs in test/stub mode without it
 try:
@@ -55,6 +70,16 @@ try:
     GPIO_AVAILABLE = True
 except ImportError:
     GPIO_AVAILABLE = False
+
+# key_manager.py supplies scoped-key metadata (permissions/expiry) used to
+# filter commands after auth. Must be deployed alongside this file (see
+# "Install as a systemd service" above) — degrades to owner-equivalent
+# access with a loud warning if it's missing, rather than failing to start.
+try:
+    import key_manager
+    KEY_MANAGER_AVAILABLE = True
+except ImportError:
+    KEY_MANAGER_AVAILABLE = False
 
 KEY_FILE      = "/etc/archer/obd_auth.key"
 AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
@@ -71,6 +96,11 @@ MAX_SESSION_SECS = 4 * 3600  # force re-auth after 4 hours
 MAX_FAILURES_SOFT  = 3   # → 30s lockout
 MAX_FAILURES_HARD  = 6   # → 300s lockout
 MAX_FAILURES_PERM  = 10  # → indefinite lockout (manual reset required)
+
+# Permission set granted to keys that authenticate but have no key_manager.py
+# record (legacy/unregistered keys — see module docstring) — mirrors the
+# "permissions" list key_manager.generate_owner_key() writes to owner.json.
+OWNER_PERMISSIONS = ["read_all", "write_all", "admin"]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -193,24 +223,162 @@ def load_keys() -> list[bytes]:
     return [bytes.fromhex(line) for line in lines[:2]]
 
 
+# ── command scope enforcement ───────────────────────────────────────
+#
+# Once authenticated, the client is normally free to send any OBD-II /
+# ELM327 command straight to the vehicle bus. That's correct for an OWNER
+# key, but a MECHANIC or READONLY key (key_manager.py) is supposed to be
+# limited to a subset of commands — this table + classify_command() is
+# what actually enforces that limit, using key_manager.py's existing
+# "permissions" list (read_all / write_non_security / write_all / admin)
+# rather than inventing a new scheme.
+#
+# Classification is by OBD-II/UDS *service (mode) ID* — the first hex byte
+# of a request (e.g. "010C" → mode "01"). This is the same granularity
+# key_manager.py's metadata already uses (it has no per-PID data), so this
+# is the most faithful mapping possible without changing key_manager.py.
+#
+# WHAT THIS DOES NOT COVER (see final report for the full list):
+#   - No per-PID filtering within a mode (e.g. within Mode 01, a READONLY
+#     key can request ANY PID, since key_manager.py has no PID-level data).
+#   - AT* adapter-configuration commands (ATZ, ATSP0, ATH1, ...) are always
+#     allowed for any authenticated key — they configure the ELM327/UART
+#     adapter itself, not the vehicle bus, and key_manager.py has no
+#     concept of restricting them.
+#   - Any UDS/manufacturer-specific mode not explicitly recognised below
+#     is treated as security-sensitive (default-deny, not default-allow).
+
+READ_MODES = {"01", "02", "03", "05", "06", "07", "09", "0A"}
+
+# Mode 04 (Clear Diagnostic Trouble Codes) is a write, but not a
+# security-sensitive one — it only clears fault codes/readiness monitors;
+# it cannot move an actuator, unlock anything, or reflash the ECU.
+NON_SECURITY_WRITE_MODES = {"04"}
+
+# Everything else — Mode 08 (bidirectional actuator control), 0B, 10
+# (diagnostic session control), 11 (ECU reset), 27 (security access /
+# seed-key unlock), 28 (communication control), 2E (write data by
+# identifier), 2F (I/O control by identifier — direct output override),
+# 31 (routine control), 34-37 (firmware up/download), 3D, 85, and any
+# mode not listed above — requires "write_all" (OWNER/ADMIN only).
+SECURITY_WRITE_MODES = {
+    "08", "0B", "10", "11", "27", "28", "2E", "2F", "31",
+    "34", "35", "36", "37", "3D", "85",
+}
+
+
+def classify_command(cmd: str) -> str:
+    """Classify one OBD/ELM327 command line into a required permission.
+
+    Returns one of "AT" (adapter config — always allowed), "read_all",
+    "write_non_security", or "write_all" (covers both explicitly-known
+    security-sensitive modes and anything unrecognised — default-deny).
+    """
+    body = cmd.strip().upper()
+    if not body:
+        return "AT"  # blank line / keepalive — harmless
+    if body.startswith("AT"):
+        return "AT"
+    mode = body[:2]
+    if mode in READ_MODES:
+        return "read_all"
+    if mode in NON_SECURITY_WRITE_MODES:
+        return "write_non_security"
+    return "write_all"  # SECURITY_WRITE_MODES + unknown/unrecognised
+
+
+def command_allowed(cmd: str, permissions: List[str]) -> bool:
+    """Return True if `permissions` (from key_manager.py) permits `cmd`."""
+    required = classify_command(cmd)
+    if required == "AT":
+        return True
+    if required == "read_all":
+        return "read_all" in permissions
+    if required == "write_non_security":
+        return "write_non_security" in permissions or "write_all" in permissions
+    return "write_all" in permissions
+
+
+def _resolve_permissions(key: bytes) -> Optional[List[str]]:
+    """Resolve the permission list to enforce for a session authenticated
+    with `key`.
+
+    Returns None if the key is a registered key_manager.py key that has
+    EXPIRED — callers must treat that as an authentication failure, since
+    the HMAC matching alone doesn't know about expiry.
+    """
+    if not KEY_MANAGER_AVAILABLE:
+        log.warning(
+            "key_manager module unavailable — cannot resolve key scope, "
+            "granting full OWNER access (deploy key_manager.py alongside "
+            "obd_gatekeeper.py to enable scoped enforcement)"
+        )
+        return OWNER_PERMISSIONS
+
+    info = key_manager.verify_key_type(key)
+    if not info.get("found"):
+        # Not registered via key_manager.py (e.g. archer-os/obd-auth/keygen.sh
+        # flow) — historically this flat key has always meant "owner".
+        return OWNER_PERMISSIONS
+    if info.get("expired"):
+        return None
+    return info.get("permissions", [])
+
+
 # ── proxy thread ─────────────────────────────────────────────────────
 
-def _proxy(src: serial.Serial, dst: serial.Serial, label: str):
-    """Copy bytes from src → dst until either port closes."""
+def _proxy(src: serial.Serial, dst: serial.Serial, label: str,
+           permissions: Optional[List[str]] = None):
+    """Copy bytes from src → dst until either port closes.
+
+    When `permissions` is given, the byte stream is treated as CR-terminated
+    OBD/ELM327 command lines and each one is checked with command_allowed()
+    before being forwarded — anything outside the authenticated key's scope
+    is dropped and logged instead of reaching the real OBD bus. When
+    `permissions` is None the direction is relayed unfiltered (used for the
+    ELM→client response path, which carries bus responses, not commands).
+    """
+    if permissions is None:
+        try:
+            while True:
+                data = src.read(256)
+                if not data:
+                    break
+                dst.write(data)
+                dst.flush()
+        except serial.SerialException:
+            pass
+        log.info(f"Proxy thread {label} exited")
+        return
+
+    buf = b""
     try:
         while True:
             data = src.read(256)
             if not data:
                 break
-            dst.write(data)
-            dst.flush()
+            buf += data
+            while b"\r" in buf:
+                line, buf = buf.split(b"\r", 1)
+                cmd = line.decode("ascii", errors="replace")
+                if command_allowed(cmd, permissions):
+                    dst.write(line + b"\r")
+                    dst.flush()
+                else:
+                    log.warning(
+                        f"BLOCKED command outside key scope: {cmd!r} "
+                        f"(permissions={permissions})"
+                    )
+            # Any bytes left in `buf` are a not-yet-terminated command and
+            # are held over to the next read rather than forwarded early.
     except serial.SerialException:
         pass
     log.info(f"Proxy thread {label} exited")
 
 
-def run_proxy_session(auth_port: serial.Serial):
-    """Bridge auth_port ↔ ELM327 port transparently after auth.
+def run_proxy_session(auth_port: serial.Serial, permissions: List[str]):
+    """Bridge auth_port ↔ ELM327 port after auth, filtering commands sent
+    by the client (auth_port → elm) against `permissions`.
 
     Enforces MAX_SESSION_SECS: closes the session and re-locks the port
     after 4 hours regardless of activity, forcing periodic re-auth.
@@ -239,8 +407,8 @@ def run_proxy_session(auth_port: serial.Serial):
     t_expire = threading.Thread(target=_expire_session, daemon=True)
     t_expire.start()
 
-    t1 = threading.Thread(target=_proxy, args=(auth_port, elm, "archer→elm"),  daemon=True)
-    t2 = threading.Thread(target=_proxy, args=(elm, auth_port, "elm→archer"),  daemon=True)
+    t1 = threading.Thread(target=_proxy, args=(auth_port, elm, "archer→elm", permissions), daemon=True)
+    t2 = threading.Thread(target=_proxy, args=(elm, auth_port, "elm→archer", None),        daemon=True)
     t1.start()
     t2.start()
     t1.join()
@@ -253,7 +421,7 @@ def run_proxy_session(auth_port: serial.Serial):
 
 # ── authentication handshake ─────────────────────────────────────────
 
-def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
+def handle_connection(port: serial.Serial, keys: list[bytes]) -> Optional[List[str]]:
     """Run one challenge-response cycle with timestamp-based replay protection.
 
     Protocol:
@@ -269,18 +437,21 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
     Key rotation: tries each key in `keys` list. Current key (index 0) is
     always tried first; previous key (index 1) is a fallback during rotation.
 
-    Returns True only on successful authentication.
+    Returns the permission list to enforce for the session (resolved via
+    key_manager.py — see _resolve_permissions) on success, or None on
+    failure — including when the HMAC matches but key_manager.py reports
+    the key as expired.
     """
     port.timeout = AUTH_TIMEOUT
 
     try:
         line = port.readline().decode("ascii", errors="replace").strip()
     except serial.SerialException:
-        return False
+        return None
 
     if line != "ARCHER_AUTH_REQ":
         log.warning(f"Unrecognised opener: {line!r} — ignoring")
-        return False
+        return None
 
     # Issue challenge: fresh nonce + current UTC timestamp
     nonce = secrets.token_bytes(32)
@@ -289,19 +460,19 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
         port.write(f"CHALLENGE:{nonce.hex()}:{ts}\n".encode("ascii"))
         port.flush()
     except serial.SerialException:
-        return False
+        return None
 
     log.info("Challenge issued")
 
     try:
         response_line = port.readline().decode("ascii", errors="replace").strip()
     except serial.SerialException:
-        return False
+        return None
 
     if not response_line.startswith("RESPONSE:"):
         log.warning(f"Expected RESPONSE, got: {response_line!r}")
         _record_failure()
-        return False
+        return None
 
     client_mac = response_line[len("RESPONSE:"):]
 
@@ -310,7 +481,7 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
     if abs(now - ts) > TIMESTAMP_WINDOW:
         log.warning(f"Timestamp out of window ({abs(now - ts):.1f}s) — rejecting")
         _record_failure()
-        return False
+        return None
 
     # The signed payload: nonce bytes + ':' + timestamp string
     signed_payload = nonce + b':' + str(ts).encode()
@@ -319,21 +490,30 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> bool:
     for key_idx, key in enumerate(keys):
         expected_mac = hmac.new(key, signed_payload, hashlib.sha256).hexdigest()
         if hmac.compare_digest(client_mac.lower(), expected_mac.lower()):
+            # Resolve scope BEFORE sending AUTH_OK so an expired key_manager.py
+            # key can still be rejected even though the HMAC matched.
+            permissions = _resolve_permissions(key)
+            if permissions is None:
+                log.warning("Authentication REJECTED — key is registered but EXPIRED (key_manager.py)")
+                _record_failure()
+                return None
+
             try:
                 port.write(b"AUTH_OK\n")
                 port.flush()
             except serial.SerialException:
-                return False
+                return None
             if key_idx > 0:
                 log.warning("Authenticated with PREVIOUS key — rotate key file soon")
             else:
                 log.info("Authentication PASSED")
+            log.info(f"Session permissions: {permissions}")
             _reset_failures()
-            return True
+            return permissions
 
     log.warning("Authentication FAILED — wrong key, staying silent")
     _record_failure()
-    return False
+    return None
 
 
 # ── main loop ────────────────────────────────────────────────────────
@@ -374,10 +554,10 @@ def main():
             continue
         try:
             with serial.Serial(AUTH_PORT, BAUD, timeout=AUTH_TIMEOUT) as port:
-                authenticated = handle_connection(port, keys)
-                if authenticated:
+                session_permissions = handle_connection(port, keys)
+                if session_permissions is not None:
                     set_relay(True)
-                    run_proxy_session(port)
+                    run_proxy_session(port, session_permissions)
                     set_relay(False)
                     # Reload keys after each session to pick up rotation changes
                     try:

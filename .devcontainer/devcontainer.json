@@ -30,7 +30,9 @@
     "7681": {
       "label": "Archer Terminal",
       "onAutoForward": "silent",
-      "visibility": "public"
+      // ttyd raw interactive shell, unauthenticated - must stay private
+      // (public would expose an open shell to the internet in cloud/web contexts)
+      "visibility": "private"
     }
   },
   "postStartCommand": "pip install flask edge-tts SpeechRecognition ollamafreeapi --break-system-packages -q"

@@ -1,10 +1,14 @@
 ' TelemetryTask.brs — fetches /roku/telemetry?id=N once
 
+sub init()
+    m.top.functionName = "runTelemetryTask"
+end sub
+
 sub runTelemetryTask()
     http = CreateObject("roUrlTransfer")
     http.SetCertificatesFile("common:/certs/ca-bundle.crt")
-    http.EnablePeerVerification(false)
-    http.SetUrl(m.top.serverUrl + "/roku/telemetry?id=" + str(m.top.tripId).Trim())
+    ' Peer verification left ON (Roku default) — see StatusTask.brs for why.
+    http.SetUrl(m.top.serverUrl + "/roku/telemetry?id=" + stri(m.top.tripId).Trim())
     if m.top.authToken <> ""
         http.AddHeader("Authorization", "Bearer " + m.top.authToken)
     end if

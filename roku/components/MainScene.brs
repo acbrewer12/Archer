@@ -1,17 +1,17 @@
 ' MainScene.brs
 '
 ' State machine:
-'   "status"   — status monitor is showing, waiting for OK
-'   "menu"     — main menu is focused
-'   "triplist" — TripListScene child is active
-'   "tripdetail" — TripDetailScene child is active (stacked over trip list)
+'   "status"     — status monitor showing, waiting for OK
+'   "menu"       — main menu focused
+'   "triplist"   — TripListScene active
+'   "tripdetail" — TripDetailScene active
 
 sub init()
-    m.state = "status"
+    m.state           = "status"
     m.tripListScene   = invalid
     m.tripDetailScene = invalid
+    m.statusTask      = invalid
 
-    ' UI refs
     m.statusGroup  = m.top.findNode("statusGroup")
     m.menuGroup    = m.top.findNode("menuGroup")
     m.statusDot    = m.top.findNode("statusDot")
@@ -20,9 +20,9 @@ sub init()
     m.alertLabel   = m.top.findNode("alertLabel")
     m.mainMenu     = m.top.findNode("mainMenu")
 
-    ' Populate main menu
+    menuItems = ["Trip History", "System Status"]
     menuContent = CreateObject("roSGNode", "ContentNode")
-    for each item in ["Trip History", "System Status"]
+    for each item in menuItems
         child = CreateObject("roSGNode", "ContentNode")
         child.title = item
         menuContent.AppendChild(child)
@@ -30,16 +30,24 @@ sub init()
     m.mainMenu.content = menuContent
     m.mainMenu.observeField("itemSelected", "onMenuSelected")
 
-    ' Start status polling task
+    m.top.observeField("serverUrl", "onServerUrlSet")
+end sub
+
+
+' ── Called when main.brs sets scene.serverUrl ─────────────────────────────────
+
+sub onServerUrlSet()
+    if m.top.serverUrl = "" then return
+    if m.statusTask <> invalid then return
+
     m.statusTask = m.top.CreateChild("StatusTask")
+    if m.statusTask = invalid then return
     m.statusTask.serverUrl = m.top.serverUrl
     m.statusTask.authToken = m.top.authToken
     m.statusTask.observeField("status",  "onStatusUpdate")
     m.statusTask.observeField("message", "onStatusUpdate")
     m.statusTask.observeField("alert",   "onStatusUpdate")
     m.statusTask.control = "RUN"
-
-    m.statusGroup.setFocus(true)
 end sub
 
 
@@ -71,7 +79,7 @@ sub onStatusUpdate()
     m.messageLabel.text = message
 
     if alert <> "" and alert <> invalid
-        m.alertLabel.text    = "⚠  " + alert
+        m.alertLabel.text    = "(!) " + alert
         m.alertLabel.visible = true
     else
         m.alertLabel.visible = false
@@ -92,7 +100,6 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
 
     else if m.state = "menu"
         if key = "back"
-            ' Return to status view
             showStatus()
             return true
         end if
@@ -115,7 +122,6 @@ sub showStatus()
     m.state = "status"
     m.menuGroup.visible   = false
     m.statusGroup.visible = true
-    m.statusGroup.setFocus(true)
 end sub
 
 
@@ -138,8 +144,8 @@ sub openTripList()
     m.menuGroup.visible = false
 
     m.tripListScene = m.top.CreateChild("TripListScene")
-    m.tripListScene.serverUrl  = m.top.serverUrl
-    m.tripListScene.authToken  = m.top.authToken
+    m.tripListScene.serverUrl = m.top.serverUrl
+    m.tripListScene.authToken = m.top.authToken
     m.tripListScene.observeField("closeRequested", "onTripListClose")
     m.tripListScene.observeField("tripSelected",   "onTripSelected")
     m.tripListScene.setFocus(true)
@@ -169,9 +175,9 @@ sub openTripDetail(tripData as Object)
     m.state = "tripdetail"
 
     m.tripDetailScene = m.top.CreateChild("TripDetailScene")
-    m.tripDetailScene.serverUrl  = m.top.serverUrl
-    m.tripDetailScene.authToken  = m.top.authToken
-    m.tripDetailScene.tripData   = tripData
+    m.tripDetailScene.serverUrl = m.top.serverUrl
+    m.tripDetailScene.authToken = m.top.authToken
+    m.tripDetailScene.tripData  = tripData
     m.tripDetailScene.observeField("closeRequested", "onTripDetailClose")
     m.tripDetailScene.setFocus(true)
 end sub

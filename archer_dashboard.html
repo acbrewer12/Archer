@@ -4,8 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ARCHER OS</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<!-- Webfonts are loaded NON-BLOCKING on purpose. As a plain
+     <link rel="stylesheet"> this was render-blocking: the browser refused to
+     paint anything until the request to fonts.googleapis.com either finished
+     or timed out. On the truck head unit — which normally has no internet at
+     all — that meant a multi-second stall on every dashboard load, which is
+     exactly the "dashboard is lagging when loading" symptom.
+
+     media="print" makes the browser fetch the sheet at low priority without
+     blocking render; onload flips it to "all" so the fonts apply the moment
+     they do arrive. The page paints immediately either way.
+
+     On Archer OS itself this request is not even needed: the build installs
+     Rajdhani and Orbitron into /usr/share/fonts/truetype/archer, so
+     fontconfig resolves both families locally by name with no network. The
+     remote path is kept for phones/browsers hitting this page over the
+     tunnel, where those fonts are not installed. -->
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap">
+<noscript><link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap"></noscript>
 <style>
 :root {
   --bg:       #050508;
@@ -121,7 +139,16 @@ html, body {
 #body {
   display:grid;
   grid-template-columns:195px 1fr 215px;
-  height:calc(100vh - 38px - 130px - 42px);
+  /* 38px topbar + 42px nav. The 130px that used to be subtracted here was
+     reserved for #graphs — but #graphs lives in .tab-panel #panel-live while
+     #body lives in #panel-dashboard, and tab switching sets every other
+     .tab-panel to display:none, so the two are never on screen together.
+     That 130px was a dead band of bare background under the nav bar.
+     Reclaiming it also gives back the ~56px that the openbox titlebar plus
+     the 34px tint2 panel now take in the windowed desktop — without it,
+     every panel here is overflow:hidden with no scrollbar, so the bottom of
+     each one would simply be clipped and unreachable. */
+  height:calc(100vh - 38px - 42px);
 }
 
 /* ── LEFT PANEL ──────────────────────────────────────────── */

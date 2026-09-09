@@ -2,7 +2,8 @@
 Archer test suite — covers backend routes, auth, tier system,
 smart_fallback, save/load state, and key data endpoints.
 """
-import os, sys, json, hashlib, hmac, secrets, tempfile, threading, time
+import os, sys, json, hashlib, hmac, secrets, subprocess, tempfile, threading, time
+import urllib.parse
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -147,58 +148,143 @@ class TestGetRequestTier:
 # 2. /display_data endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestDisplayData:
+    # /display_data now requires a real credential (archer_auth or archer_fp
+    # cookie) — a caller with neither is bounced to /fans instead of getting
+    # data, so these use an authenticated client. Visitor behavior is covered
+    # separately in TestDisplayDataVisitorRedirect.
     def test_returns_200_json(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         assert r.status_code == 200
         d = json.loads(r.data)
         assert isinstance(d, dict)
 
     def test_required_fields_present(self):
-        r  = client.get('/display_data')
+        r  = _authed_client(1).get('/display_data')
         d  = json.loads(r.data)
         for field in ('rpm', 'speed', 'boost', 'oil_temp', 'battery', 'ethanol'):
             assert field in d, f'Missing field: {field}'
 
     def test_numeric_values(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert isinstance(d['rpm'],     (int, float))
         assert isinstance(d['speed'],   (int, float))
         assert isinstance(d['battery'], (int, float))
 
     def test_sensor_data_nested(self):
-        r  = client.get('/display_data')
+        r  = _authed_client(1).get('/display_data')
         d  = json.loads(r.data)
         assert 'sensor_data' in d
         assert isinstance(d['sensor_data'], dict)
 
     def test_spike_history_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'spike_history' in d
         assert isinstance(d['spike_history'], dict)
 
     def test_connected_clients_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'connected_clients' in d
         assert isinstance(d['connected_clients'], int)
 
     def test_device_tier_present(self):
-        r = client.get('/display_data?fp=test-fp-001')
+        r = _authed_client(1).get('/display_data?fp=test-fp-001')
         d = json.loads(r.data)
         assert 'device_tier' in d
         assert isinstance(d['device_tier'], int)
 
     def test_drive_mode_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'drive_mode' in d
 
     def test_coolant_temp_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'coolant' in d
+
+
+class TestDisplayDataVisitorRedirect:
+    """A caller with no archer_auth/archer_fp cookie AND no loopback address
+    never enters the tier system — /display_data sends them to the fan page
+    instead of resolving a fallback tier; /display_data/stream can't be
+    redirected like a page, so it rejects cleanly instead. Werkzeug's test
+    client defaults REMOTE_ADDR to 127.0.0.1, so these explicitly override
+    it to a real, non-loopback address to actually exercise the visitor
+    path rather than the loopback exception (see TestDisplayDataLoopback)."""
+    _REMOTE = {'REMOTE_ADDR': '203.0.113.5'}
+
+    def test_no_cookie_redirects_to_fans(self):
+        r = client.get('/display_data', follow_redirects=False, environ_overrides=self._REMOTE)
+        assert r.status_code == 302
+        assert '/fans' in r.headers['Location']
+
+    def test_no_cookie_redirects_even_with_fp_query_param(self):
+        # The fp query param is informational only for this route — it was
+        # never trusted for tier resolution, and doesn't count as a credential.
+        r = client.get('/display_data?fp=test-fp-001', follow_redirects=False, environ_overrides=self._REMOTE)
+        assert r.status_code == 302
+        assert '/fans' in r.headers['Location']
+
+    def test_stream_no_cookie_rejected_cleanly(self):
+        c = archer.display_app.test_client()
+        r = c.get('/display_data/stream?sid=visitor-sse&fp=fp1', environ_overrides=self._REMOTE)
+        assert r.status_code == 403
+
+
+class TestDisplayDataLoopback:
+    """The in-VM kiosk display has no archer_auth cookie (nothing mints it
+    one at boot) and talks to the server over 127.0.0.1 — it must not be
+    treated as a visitor, or its own dashboard breaks. Loopback callers
+    still get no special tier (no cookie means the existing fingerprint
+    fallback still applies, landing on tier 4), just not the /fans bounce."""
+    def test_loopback_no_cookie_gets_data_not_redirect(self):
+        r = client.get('/display_data', follow_redirects=False)
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert 'rpm' in d
+
+    def test_loopback_stream_no_cookie_not_rejected(self):
+        c = archer.display_app.test_client()
+        with c.get('/display_data/stream?sid=loopback-sse&fp=fp1',
+                   headers={'Accept': 'text/event-stream'}) as r:
+            assert r.status_code == 200
+            assert 'text/event-stream' in r.content_type
+
+
+class TestDisplayDataSensitiveFieldFiltering:
+    """The public Caddyfile block's entire safety argument for exposing
+    /display_data rests on this: a tier>=3 caller (which is what any
+    anonymous request resolves to — see TestDisplayDataLoopback, and note
+    that once Caddy reverse-proxies a request, it arrives at Flask as
+    127.0.0.1 regardless of the original caller's real address, so this is
+    also what a genuine public-internet visitor resolves to) must never
+    see GPS, surveillance, camera, or parking/valet fields. Verified
+    end-to-end through the real route, not just _filter_display_data_for_tier()
+    called directly in isolation."""
+
+    _SENSITIVE = ('destination', 'gps_lat', 'gps_lon', 'gps_name',
+                  'surveillance', 'cameras', 'valet_events',
+                  'parking_active', 'parking_loc')
+
+    def test_tier_4_caller_never_sees_sensitive_fields(self):
+        r = client.get('/display_data')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        for field in self._SENSITIVE:
+            assert field not in d, f'{field} leaked to a tier-4/anonymous caller'
+
+    def test_tier_1_owner_still_sees_sensitive_fields(self):
+        """Contrast case — proves the filter discriminates by tier rather
+        than always stripping (or something else deleting these fields for
+        everyone, which would hide a real regression as a false pass on
+        the test above)."""
+        r = _authed_client(1, 'Owner').get('/display_data')
+        d = json.loads(r.data)
+        for field in self._SENSITIVE:
+            assert field in d, f'{field} missing even for the owner'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -354,6 +440,185 @@ class TestSmartFallback:
     def test_battery_keyword(self):
         result = archer.smart_fallback('battery voltage')
         assert isinstance(result, str) and len(result) > 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5b. Local Ollama cold-start fallback (archer.py:1974)
+# Real testing on hardware matching the target server confirmed a ~18s
+# cold-start latency for local Ollama. The subprocess timeout must clear
+# that, or a cold start silently loses to smart_fallback instead of
+# actually answering.
+# ═══════════════════════════════════════════════════════════════
+class TestLocalOllamaColdStart:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+        self._is_pi_backup = archer._IS_PI
+        archer._IS_PI = True
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        archer._IS_PI = self._is_pi_backup
+
+    def _fake_cold_start(self, cmd, capture_output, timeout, encoding, errors):
+        """Stands in for a real `ollama run` that takes ~18s to answer."""
+        if timeout < 18:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='Archer: cold start survived.', stderr=''
+        )
+
+    def test_confirmed_cold_start_gets_a_real_answer(self):
+        """A ~18s cold start must fit under the timeout so Ollama's actual
+        answer is used, not a silent fall-through to smart_fallback. Fails
+        again if the timeout ever regresses to (or below) the confirmed
+        18s cold-start latency — proving the fix, not just the changed
+        constant, is what's under test."""
+        with patch('subprocess.run', side_effect=self._fake_cold_start):
+            result = archer.ask_archer('how is the oil temp')
+
+        # A regressed <=18s timeout would raise TimeoutExpired above, get
+        # swallowed by ask_archer's bare except, and fall through to
+        # smart_fallback's generic oil text instead of this real answer.
+        assert result == 'cold start survived.'
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5c. OpenRouter — 4th fallback step (archer.py: ask_archer, "Try 4")
+# Added as a genuine extra waterfall step alongside Groq/Cerebras/Gemini,
+# not a replacement for them, so it needs the same three things proven
+# about it: it's actually reached, it doesn't jump the queue ahead of an
+# earlier provider that already answered, and its own failure still falls
+# through instead of raising.
+# ═══════════════════════════════════════════════════════════════
+class TestOpenRouterFallback:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+        # Keep Ollama's Pi-only step out of play so these tests isolate
+        # OpenRouter the same way TestLocalOllamaColdStart isolates Ollama.
+        self._is_pi_backup = archer._IS_PI
+        archer._IS_PI = False
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        archer._IS_PI = self._is_pi_backup
+
+    def _fake_response(self, text):
+        body = json.dumps({'choices': [{'message': {'content': text}}]}).encode()
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = body
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_used_when_only_openrouter_key_set(self):
+        """With Groq/Cerebras/Gemini all unset and no Pi/Ollama, OpenRouter
+        is the one live provider left before smart_fallback — confirms it's
+        actually wired into the waterfall, not just present in the diff."""
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', return_value=self._fake_response('OpenRouter answered.')) as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        assert 'OpenRouter answered' in result
+        assert 'openrouter.ai' in mock_urlopen.call_args[0][0].full_url
+
+    def test_not_called_when_earlier_provider_succeeds(self):
+        """Groq succeeding must short-circuit the waterfall — OpenRouter
+        should never be hit if an earlier provider already answered."""
+        os.environ['GROQ_API_KEY'] = 'test-key'
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', return_value=self._fake_response('Groq answered.')) as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        assert 'Groq answered' in result
+        assert mock_urlopen.call_count == 1
+        assert 'groq.com' in mock_urlopen.call_args[0][0].full_url
+
+    def test_falls_through_to_smart_fallback_on_openrouter_failure(self):
+        """OpenRouter erroring (bad key, timeout, etc.) must not crash the
+        request — it should fall through to smart_fallback like every other
+        provider's failure does."""
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        with patch('urllib.request.urlopen', side_effect=OSError('boom')):
+            result = archer.ask_archer('how is the oil temp')
+        assert isinstance(result, str) and len(result) > 0
+
+    def test_skipped_entirely_when_key_unset(self):
+        """No OPENROUTER_API_KEY at all -> urlopen must never be called for
+        it; falls straight through to smart_fallback."""
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            result = archer.ask_archer('how is the oil temp')
+        mock_urlopen.assert_not_called()
+        assert isinstance(result, str) and len(result) > 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5d. Boot health check — AI BACKEND status (archer.py:11334-11346)
+# Must report ok when ANY of the four cloud providers is configured, not
+# just Groq — this is exactly the gap flagged during the OpenRouter audit:
+# a Cerebras/Gemini/OpenRouter-only setup used to still show "warn: local
+# fallback only" despite having a real provider configured.
+# ═══════════════════════════════════════════════════════════════
+class TestBootStatusAIBackend:
+    def setup_method(self):
+        self._env_backup = {
+            k: os.environ.get(k)
+            for k in ('HF_TOKEN', 'GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        }
+        for k in self._env_backup:
+            os.environ[k] = ''
+
+    def teardown_method(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _ai_check(self):
+        r = client.get('/boot/status')
+        data = json.loads(r.data)
+        return next(c for c in data['checks'] if c['id'] == 'ai')
+
+    def test_warn_when_nothing_configured(self):
+        check = self._ai_check()
+        assert check['status'] == 'warn'
+        assert check['detail'] == 'local fallback only'
+
+    def test_ok_when_only_cerebras_configured(self):
+        """The regression case: pre-fix code only checked Groq, so a
+        Cerebras-only setup still reported warn/local-fallback."""
+        os.environ['CEREBRAS_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'Cerebras' in check['detail']
+
+    def test_ok_when_only_openrouter_configured(self):
+        os.environ['OPENROUTER_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'OpenRouter' in check['detail']
+
+    def test_lists_multiple_configured_providers(self):
+        os.environ['GROQ_API_KEY'] = 'test-key'
+        os.environ['GEMINI_API_KEY'] = 'test-key'
+        check = self._ai_check()
+        assert check['status'] == 'ok'
+        assert 'Groq' in check['detail'] and 'Gemini' in check['detail']
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -784,9 +1049,16 @@ class TestTierNotifications:
         assert any(n['from'] == 'Bob' for n in d['notifications'])
 
     def test_notifications_list_is_list(self):
-        r = client.get('/tier_notifications')
+        # /tier_notifications requires tier <= 2 (it discloses pending
+        # Tier1<->Tier2 request content, not public data).
+        c = _authed_client(2, 'Passenger')
+        r = c.get('/tier_notifications')
         d = json.loads(r.data)
         assert isinstance(d['notifications'], list)
+
+    def test_notifications_list_rejects_unauthenticated(self):
+        r = client.get('/tier_notifications')
+        assert r.status_code == 403
 
     def test_tier_cancel_updates_status(self):
         c2 = _authed_client(2, 'Passenger')
@@ -972,8 +1244,10 @@ class TestDragEndpoints:
 # 22. /build/part endpoints
 # ═══════════════════════════════════════════════════════════════
 class TestBuildPartEndpoints:
+    # /build/part/* routes require Tier 1 (owner-only build tracker editing).
     def test_add_part_returns_ok(self):
-        r = client.post('/build/part/add', json={
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={
             'name': 'Cold Air Intake', 'category': 'intake',
             'hp_gain': 15, 'tq_gain': 12, 'cost': 299.99,
         })
@@ -981,86 +1255,111 @@ class TestBuildPartEndpoints:
         assert d['ok'] is True
 
     def test_add_part_returns_part(self):
-        r = client.post('/build/part/add', json={'name': 'Test Part'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Test Part'})
         d = json.loads(r.data)
         assert 'part' in d
         assert d['part']['name'] == 'Test Part'
 
     def test_add_part_has_id(self):
-        r = client.post('/build/part/add', json={'name': 'Headers'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Headers'})
         d = json.loads(r.data)
         assert 'id' in d['part']
 
     def test_update_part_ok(self):
-        r = client.post('/build/part/add', json={'name': 'UpdateMe'})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'UpdateMe'})
         pid = json.loads(r.data)['part']['id']
-        r2  = client.post('/build/part/update', json={'id': pid, 'status': 'installed'})
+        r2  = c.post('/build/part/update', json={'id': pid, 'status': 'installed'})
         d   = json.loads(r2.data)
         assert d['ok'] is True
         assert d['part']['status'] == 'installed'
 
     def test_update_nonexistent_part(self):
-        r = client.post('/build/part/update', json={'id': 'nonexistent_id', 'status': 'installed'})
+        c = _authed_client(1)
+        r = c.post('/build/part/update', json={'id': 'nonexistent_id', 'status': 'installed'})
         d = json.loads(r.data)
         assert d['ok'] is False
 
     def test_remove_part_ok(self):
-        r   = client.post('/build/part/add', json={'name': 'RemoveMe'})
+        c   = _authed_client(1)
+        r   = c.post('/build/part/add', json={'name': 'RemoveMe'})
         pid = json.loads(r.data)['part']['id']
-        r2  = client.post('/build/part/remove', json={'id': pid})
+        r2  = c.post('/build/part/remove', json={'id': pid})
         d   = json.loads(r2.data)
         assert d['ok'] is True
 
     def test_remove_part_no_longer_in_list(self):
-        r   = client.post('/build/part/add', json={'name': 'GoneItem'})
+        c   = _authed_client(1)
+        r   = c.post('/build/part/add', json={'name': 'GoneItem'})
         pid = json.loads(r.data)['part']['id']
-        client.post('/build/part/remove', json={'id': pid})
-        r2  = client.post('/build/part/add', json={'name': 'Dummy'})
+        c.post('/build/part/remove', json={'id': pid})
+        r2  = c.post('/build/part/add', json={'name': 'Dummy'})
         parts = json.loads(r2.data)['parts']
         assert not any(p['id'] == pid for p in parts)
 
     def test_add_part_returns_power(self):
-        r = client.post('/build/part/add', json={'name': 'Tune', 'hp_gain': 30})
+        c = _authed_client(1)
+        r = c.post('/build/part/add', json={'name': 'Tune', 'hp_gain': 30})
         d = json.loads(r.data)
         assert 'power' in d
+
+    def test_non_owner_rejected(self):
+        c = _authed_client(2)
+        r = c.post('/build/part/add', json={'name': 'ShouldFail'})
+        assert r.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════
 # 23. /build/update endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestBuildUpdate:
+    # /build/update requires Tier 1 (owner-only build spec editing).
     def test_returns_ok(self):
-        r = client.post('/build/update', json={'cold_air_intake': True})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={'cold_air_intake': True})
         d = json.loads(r.data)
         assert d['ok'] is True
 
     def test_updates_build_spec(self):
-        client.post('/build/update', json={'cold_air_intake': True})
+        _authed_client(1).post('/build/update', json={'cold_air_intake': True})
         assert archer.build_specs.get('cold_air_intake') is True
 
     def test_returns_power(self):
-        r = client.post('/build/update', json={})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={})
         d = json.loads(r.data)
         assert 'power' in d
 
     def test_returns_build_specs(self):
-        r = client.post('/build/update', json={})
+        c = _authed_client(1)
+        r = c.post('/build/update', json={})
         d = json.loads(r.data)
         assert 'build_specs' in d
+
+    def test_non_owner_rejected(self):
+        c = _authed_client(3)
+        r = c.post('/build/update', json={'cold_air_intake': True})
+        assert r.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════
 # 24. /location/update endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestLocationUpdate:
+    # Patches the network-calling function itself rather than threading.Thread
+    # broadly — flask_limiter's memory storage backend (this route is now
+    # rate-limited) also relies on threading.Timer, a Thread subclass, so a
+    # blanket Thread patch here breaks rate-limit evaluation too.
     def test_returns_ok(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             r = client.post('/location/update', json={'lat': 37.64, 'lon': -91.54})
         d = json.loads(r.data)
         assert d['ok'] is True
 
     def test_stores_lat_lon(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
         r = client.post('/location/update', json={'lat': 42.0, 'lon': -93.0})
         d = json.loads(r.data)
@@ -1068,7 +1367,7 @@ class TestLocationUpdate:
         assert d['lon'] == -93.0
 
     def test_name_stored_if_provided(self):
-        with patch('threading.Thread'):
+        with patch('archer._resolve_location_from_nws'):
             r = client.post('/location/update', json={'lat': 1.0, 'lon': 2.0, 'name': 'Test City'})
         d = json.loads(r.data)
         assert d['name'] == 'Test City'
@@ -1394,7 +1693,9 @@ class TestGatekeeperHandshake:
         key  = secrets.token_bytes(32)
         port = self._make_mock_port([b"NOT_ARCHER\n"])
         result = gk.handle_connection(port, [key])
-        assert result is False
+        # handle_connection returns Optional[List[str]] (permission scope on
+        # success, None on any failure) so scoped keys can be enforced.
+        assert result is None
 
     def test_correct_key_passes(self):
         import secrets as _s
@@ -1428,7 +1729,10 @@ class TestGatekeeperHandshake:
         port.readline = _readline
 
         result = gk.handle_connection(port, [key])
-        assert result is True
+        # No key_manager record for this ad-hoc test key → falls back to full
+        # OWNER permissions (legacy-key backward compatibility), not a bare bool.
+        assert result is not None
+        assert 'admin' in result or 'write_all' in result
 
     def test_wrong_key_fails(self):
         import secrets as _s
@@ -1461,7 +1765,7 @@ class TestGatekeeperHandshake:
         port.readline = _readline
 
         result = gk.handle_connection(port, [real_key])
-        assert result is False
+        assert result is None
 
     def test_stale_timestamp_fails(self):
         """A replayed response outside the 30-second window is rejected."""
@@ -1505,7 +1809,7 @@ class TestGatekeeperHandshake:
             mock_time.time.side_effect = [float(stale_ts), float(stale_ts + 60)]
             # Run — second call to time.time() is for the window check
             result = gk.handle_connection(port, [key])
-        assert result is False
+        assert result is None
 
     def test_key_rotation_previous_key_works(self):
         """Connecting with the previous key (index 1) still authenticates."""
@@ -1541,7 +1845,7 @@ class TestGatekeeperHandshake:
 
         # Pass [new_key, old_key] — gatekeeper should fall back to old_key
         result = gk.handle_connection(port, [new_key, old_key])
-        assert result is True
+        assert result is not None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1729,7 +2033,7 @@ class TestSetVehicleEndpoint:
 
     def test_display_data_reflects_set_vehicle(self):
         self._post({'make': 'GMC', 'model': 'Sierra 2500HD'})
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert d['vehicle_make'] == 'GMC'
         assert d['vehicle_model'] == 'Sierra 2500HD'
@@ -1824,47 +2128,47 @@ class TestDisplayDataOBDFields:
     """Verify the 7 new OBD PID fields appear in display_data response."""
 
     def test_maf_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'maf' in d
 
     def test_timing_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'timing' in d
 
     def test_engine_load_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'engine_load' in d
 
     def test_stft_b1_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'stft_b1' in d
 
     def test_ltft_b1_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'ltft_b1' in d
 
     def test_stft_b2_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'stft_b2' in d
 
     def test_ltft_b2_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'ltft_b2' in d
 
     def test_obd_mode_field_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'obd_mode' in d
 
     def test_vehicle_name_fields_present(self):
-        r = client.get('/display_data')
+        r = _authed_client(1).get('/display_data')
         d = json.loads(r.data)
         assert 'vehicle_make' in d
         assert 'vehicle_model' in d
@@ -2207,12 +2511,14 @@ class TestDisplayDataSSE:
 
     def test_stream_returns_event_stream_content_type(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse&fp=fp1',
                    headers={'Accept': 'text/event-stream'}) as r:
             assert 'text/event-stream' in r.content_type
 
     def test_stream_yields_data_line(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse2&fp=fp1',
                    headers={'Accept': 'text/event-stream'}) as r:
             chunk = next(r.iter_encoded(), b'')
@@ -2224,6 +2530,7 @@ class TestDisplayDataSSE:
 
     def test_stream_includes_device_tier(self):
         c = archer.display_app.test_client()
+        c.set_cookie('archer_auth', _make_cookie(1))
         with c.get('/display_data/stream?sid=test-sse3&fp=fp_unregistered',
                    headers={'Accept': 'text/event-stream'}) as r:
             chunk = next(r.iter_encoded(), b'')
@@ -2451,6 +2758,1218 @@ class TestSerialAuth:
         import serial_auth as sa
         guard = sa.ReplayGuard()
         assert isinstance(guard._order, deque)
+
+
+# ═══════════════════════════════════════════════════════════════
+# FCM push notifications
+# ═══════════════════════════════════════════════════════════════
+class TestFcmPushIntegration:
+    def setup_method(self):
+        import fcm_push as fp
+        fp.reset_for_tests()
+
+    def test_fcm_token_endpoint_registers(self):
+        r = client.post('/fcm_token', json={'token': 'test-device-token-xyz'})
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+        import fcm_push as fp
+        assert 'test-device-token-xyz' in fp.get_tokens()
+
+    def test_fcm_token_rejects_invalid(self):
+        r = client.post('/fcm_token', json={'token': ''})
+        assert r.status_code == 400
+
+    def test_notify_tier1_triggers_fcm(self):
+        with patch('fcm_push.send_tier_request', return_value=1) as send:
+            c = _authed_client(2, 'Passenger')
+            c.post('/notify_tier1', json={'from': 'Alice', 'message': 'Sport mode please'})
+            send.assert_called_once_with('Alice', 'Sport mode please')
+
+    def test_discord_alert_triggers_fcm_even_when_discord_disabled(self):
+        archer.discord_config['enabled'] = False
+        archer.discord_config['last_sent'].clear()
+        with patch('fcm_push.send_vehicle_alert', return_value=1) as send:
+            archer.discord_alert('oil_high', 'Oil **225F**', title='OIL')
+            send.assert_called_once_with(
+                'oil_high', 'Oil **225F**', title='OIL', skip_cooldown=True,
+            )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Maintenance service tracker JSON API
+# ═══════════════════════════════════════════════════════════════
+class TestMaintenanceData:
+    def setup_method(self):
+        self._saved_log = dict(archer.maintenance_log)
+        self._saved_odo = dict(archer.odometer)
+
+    def teardown_method(self):
+        archer.maintenance_log.clear()
+        archer.maintenance_log.update(self._saved_log)
+        archer.odometer.clear()
+        archer.odometer.update(self._saved_odo)
+
+    def test_requires_tier1(self):
+        r = client.get('/maintenance/data')
+        assert r.status_code == 403
+
+    def test_returns_items_array(self):
+        r = _authed_client(1, 'Owner').get('/maintenance/data')
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert isinstance(d['items'], list)
+        assert len(d['items']) == len(archer._MAINTENANCE_UI_SPECS)
+
+    def test_maps_maintenance_log_miles(self):
+        archer.maintenance_log['oil_change'] = {
+            'last_date': 'January 01 2026',
+            'last_miles': 140000,
+            'interval_miles': 5000,
+        }
+        archer.odometer['miles'] = 145200
+        r = _authed_client(1, 'Owner').get('/maintenance/data')
+        oil = next(i for i in json.loads(r.data)['items'] if i['id'] == 'oil')
+        assert oil['last_mi'] == 140000
+        assert oil['current_mi'] == 145200
+        assert oil['interval_mi'] == 5000
+
+
+# ═══════════════════════════════════════════════════════════════
+# 48. Discord bot — interaction signature verification + commands
+# ═══════════════════════════════════════════════════════════════
+from nacl.signing import SigningKey  # noqa: E402
+
+
+class TestDiscordSignatureVerification:
+    def setup_method(self):
+        self._signing_key = SigningKey.generate()
+        self._backup = archer.DISCORD_PUBLIC_KEY
+        archer.DISCORD_PUBLIC_KEY = self._signing_key.verify_key.encode().hex()
+
+    def teardown_method(self):
+        archer.DISCORD_PUBLIC_KEY = self._backup
+
+    def test_valid_signature_accepted(self):
+        sig = self._signing_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":1}') is True
+
+    def test_tampered_body_rejected(self):
+        sig = self._signing_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":2}') is False
+
+    def test_wrong_key_rejected(self):
+        other_key = SigningKey.generate()
+        sig = other_key.sign(b'1700000000{"type":1}').signature.hex()
+        assert archer._discord_verify_signature(sig, '1700000000', '{"type":1}') is False
+
+    def test_no_public_key_configured_rejected(self):
+        archer.DISCORD_PUBLIC_KEY = ''
+        assert archer._discord_verify_signature('aa' * 64, '1700000000', '{}') is False
+
+
+class TestDiscordInteractionsEndpoint:
+    def setup_method(self):
+        self._signing_key = SigningKey.generate()
+        self._backup = {
+            'public_key': archer.DISCORD_PUBLIC_KEY,
+            'owner_id':   archer.DISCORD_OWNER_ID,
+            'enabled':    archer.discord_config['enabled'],
+        }
+        archer.DISCORD_PUBLIC_KEY = self._signing_key.verify_key.encode().hex()
+        archer.DISCORD_OWNER_ID = 'owner-123'
+        archer.discord_config['enabled'] = True
+
+    def teardown_method(self):
+        archer.DISCORD_PUBLIC_KEY = self._backup['public_key']
+        archer.DISCORD_OWNER_ID = self._backup['owner_id']
+        archer.discord_config['enabled'] = self._backup['enabled']
+
+    def _signed_post(self, body_dict, timestamp='1700000000'):
+        body = json.dumps(body_dict)
+        sig = self._signing_key.sign(f'{timestamp}{body}'.encode()).signature.hex()
+        return archer.display_app.test_client().post(
+            '/discord/interactions',
+            data=body,
+            headers={
+                'Content-Type':         'application/json',
+                'X-Signature-Ed25519':  sig,
+                'X-Signature-Timestamp': timestamp,
+            },
+        )
+
+    def test_ping_returns_pong(self):
+        r = self._signed_post({'type': 1})
+        assert r.status_code == 200
+        assert json.loads(r.data) == {'type': 1}
+
+    def test_bad_signature_rejected(self):
+        r = archer.display_app.test_client().post(
+            '/discord/interactions',
+            data=json.dumps({'type': 1}),
+            headers={
+                'Content-Type':         'application/json',
+                'X-Signature-Ed25519':  'aa' * 64,
+                'X-Signature-Timestamp': '1700000000',
+            },
+        )
+        assert r.status_code == 401
+
+    def test_unauthorized_user_rejected_on_command(self):
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'stranger-999'}},
+        })
+        data = json.loads(r.data)
+        assert 'not authorized' in data['data']['content'].lower()
+        assert data['data']['flags'] == 64
+
+    def test_authorized_status_command_reports_real_oil_temp(self):
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert str(archer.truck_state['oil_temp']) in data['data']['content']
+
+    def test_unauthorized_button_rejected(self):
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'parking_disarm'},
+            'member': {'user': {'id': 'stranger-999'}},
+        })
+        data = json.loads(r.data)
+        assert 'not authorized' in data['data']['content'].lower()
+
+    def test_authorized_parking_disarm_button_disarms(self):
+        archer.parking_mode['active'] = True
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'parking_disarm'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        assert r.status_code == 200
+        assert archer.parking_mode['active'] is False
+
+    def test_authorized_crash_not_ok_button_flags_last_event(self):
+        archer.crash_detection['last_event'] = {'time': '1:00 PM', 'g': 4.0, 'speed': 30, 'road': 'Test Rd'}
+        r = self._signed_post({
+            'type': 3,
+            'data': {'custom_id': 'crash_not_ok'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert archer.crash_detection['last_event']['status'] == 'needs_attention'
+        assert "can't place calls" in data['data']['content']
+
+    def test_disabled_integration_rejects_non_ping(self):
+        archer.discord_config['enabled'] = False
+        r = self._signed_post({
+            'type': 2,
+            'data': {'name': 'status'},
+            'member': {'user': {'id': 'owner-123'}},
+        })
+        data = json.loads(r.data)
+        assert 'disabled' in data['data']['content'].lower()
+
+
+class TestDiscordDigest:
+    def test_build_digest_contains_key_fields(self):
+        msg = archer._build_discord_digest()
+        assert 'Peak RPM' in msg
+        assert 'Drive quality' in msg
+
+
+# ═══════════════════════════════════════════════════════════════
+# Discord per-tier DM fan-out (archer.py: discord_dm_fanout(),
+# _discord_user_tier(), _discord_send_dm()). Different fan-out model than
+# Slack's per-requester one — this DMs every individually-known user whose
+# tier qualifies, not one channel post.
+# ═══════════════════════════════════════════════════════════════
+class TestDiscordUserTier:
+    def setup_method(self):
+        self._backup = (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+                         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS)
+        archer.DISCORD_OWNER_IDS     = {'D_OWNER'}
+        archer.DISCORD_PASSENGER_IDS = {'D_PASSENGER'}
+        archer.DISCORD_FAMILY_IDS    = {'D_FAMILY'}
+        archer.DISCORD_VALET_IDS     = {'D_VALET'}
+
+    def teardown_method(self):
+        (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS) = self._backup
+
+    def test_owner_resolves_tier_1(self):
+        assert archer._discord_user_tier('D_OWNER') == 1
+
+    def test_passenger_resolves_tier_2(self):
+        assert archer._discord_user_tier('D_PASSENGER') == 2
+
+    def test_family_resolves_tier_3(self):
+        assert archer._discord_user_tier('D_FAMILY') == 3
+
+    def test_valet_resolves_tier_4(self):
+        assert archer._discord_user_tier('D_VALET') == 4
+
+    def test_unknown_user_resolves_none(self):
+        assert archer._discord_user_tier('D_STRANGER') is None
+
+    def test_all_known_users_mapping(self):
+        assert archer._discord_all_known_users() == {
+            'D_OWNER': 1, 'D_PASSENGER': 2, 'D_FAMILY': 3, 'D_VALET': 4,
+        }
+
+
+class TestDiscordDMFanout:
+    def setup_method(self):
+        self._backup_ids = (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+                             archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS)
+        archer.DISCORD_OWNER_IDS     = {'D1'}
+        archer.DISCORD_PASSENGER_IDS = {'D2'}
+        archer.DISCORD_FAMILY_IDS    = {'D3'}
+        archer.DISCORD_VALET_IDS     = {'D4'}
+        self._backup_enabled = archer.discord_config['enabled']
+        archer.discord_config['enabled'] = True
+        self._backup_token = archer.DISCORD_BOT_TOKEN
+        archer.DISCORD_BOT_TOKEN = 'test-bot-token'
+
+    def teardown_method(self):
+        (archer.DISCORD_OWNER_IDS, archer.DISCORD_PASSENGER_IDS,
+         archer.DISCORD_FAMILY_IDS, archer.DISCORD_VALET_IDS) = self._backup_ids
+        archer.discord_config['enabled'] = self._backup_enabled
+        archer.DISCORD_BOT_TOKEN = self._backup_token
+
+    def test_tier_3_alert_reaches_1_2_3_not_4(self):
+        """The requirement's own example: a Tier 3 alert must reach Tiers
+        1, 2, 3 as real, separate DMs — and correctly exclude Tier 4."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('crash', 'Impact detected.', min_tier=3)
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1', 'D2', 'D3'}
+
+    def test_fail_closed_when_min_tier_missing(self):
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('unknown_alert', 'Something happened.', min_tier=None)
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1'}
+
+    def test_fail_closed_when_min_tier_not_a_real_tier_number(self):
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('weird', 'x', min_tier='not-a-tier')
+        recipients = {c.args[0] for c in mock_dm.call_args_list}
+        assert recipients == {'D1'}
+
+    def test_disabled_config_sends_nothing(self):
+        archer.discord_config['enabled'] = False
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout('crash', 'x', min_tier=3)
+        mock_dm.assert_not_called()
+
+    def test_extra_data_filtered_per_recipient_tier(self):
+        """Tier 1/2 recipients (<3) keep the GPS fields; Tier 3 (>=3) gets
+        them stripped by _filter_display_data_for_tier — the same source
+        of truth the dashboard itself uses for what a tier sees, not a
+        redaction rule invented here."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout(
+                'crash', 'Impact detected.', min_tier=3,
+                extra_data={'gps_lat': 40.7128, 'gps_lon': -74.0060, 'gps_name': 'Home'},
+            )
+        messages = {c.args[0]: c.args[1] for c in mock_dm.call_args_list}
+        assert '40.7128' in messages['D1'] and 'Home' in messages['D1']
+        assert '40.7128' in messages['D2'] and 'Home' in messages['D2']
+        assert '40.7128' not in messages['D3'] and 'Home' not in messages['D3']
+
+    def test_mismatched_extra_data_keys_filter_nothing(self):
+        """A dict shaped with different key names (plain 'lat'/'lon' rather
+        than 'gps_lat'/'gps_lon') isn't redacted at all — proves the reuse
+        is real, not cosmetic: only the exact _DISPLAY_DATA_SENSITIVE_FIELDS
+        names do anything."""
+        with patch('archer._discord_send_dm') as mock_dm:
+            archer.discord_dm_fanout(
+                'crash', 'Impact detected.', min_tier=3,
+                extra_data={'lat': 40.7128, 'lon': -74.0060},
+            )
+        messages = {c.args[0]: c.args[1] for c in mock_dm.call_args_list}
+        assert messages['D1'] == 'Impact detected.'
+        assert messages['D3'] == 'Impact detected.'
+
+
+class TestDiscordDMChannelMechanics:
+    """Confirms DMs actually go through Discord's real two-step DM flow —
+    open/fetch the DM channel, then message that channel id — not a
+    fabricated shortcut."""
+
+    def setup_method(self):
+        self._backup_token = archer.DISCORD_BOT_TOKEN
+        archer.DISCORD_BOT_TOKEN = 'test-bot-token'
+        self._backup_enabled = archer.discord_config['enabled']
+        archer.discord_config['enabled'] = True
+
+    def teardown_method(self):
+        archer.DISCORD_BOT_TOKEN = self._backup_token
+        archer.discord_config['enabled'] = self._backup_enabled
+
+    def _fake_response(self, body_dict, status=200):
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(body_dict).encode()
+        cm.__enter__.return_value.status = status
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_opens_real_dm_channel_before_sending(self):
+        """Discord has no single 'DM this user_id' endpoint — must POST
+        /users/@me/channels with recipient_id first, then message the
+        channel id that comes back. Confirms both calls happen, in order,
+        with the right shapes."""
+        responses = [
+            self._fake_response({'id': 'DM_CHANNEL_123'}),
+            self._fake_response({'id': 'MSG_1'}),
+        ]
+        with patch('urllib.request.urlopen', side_effect=responses) as mock_urlopen:
+            ok = archer._discord_send_dm('D_USER', 'Hello')
+        assert ok is True
+        assert mock_urlopen.call_count == 2
+        first_req  = mock_urlopen.call_args_list[0].args[0]
+        second_req = mock_urlopen.call_args_list[1].args[0]
+        # Regression check for a real, confirmed bug: Cloudflare's bot
+        # protection in front of Discord's API 403s any request using
+        # Python's default urllib User-Agent (HTTP 403, error code 1010) —
+        # found live while running discord_register_commands.py. Every
+        # Discord API call must carry a real User-Agent or it silently
+        # fails the same way.
+        assert first_req.get_header('User-agent') == archer._DISCORD_USER_AGENT
+        assert second_req.get_header('User-agent') == archer._DISCORD_USER_AGENT
+        assert first_req.full_url == 'https://discord.com/api/v10/users/@me/channels'
+        assert json.loads(first_req.data)['recipient_id'] == 'D_USER'
+        assert second_req.full_url == 'https://discord.com/api/v10/channels/DM_CHANNEL_123/messages'
+
+    def test_dm_channel_open_failure_does_not_attempt_to_message(self):
+        with patch('urllib.request.urlopen', side_effect=OSError('network down')) as mock_urlopen:
+            ok = archer._discord_send_dm('D_USER', 'Hello')
+        assert ok is False
+        assert mock_urlopen.call_count == 1  # never got to the message step
+
+
+# ═══════════════════════════════════════════════════════════════
+# 49. discord_config/slack_config['enabled'] — computed from real
+# credentials, not hardcoded (regression coverage for a real bug: both
+# dicts were defined before their credential constants existed in the
+# file, so 'enabled' was permanently False no matter what was set in
+# archer.env — confirmed live, then fixed by computing it once those
+# constants are actually read).
+# ═══════════════════════════════════════════════════════════════
+class TestIntegrationEnabledFlag:
+    def test_compute_slack_enabled_requires_both_credentials(self):
+        backup = (archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN)
+        try:
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = 'secret', 'xoxb-token'
+            assert archer._compute_slack_enabled() is True
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = 'secret', ''
+            assert archer._compute_slack_enabled() is False
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = '', 'xoxb-token'
+            assert archer._compute_slack_enabled() is False
+        finally:
+            archer.SLACK_SIGNING_SECRET, archer.SLACK_BOT_TOKEN = backup
+
+    def test_compute_discord_enabled_requires_public_key(self):
+        backup = archer.DISCORD_PUBLIC_KEY
+        try:
+            archer.DISCORD_PUBLIC_KEY = 'key'
+            assert archer._compute_discord_enabled() is True
+            archer.DISCORD_PUBLIC_KEY = ''
+            assert archer._compute_discord_enabled() is False
+        finally:
+            archer.DISCORD_PUBLIC_KEY = backup
+
+    def test_real_process_with_credentials_boots_enabled(self):
+        """End-to-end reproduction of the exact reported bug: import archer
+        in a fresh process with real-looking credentials in the environment
+        and confirm both flags actually come up True — not just that the
+        compute function returns the right answer in isolation, which
+        wouldn't have caught the original bug (the function didn't exist;
+        the dict literal was never wired to anything)."""
+        env = dict(os.environ)
+        env['SLACK_SIGNING_SECRET'] = 'test-secret'
+        env['SLACK_BOT_TOKEN']      = 'xoxb-test-token'
+        env['DISCORD_PUBLIC_KEY']   = 'test-key'
+        result = subprocess.run(
+            [sys.executable, '-c',
+             "import archer; print(archer.slack_config['enabled'], archer.discord_config['enabled'])"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=os.path.dirname(os.path.abspath(archer.__file__)),
+        )
+        assert result.stdout.strip().endswith('True True'), result.stdout + result.stderr
+
+
+# ═══════════════════════════════════════════════════════════════
+# 50. Slack bot — signature verification + tiered command/alert routing
+# ═══════════════════════════════════════════════════════════════
+class TestSlackSignatureVerification:
+    def setup_method(self):
+        self._backup = archer.SLACK_SIGNING_SECRET
+        archer.SLACK_SIGNING_SECRET = 'test-signing-secret'
+
+    def teardown_method(self):
+        archer.SLACK_SIGNING_SECRET = self._backup
+
+    def _sign(self, timestamp, body, secret=b'test-signing-secret'):
+        basestring = f'v0:{timestamp}:{body}'.encode()
+        return 'v0=' + hmac.new(secret, basestring, hashlib.sha256).hexdigest()
+
+    def test_valid_signature_accepted(self):
+        ts = str(int(time.time()))
+        body = '{"type":"url_verification"}'
+        assert archer._slack_verify_signature(self._sign(ts, body), ts, body) is True
+
+    def test_tampered_body_rejected(self):
+        ts = str(int(time.time()))
+        sig = self._sign(ts, '{"a":1}')
+        assert archer._slack_verify_signature(sig, ts, '{"a":2}') is False
+
+    def test_wrong_secret_rejected(self):
+        ts = str(int(time.time()))
+        body = '{"a":1}'
+        sig = self._sign(ts, body, secret=b'wrong-secret')
+        assert archer._slack_verify_signature(sig, ts, body) is False
+
+    def test_stale_timestamp_rejected(self):
+        ts = str(int(time.time()) - 600)  # 10 minutes old — outside the 5 min window
+        body = '{"a":1}'
+        assert archer._slack_verify_signature(self._sign(ts, body), ts, body) is False
+
+    def test_no_signing_secret_configured_rejected(self):
+        archer.SLACK_SIGNING_SECRET = ''
+        assert archer._slack_verify_signature('v0=' + 'a' * 64, str(int(time.time())), '{}') is False
+
+
+class TestSlackUserTier:
+    def setup_method(self):
+        self._backup = (archer.SLACK_OWNER_IDS, archer.SLACK_PASSENGER_IDS, archer.SLACK_FAMILY_IDS)
+        archer.SLACK_OWNER_IDS     = {'U_OWNER'}
+        archer.SLACK_PASSENGER_IDS = {'U_PASSENGER'}
+        archer.SLACK_FAMILY_IDS    = {'U_FAMILY'}
+
+    def teardown_method(self):
+        archer.SLACK_OWNER_IDS, archer.SLACK_PASSENGER_IDS, archer.SLACK_FAMILY_IDS = self._backup
+
+    def test_owner_resolves_tier_1(self):
+        assert archer._slack_user_tier('U_OWNER') == 1
+
+    def test_passenger_resolves_tier_2(self):
+        assert archer._slack_user_tier('U_PASSENGER') == 2
+
+    def test_family_resolves_tier_3(self):
+        assert archer._slack_user_tier('U_FAMILY') == 3
+
+    def test_unknown_user_resolves_none(self):
+        assert archer._slack_user_tier('U_STRANGER') is None
+
+
+class TestSlackInteractionsEndpoint:
+    def setup_method(self):
+        self._backup = {
+            'signing_secret': archer.SLACK_SIGNING_SECRET,
+            'enabled':        archer.slack_config['enabled'],
+            'owner_ids':      archer.SLACK_OWNER_IDS,
+            'passenger_ids':  archer.SLACK_PASSENGER_IDS,
+            'family_ids':     archer.SLACK_FAMILY_IDS,
+        }
+        archer.SLACK_SIGNING_SECRET = 'test-signing-secret'
+        archer.slack_config['enabled'] = True
+        archer.SLACK_OWNER_IDS     = {'U_OWNER'}
+        archer.SLACK_PASSENGER_IDS = {'U_PASSENGER'}
+        archer.SLACK_FAMILY_IDS    = {'U_FAMILY'}
+
+    def teardown_method(self):
+        archer.SLACK_SIGNING_SECRET    = self._backup['signing_secret']
+        archer.slack_config['enabled'] = self._backup['enabled']
+        archer.SLACK_OWNER_IDS         = self._backup['owner_ids']
+        archer.SLACK_PASSENGER_IDS     = self._backup['passenger_ids']
+        archer.SLACK_FAMILY_IDS        = self._backup['family_ids']
+
+    def _form_body(self, **fields):
+        return urllib.parse.urlencode(fields)
+
+    def _signed_post(self, form_body):
+        ts = str(int(time.time()))
+        sig = 'v0=' + hmac.new(b'test-signing-secret', f'v0:{ts}:{form_body}'.encode(), hashlib.sha256).hexdigest()
+        return archer.display_app.test_client().post(
+            '/slack/interactions',
+            data=form_body,
+            content_type='application/x-www-form-urlencoded',
+            headers={'X-Slack-Signature': sig, 'X-Slack-Request-Timestamp': ts},
+        )
+
+    def test_bad_signature_rejected(self):
+        r = archer.display_app.test_client().post(
+            '/slack/interactions',
+            data=self._form_body(command='/vstatus', user_id='U_OWNER'),
+            content_type='application/x-www-form-urlencoded',
+            headers={'X-Slack-Signature': 'v0=' + 'a' * 64, 'X-Slack-Request-Timestamp': str(int(time.time()))},
+        )
+        assert r.status_code == 401
+
+    def test_unauthorized_user_rejected(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_STRANGER'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_owner_status_shows_full_diagnostics(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_OWNER'))
+        data = json.loads(r.data)
+        assert str(archer.truck_state['oil_temp']) in data['text']
+
+    def test_passenger_status_omits_raw_oil_temp(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_PASSENGER'))
+        data = json.loads(r.data)
+        assert 'Oil' not in data['text']
+        assert str(archer.truck_state['speed']) in data['text']
+
+    def test_family_status_has_no_numeric_diagnostics(self):
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'RPM' not in data['text']
+        assert 'Oil' not in data['text']
+        assert 'Speed' not in data['text']
+
+    def test_parking_rejected_for_passenger(self):
+        r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_PASSENGER'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_parking_rejected_for_family(self):
+        r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_parking_allowed_for_owner(self):
+        archer.parking_mode['active'] = False
+        try:
+            r = self._signed_post(self._form_body(command='/parking', text='arm', user_id='U_OWNER'))
+            assert r.status_code == 200
+            assert archer.parking_mode['active'] is True
+        finally:
+            archer.parking_mode['active'] = False
+
+    def test_ask_rejected_for_family(self):
+        r = self._signed_post(self._form_body(command='/ask', text='how is the truck', user_id='U_FAMILY'))
+        data = json.loads(r.data)
+        assert 'not authorized' in data['text'].lower()
+
+    def test_ask_deferred_for_passenger(self):
+        r = self._signed_post(self._form_body(
+            command='/ask', text='how is the truck', user_id='U_PASSENGER',
+            response_url='https://example.invalid/resp',
+        ))
+        data = json.loads(r.data)
+        assert data['text'] == 'Thinking...'
+
+    def test_block_action_parking_disarm_rejected_for_passenger(self):
+        payload = json.dumps({'user': {'id': 'U_PASSENGER'}, 'actions': [{'action_id': 'parking_disarm'}]})
+        r = self._signed_post(self._form_body(payload=payload))
+        data = json.loads(r.data)
+        assert 'owner only' in data['text'].lower()
+
+    def test_block_action_crash_im_ok_allowed_for_passenger(self):
+        archer.crash_detection['last_event'] = {'time': '1:00 PM', 'g': 4.0, 'speed': 30, 'road': 'Test Rd'}
+        payload = json.dumps({'user': {'id': 'U_PASSENGER'}, 'actions': [{'action_id': 'crash_im_ok'}]})
+        r = self._signed_post(self._form_body(payload=payload))
+        assert r.status_code == 200
+        assert archer.crash_detection['last_event']['status'] == 'confirmed_ok'
+
+    def test_disabled_integration_rejects_non_ping(self):
+        archer.slack_config['enabled'] = False
+        r = self._signed_post(self._form_body(command='/vstatus', user_id='U_OWNER'))
+        data = json.loads(r.data)
+        assert 'disabled' in data['text'].lower()
+
+
+class TestSlackAlertRouting:
+    def setup_method(self):
+        self._backup = {
+            'enabled':  archer.slack_config['enabled'],
+            'channels': dict(archer.SLACK_TIER_CHANNELS),
+        }
+        archer.slack_config['enabled'] = True
+        archer.SLACK_TIER_CHANNELS[1] = 'C_OWNER'
+        archer.SLACK_TIER_CHANNELS[2] = 'C_PASSENGER'
+        archer.SLACK_TIER_CHANNELS[3] = 'C_FAMILY'
+
+    def teardown_method(self):
+        archer.slack_config['enabled'] = self._backup['enabled']
+        archer.SLACK_TIER_CHANNELS.clear()
+        archer.SLACK_TIER_CHANNELS.update(self._backup['channels'])
+
+    def test_owner_only_alert_does_not_reach_passenger_or_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('oil_high', 'Oil temp critical at 230F.', 'OIL WARNING')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER'}
+
+    def test_crash_alert_reaches_all_three_tiers(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER', 'C_PASSENGER', 'C_FAMILY'}
+
+    def test_crash_buttons_sent_to_owner_and_passenger_not_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        blocks_by_channel = {c.args[0]: c.args[2] for c in mock_send.call_args_list}
+        assert any(b['type'] == 'actions' for b in blocks_by_channel['C_OWNER'])
+        assert any(b['type'] == 'actions' for b in blocks_by_channel['C_PASSENGER'])
+        assert not any(b['type'] == 'actions' for b in blocks_by_channel['C_FAMILY'])
+
+    def test_parking_armed_reaches_owner_and_passenger_not_family(self):
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('parking_armed', 'Parked at Home.', 'PARKING MODE ON')
+        channels_called = {c.args[0] for c in mock_send.call_args_list}
+        assert channels_called == {'C_OWNER', 'C_PASSENGER'}
+
+    def test_disabled_integration_sends_nothing(self):
+        archer.slack_config['enabled'] = False
+        with patch('archer.slack_post_message') as mock_send:
+            archer.slack_route_alert('crash', 'Impact detected.', 'CRASH ALERT')
+        mock_send.assert_not_called()
+
+
+class TestSlackDigest:
+    def test_owner_digest_matches_discord_digest(self):
+        assert archer._slack_digest_message(1) == archer._build_discord_digest()
+
+    def test_passenger_digest_omits_peak_rpm(self):
+        msg = archer._slack_digest_message(2)
+        assert 'Peak RPM' not in msg
+        assert 'Drive quality' in msg
+
+    def test_family_digest_has_no_raw_numbers_field(self):
+        msg = archer._slack_digest_message(3)
+        assert 'Peak RPM' not in msg
+        assert 'Drive quality' not in msg
+
+
+# ═══════════════════════════════════════════════════════════════
+# 51. obd_autodetect() — OBD_PORT manual override (archer.py:12522)
+# Confirmed dead before this fix: the env var was documented in
+# config.py/archer.env.example/README as the fallback when autodetect
+# can't find an adapter (true for a Bluetooth OBDLink MX+ bound to
+# /dev/rfcommN — it exposes no description/manufacturer string for the
+# keyword scan to match), but obd_autodetect() never read it.
+# ═══════════════════════════════════════════════════════════════
+class TestObdPortOverride:
+    def test_obd_port_set_skips_scan_and_connects_there(self):
+        """When OBD_PORT is set, it must be used directly, every loop
+        iteration — not just consulted once alongside the scan."""
+        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0'}), \
+             patch('serial.tools.list_ports.comports') as mock_comports, \
+             patch('serial.Serial', side_effect=RuntimeError('boom')) as mock_serial_cls, \
+             patch('time.sleep', side_effect=RuntimeError('stop-loop')):
+            with pytest.raises(RuntimeError, match='stop-loop'):
+                archer.obd_autodetect()
+
+        mock_serial_cls.assert_called_once()
+        assert mock_serial_cls.call_args[0][0] == '/dev/rfcomm0'
+        mock_comports.assert_not_called()
+
+    def test_obd_port_unset_falls_back_to_scan(self):
+        """Regression guard: the override must not swallow the existing
+        autodetect behavior for USB adapters when it isn't set.
+
+        serial is stubbed as a bare MagicMock for the whole test session
+        (see the top of this file). `import serial.tools.list_ports` is a
+        real import statement, not attribute access, so it needs both
+        'serial.tools' and 'serial.tools.list_ports' registered in
+        sys.modules AND wired as real attributes on the fake 'serial'
+        module — a MagicMock auto-vivifies attribute access but that alone
+        doesn't satisfy the import statement's own module resolution."""
+        fake_tools = MagicMock()
+        fake_list_ports = MagicMock()
+        fake_list_ports.comports.return_value = []
+        fake_tools.list_ports = fake_list_ports
+        sys.modules['serial'].tools = fake_tools
+
+        with patch.dict(os.environ, {'OBD_PORT': ''}), \
+             patch.dict(sys.modules, {'serial.tools': fake_tools, 'serial.tools.list_ports': fake_list_ports}), \
+             patch('time.sleep', side_effect=RuntimeError('stop-loop')):
+            with pytest.raises(RuntimeError, match='stop-loop'):
+                archer.obd_autodetect()
+
+        fake_list_ports.comports.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 52. ReSpeaker mic array — device discovery, channel extraction,
+# check_microphone()/listen_once() wiring, and the fallback to existing
+# generic-microphone behavior when no ReSpeaker is found.
+#
+# LOGIC-VERIFIED here (mocked sounddevice/vosk — this session has no real
+# ReSpeaker hardware or a booted Pi VM). NOT hardware-verified: whether a
+# real ReSpeaker's actual multi-channel capture sounds right and
+# transcribes correctly. That needs the physical array in hand.
+# ═══════════════════════════════════════════════════════════════
+class TestReSpeakerDeviceDiscovery:
+    def test_finds_respeaker_by_name(self):
+        fake_devices = [
+            {'name': 'Built-in Microphone', 'max_input_channels': 1},
+            {'name': 'ReSpeaker 4 Mic Array (UAC1.0)', 'max_input_channels': 6},
+        ]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() == (1, 6)
+
+    def test_no_respeaker_returns_none(self):
+        fake_devices = [{'name': 'Built-in Microphone', 'max_input_channels': 1}]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() is None
+
+    def test_ignores_output_only_device_named_respeaker(self):
+        """A ReSpeaker's playback/output side shouldn't be picked as an input."""
+        fake_devices = [{'name': 'ReSpeaker 4 Mic Array', 'max_input_channels': 0}]
+        with patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() is None
+
+    def test_prefers_alsa_over_a_same_named_device_on_another_hostapi(self):
+        """A same-named device reported under a non-ALSA host API (e.g. a
+        stray Pulse pseudo-device) must not be picked over the real ALSA
+        one, even when ALSA is present and working — see the comment on
+        _find_respeaker_device() for why this matters at all."""
+        fake_hostapis = [{'name': 'ALSA'}, {'name': 'pulse'}]
+        fake_devices = [
+            {'name': 'ReSpeaker via pulse', 'max_input_channels': 6, 'hostapi': 1},
+            {'name': 'ReSpeaker 4 Mic Array', 'max_input_channels': 6, 'hostapi': 0},
+        ]
+        with patch('sounddevice.query_hostapis', return_value=fake_hostapis), \
+             patch('sounddevice.query_devices', return_value=fake_devices):
+            assert archer._find_respeaker_device() == (1, 6)  # index 1 = the ALSA-hostapi device
+
+    def test_scan_error_returns_none_not_raises(self):
+        with patch('sounddevice.query_devices', side_effect=RuntimeError('no audio backend')):
+            assert archer._find_respeaker_device() is None
+
+
+class TestPinSoundDeviceToAlsa:
+    """archer._pin_sounddevice_to_alsa() — the real answer to 'does
+    PulseAudio work on archer-os': no, and it isn't supposed to (no D-Bus
+    session bus, no systemd — see the docstring on this function in
+    archer.py). This points PortAudio's default device resolution at ALSA
+    explicitly so a failed Pulse probe during Pa_Initialize() can't affect
+    it, regardless of what host APIs a given libportaudio2 build has
+    compiled in."""
+
+    def test_pins_alsa_when_present(self):
+        fake_sd = MagicMock()
+        fake_sd.query_hostapis.return_value = [{'name': 'OSS'}, {'name': 'ALSA'}]
+        assert archer._pin_sounddevice_to_alsa(fake_sd) is True
+        assert fake_sd.default.hostapi == 1
+
+    def test_returns_false_when_no_alsa_hostapi(self):
+        fake_sd = MagicMock()
+        fake_sd.query_hostapis.return_value = [{'name': 'JACK Audio Connection Kit'}]
+        assert archer._pin_sounddevice_to_alsa(fake_sd) is False
+
+
+class TestExtractChannel:
+    def test_extracts_first_channel_from_interleaved_pcm(self):
+        import array
+        # 2 channels, 3 frames: ch0=[10,20,30], ch1=[100,200,300], interleaved
+        interleaved = array.array('h', [10, 100, 20, 200, 30, 300]).tobytes()
+        result = archer._extract_channel(interleaved, channel_index=0, num_channels=2)
+        assert array.array('h', result).tolist() == [10, 20, 30]
+
+    def test_extracts_second_channel_not_first(self):
+        import array
+        interleaved = array.array('h', [10, 100, 20, 200, 30, 300]).tobytes()
+        result = archer._extract_channel(interleaved, channel_index=1, num_channels=2)
+        assert array.array('h', result).tolist() == [100, 200, 300]
+
+
+class TestCheckMicrophoneReSpeaker:
+    def teardown_method(self):
+        archer.mic_device['index']        = None
+        archer.mic_device['channels']     = 1
+        archer.mic_device['is_respeaker'] = False
+        archer.mic_available['ok']        = False
+
+    def test_respeaker_found_sets_mic_device(self):
+        with patch('archer._find_respeaker_device', return_value=(2, 6)):
+            archer.check_microphone()
+        assert archer.mic_device == {'index': 2, 'channels': 6, 'is_respeaker': True}
+        assert archer.mic_available['ok'] is True
+
+    def test_no_respeaker_falls_back_to_generic_check(self):
+        """Same fallback spirit as 'no microphone found, text input only' —
+        a missing ReSpeaker must not break the existing generic path."""
+        fake_source = MagicMock()
+        fake_mic_cm = MagicMock()
+        fake_mic_cm.__enter__.return_value = fake_source
+        fake_mic_cm.__exit__.return_value = False
+        with patch('archer._find_respeaker_device', return_value=None), \
+             patch('speech_recognition.Microphone', return_value=fake_mic_cm), \
+             patch.object(archer.recognizer, 'adjust_for_ambient_noise'):
+            archer.check_microphone()
+        assert archer.mic_device['is_respeaker'] is False
+        assert archer.mic_available['ok'] is True
+
+
+class TestListenOnceReSpeakerChannelHandling:
+    def setup_method(self):
+        self._backup = {
+            'IS_PI':          getattr(archer, '_IS_PI', False),
+            'VOSK_AVAILABLE': getattr(archer, '_VOSK_AVAILABLE', False),
+            'KaldiRec':       getattr(archer, '_KaldiRec', None),
+            'vosk_model':     getattr(archer, '_vosk_model', None),
+            'sd':             getattr(archer, '_sd', None),
+        }
+        archer._IS_PI          = True
+        archer._VOSK_AVAILABLE = True
+        archer._vosk_model     = MagicMock()
+
+    def teardown_method(self):
+        archer._IS_PI          = self._backup['IS_PI']
+        archer._VOSK_AVAILABLE = self._backup['VOSK_AVAILABLE']
+        archer._KaldiRec       = self._backup['KaldiRec']
+        archer._vosk_model     = self._backup['vosk_model']
+        archer._sd             = self._backup['sd']
+        archer.mic_device['index']        = None
+        archer.mic_device['channels']     = 1
+        archer.mic_device['is_respeaker'] = False
+
+    def _fake_vosk_and_stream(self, frame_bytes):
+        fake_rec = MagicMock()
+        fake_rec.AcceptWaveform.return_value = False
+        fake_rec.FinalResult.return_value = '{"text": ""}'
+        archer._KaldiRec = MagicMock(return_value=fake_rec)
+
+        fake_stream = MagicMock()
+        fake_stream.read.return_value = (frame_bytes, False)
+        fake_stream_cm = MagicMock()
+        fake_stream_cm.__enter__.return_value = fake_stream
+        fake_stream_cm.__exit__.return_value = False
+        fake_sd = MagicMock()
+        fake_sd.RawInputStream.return_value = fake_stream_cm
+        archer._sd = fake_sd
+        return fake_rec, fake_sd
+
+    def test_respeaker_detected_opens_stream_with_its_device_and_channels(self):
+        archer.mic_device['index']        = 3
+        archer.mic_device['channels']     = 6
+        archer.mic_device['is_respeaker'] = True
+
+        import array
+        frame = array.array('h', [0] * 6).tobytes()  # one 6-channel sample-group
+        fake_rec, fake_sd = self._fake_vosk_and_stream(frame)
+
+        archer.listen_once(timeout=1, phrase_limit=1)
+
+        fake_sd.RawInputStream.assert_called_once()
+        _, kwargs = fake_sd.RawInputStream.call_args
+        assert kwargs['device'] == 3
+        assert kwargs['channels'] == 6
+
+        # Vosk must receive de-interleaved mono audio (one int16 sample =
+        # 2 bytes), not the raw 6-channel frame (12 bytes) — proves
+        # _extract_channel() actually ran before AcceptWaveform, not just
+        # that the right device/channels were requested.
+        for call in fake_rec.AcceptWaveform.call_args_list:
+            assert len(call.args[0]) == 2
+
+    def test_no_respeaker_falls_back_to_default_device_mono(self):
+        """Regression guard: must be identical to pre-ReSpeaker behavior —
+        channels=1, no device= at all — when nothing was detected."""
+        archer.mic_device['is_respeaker'] = False
+
+        import array
+        frame = array.array('h', [0]).tobytes()
+        fake_rec, fake_sd = self._fake_vosk_and_stream(frame)
+
+        archer.listen_once(timeout=1, phrase_limit=1)
+
+        _, kwargs = fake_sd.RawInputStream.call_args
+        assert kwargs['channels'] == 1
+        assert 'device' not in kwargs
+
+
+# ═══════════════════════════════════════════════════════════════
+# 53. Voice init (archer.py:164) — a non-ImportError during vosk/sounddevice
+# setup must not crash the whole `import archer`.
+#
+# Confirmed live on a Pi VM: `import sounddevice` itself can raise
+# sounddevice.PortAudioError — Pa_Initialize() fails hard when any
+# compiled-in host API (Pulse, there) fails to init, even with genuine
+# working ALSA hardware underneath (a VMware-emulated Ensoniq AudioPCI
+# card, confirmed separately via arecord -l). That's not an ImportError,
+# so the `except ImportError:` this block used to have would have let it
+# escape uncaught and crash Archer at startup, not just disable Vosk.
+# ═══════════════════════════════════════════════════════════════
+class TestVoiceInitBroadException:
+    def test_non_import_error_during_voice_init_does_not_crash_archer_import(self, tmp_path):
+        # Fake vosk — succeeds, so execution reaches the sounddevice import
+        # (which comes after it in archer.py's real import order).
+        (tmp_path / 'vosk.py').write_text(
+            'class Model:\n'
+            '    def __init__(self, *a, **k): pass\n'
+            'class KaldiRecognizer:\n'
+            '    def __init__(self, *a, **k): pass\n'
+        )
+        # Fake sounddevice — raises AT IMPORT TIME, not ImportError, matching
+        # the real sounddevice.PortAudioError shape confirmed on the Pi VM:
+        # a plain Exception subclass, raised from the module's own top-level
+        # code during `import sounddevice`, not from any function call.
+        (tmp_path / 'sounddevice.py').write_text(
+            'class PortAudioError(Exception):\n'
+            '    pass\n'
+            'raise PortAudioError("Error initializing PortAudio: Unanticipated host error")\n'
+        )
+
+        env = dict(os.environ)
+        env['PYTHONPATH'] = str(tmp_path) + os.pathsep + env.get('PYTHONPATH', '')
+        result = subprocess.run(
+            [sys.executable, '-c',
+             "import platform; platform.system = lambda: 'Linux'; platform.machine = lambda: 'armv7l'; "
+             "import archer; print('IMPORT_OK', archer._VOSK_AVAILABLE)"],
+            capture_output=True, text=True, timeout=30, env=env,
+            cwd=os.path.dirname(os.path.abspath(archer.__file__)),
+        )
+        assert 'IMPORT_OK False' in result.stdout, result.stdout + result.stderr
+
+
+# ═══════════════════════════════════════════════════════════════
+# Panic mode / lockdown (archer.py: lockdown_state, activate_panic_mode(),
+# _panic_lockdown_active(), POST /panic/activate)
+#
+# Hard constraint under test, not a preference: activate_panic_mode() must
+# never call ask_archer(), casual_monitor(), or any AI provider — it has to
+# keep working even if Groq/Cerebras/Gemini/OpenRouter/local Ollama are all
+# down simultaneously. TestPanicModeAiIndependence proves that directly.
+# ═══════════════════════════════════════════════════════════════
+class TestPanicModeAiIndependence:
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_does_not_call_ask_archer_or_casual_monitor(self):
+        with patch('archer.ask_archer') as mock_ask, \
+             patch('archer.casual_monitor') as mock_casual:
+            result = archer.activate_panic_mode(120)
+        mock_ask.assert_not_called()
+        mock_casual.assert_not_called()
+        assert result['active'] is True
+
+    def test_succeeds_with_every_ai_provider_simultaneously_down(self):
+        """Blank all four cloud keys and make both urlopen (Groq/Cerebras/
+        Gemini/OpenRouter/Slack all go through it) and subprocess.run
+        (Ollama) raise — activate_panic_mode() must still fully succeed,
+        since it never calls into any of that machinery to begin with."""
+        env_keys = ('GROQ_API_KEY', 'CEREBRAS_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY')
+        backup = {k: os.environ.get(k) for k in env_keys}
+        for k in env_keys:
+            os.environ[k] = ''
+        try:
+            with patch('urllib.request.urlopen', side_effect=OSError('network down')), \
+                 patch('subprocess.run', side_effect=OSError('ollama down')):
+                result = archer.activate_panic_mode(120)
+        finally:
+            for k, v in backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        assert result['active'] is True
+        assert archer.lockdown_state['active'] is True
+
+
+class TestPanicModeCore:
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+        self._location_backup = dict(archer.location_data)
+        self._channel_backup = archer.SLACK_CHANNEL_PANIC
+        self._slack_enabled_backup = archer.slack_config['enabled']
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+        archer.location_data.clear()
+        archer.location_data.update(self._location_backup)
+        archer.SLACK_CHANNEL_PANIC = self._channel_backup
+        archer.slack_config['enabled'] = self._slack_enabled_backup
+
+    def test_posts_directly_to_panic_channel_not_tier_channels(self):
+        """Must bypass slack_route_alert()'s tier fan-out entirely — a
+        single call to the one dedicated channel, not a loop over tiers."""
+        archer.SLACK_CHANNEL_PANIC = 'C_PANIC'
+        with patch('archer.slack_post_message') as mock_send:
+            archer.activate_panic_mode(120)
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == 'C_PANIC'
+
+    def test_snapshots_current_location(self):
+        archer.location_data['lat'] = 40.7128
+        archer.location_data['lon'] = -74.0060
+        archer.location_data['location_name'] = 'Home'
+        archer.activate_panic_mode(120)
+        assert archer.lockdown_state['location'] == {
+            'lat': 40.7128, 'lon': -74.0060, 'name': 'Home',
+        }
+
+    def test_sets_relay_control_disabled_flag(self):
+        assert archer.lockdown_state['relay_control_disabled'] is False
+        archer.activate_panic_mode(120)
+        assert archer.lockdown_state['relay_control_disabled'] is True
+
+    def test_window_seconds_recorded(self):
+        result = archer.activate_panic_mode(300)
+        assert result['window_secs'] == 300
+        assert archer.lockdown_state['window_secs'] == 300
+
+    def test_window_clamped_to_max(self):
+        result = archer.activate_panic_mode(999999)
+        assert result['window_secs'] == archer.PANIC_WINDOW_MAX_SECS
+
+    def test_window_clamped_to_min(self):
+        result = archer.activate_panic_mode(1)
+        assert result['window_secs'] == archer.PANIC_WINDOW_MIN_SECS
+
+
+class TestPanicModeExpiry:
+    """Confirms the lockdown expires on its own — no manual reset call
+    needed once expires_at passes (archer.py:_panic_lockdown_active)."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_active_immediately_after_activation(self):
+        archer.activate_panic_mode(120)
+        assert archer._panic_lockdown_active() is True
+
+    def test_expires_once_window_passes_without_manual_reset(self):
+        archer.activate_panic_mode(120)
+        # Simulate the window having already elapsed — no call to any
+        # "deactivate" function, just time passing.
+        archer.lockdown_state['expires_at'] = time.time() - 1
+        assert archer._panic_lockdown_active() is False
+        # And the flag itself flips off as a side effect of the check,
+        # matching _check_lockout()'s lazy-expiry pattern in obd_gatekeeper.py.
+        assert archer.lockdown_state['active'] is False
+
+    def test_still_active_before_window_passes(self):
+        archer.activate_panic_mode(120)
+        archer.lockdown_state['expires_at'] = time.time() + 60
+        assert archer._panic_lockdown_active() is True
+
+
+class TestPanicModeBlocksRegistration:
+    """The actual, live-controllable lock: register_mac() and
+    register_device_endpoint() both refuse new grants while a lockdown is
+    active, then work normally again once it expires."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+        archer.one_time_codes.clear()
+
+    def test_register_mac_blocked_during_lockdown(self):
+        archer.activate_panic_mode(120)
+        code = archer.generate_one_time_code('Visitor', 3)
+        r = client.post('/register_mac', json={'code': code, 'mac': 'AA:BB:CC:DD:EE:FF'})
+        d = json.loads(r.data)
+        assert d['success'] is False
+        assert 'panic' in d['error'].lower()
+
+    def test_register_mac_master_code_also_blocked_during_lockdown(self):
+        """Even the Tier-1 master code must not grant a session during a
+        lockdown — the whole point is no new device gets in, period."""
+        archer._master_code_enabled = True
+        archer._master_code = '999999'
+        try:
+            archer.activate_panic_mode(120)
+            r = client.post('/register_mac', json={'code': '999999', 'mac': 'AA:BB:CC:DD:EE:00'})
+            d = json.loads(r.data)
+            assert d['success'] is False
+        finally:
+            archer._master_code_enabled = False
+            archer._master_code = None
+
+    def test_register_device_blocked_during_lockdown(self):
+        """/register_device requires Tier 1 already — the panic check must
+        still block even an authenticated owner, since the whole point is
+        no new device gets a grant, period."""
+        archer.activate_panic_mode(120)
+        c = _authed_client(1, 'Owner')
+        r = c.post('/register_device', json={'fingerprint': 'fp-panic-test', 'name': 'Visitor', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['ok'] is False
+        assert 'panic' in d['error'].lower()
+
+    def test_register_mac_works_again_after_lockdown_expires(self):
+        archer.activate_panic_mode(120)
+        archer.lockdown_state['expires_at'] = time.time() - 1  # force expiry
+        code = archer.generate_one_time_code('Visitor', 3)
+        # Real success reaches save_mac_whitelist(), which writes
+        # mac_whitelist.json to disk — mock it so the test doesn't leave
+        # that file behind in the repo root.
+        with patch('archer.save_mac_whitelist'), patch('archer.load_mac_whitelist', return_value={}):
+            r = client.post('/register_mac', json={'code': code, 'mac': 'AA:BB:CC:DD:EE:01'})
+        d = json.loads(r.data)
+        assert d['success'] is True
+
+    def test_register_device_works_when_no_lockdown_active(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/register_device', json={'fingerprint': 'fp-no-lockdown', 'name': 'Visitor', 'tier': 2})
+        d = json.loads(r.data)
+        assert d['ok'] is True
+
+
+class TestPanicActivateRoute:
+    """POST /panic/activate itself: owner-tier gate and the Tailscale/
+    loopback network gate, independent of each other."""
+
+    def setup_method(self):
+        self._lockdown_backup = dict(archer.lockdown_state)
+
+    def teardown_method(self):
+        archer.lockdown_state.clear()
+        archer.lockdown_state.update(self._lockdown_backup)
+
+    def test_owner_from_loopback_succeeds(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['active'] is True
+
+    def test_owner_from_tailscale_range_succeeds(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={}, environ_overrides={'REMOTE_ADDR': '100.111.157.35'})
+        assert r.status_code == 200
+
+    def test_owner_from_public_ip_rejected(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={}, environ_overrides={'REMOTE_ADDR': '203.0.113.5'})
+        assert r.status_code == 403
+        assert archer.lockdown_state['active'] is False
+
+    def test_non_owner_tier_from_loopback_rejected(self):
+        c = _authed_client(2, 'Passenger')
+        r = c.post('/panic/activate', json={})
+        assert r.status_code == 403
+        assert archer.lockdown_state['active'] is False
+
+    def test_window_minutes_passed_through(self):
+        c = _authed_client(1, 'Owner')
+        r = c.post('/panic/activate', json={'window_minutes': 5})
+        d = json.loads(r.data)
+        assert d['window_secs'] == 300
 
 
 if __name__ == '__main__':

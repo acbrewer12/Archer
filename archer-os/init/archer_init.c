@@ -17,6 +17,8 @@
  *
  *   4. Fork services:
  *        - NetworkManager (or wpa_supplicant) for WiFi/tethering
+ *        - bluetoothd + a bind of a previously-paired OBDLink MX+ to
+ *          /dev/rfcomm0 (see archer-os/obd-auth/obd_bt_pair.sh/obd_bt_bind.sh)
  *        - Archer Flask app (the actual truck AI)
  *
  *   5. Main loop: reap zombie children + handle shutdown signals
@@ -48,6 +50,7 @@
 #include <net/if.h>
 #include <sys/socket.h>
 #include <dirent.h>
+#include <grp.h>
 
 /* ── tunables ────────────────────────────────────────────────────── */
 #define ARCHER_VENV   "/opt/archer/.venv/bin/python3"
@@ -55,6 +58,10 @@
 #define ARCHER_DIR    "/opt/archer"
 #define ARCHER_USER   "archer"
 
+/* archer.py's own stdout/stderr. Deliberately a separate file from
+ * LOG_PATH so a Python traceback is not interleaved with init chatter —
+ * `cat /run/archer.log` should answer "why did the backend not start". */
+#define ARCHER_LOG    "/run/archer.log"
 #define LOG_PATH      "/run/archer_init.log"
 #define STATUS_PATH   "/run/archer_status"
 
@@ -62,11 +69,12 @@
 static volatile int g_shutdown = 0;
 static volatile int g_shutdown_type = RB_POWER_OFF;
 
-static pid_t pid_network  = -1;
-static pid_t pid_avahi    = -1;
-static pid_t pid_archer   = -1;
-static pid_t pid_getty1   = -1;
-static pid_t pid_getty2   = -1;
+static pid_t pid_network    = -1;
+static pid_t pid_avahi      = -1;
+static pid_t pid_bluetooth  = -1;
+static pid_t pid_archer     = -1;
+static pid_t pid_getty1     = -1;
+static pid_t pid_getty2     = -1;
 
 /* ── logging ─────────────────────────────────────────────────────── */
 
@@ -421,6 +429,92 @@ static int get_uid_gid(const char *username, uid_t *uid, gid_t *gid)
     return -1;  /* not found */
 }
 
+/* ── verify a file is safe to execute with root privileges ─────────
+ *
+ * We are PID 1, running as root. /opt/archer (application code, including
+ * the venv's python3 interpreter) is owned by the unprivileged 'archer'
+ * user — see build.sh's `chown -R archer:archer /opt/archer`. That means
+ * anything under /opt/archer must be treated as untrusted input when we
+ * are about to run it *before* dropping privileges: if the 'archer'
+ * account is ever compromised locally, a rewritten script or interpreter
+ * there would otherwise get executed as root on the next boot.
+ *
+ * "Safe" means: owned by root (uid 0) and not writable by group or other.
+ * Fail closed — anything that doesn't pass this check must not run as
+ * root; the caller should skip it rather than trust it blindly.
+ */
+/*
+ * Supplementary groups for a user, parsed straight out of /etc/group.
+ *
+ * Deliberately NOT initgroups(): that resolves through NSS, and this binary
+ * is linked -static (see build.sh / build-vm.sh), where NSS needs the exact
+ * glibc shared objects present at runtime — gcc warns about precisely this.
+ * get_uid_gid() above already parses /etc/passwd by hand for the same
+ * reason, so this keeps that approach consistent.
+ *
+ * Why it matters: setgid()/setuid() do NOT touch the supplementary group
+ * list, so without this the child inherits PID 1's list, which is empty.
+ * That silently voids the build's
+ *   usermod -aG audio,video,dialout,sudo,input archer
+ * and "dialout" is the one that bites — archer.py opens serial ports for
+ * OBD and would take EACCES on every one of them.
+ */
+static int get_supp_groups(const char *username, gid_t primary, gid_t *out, int max)
+{
+    FILE *f = fopen("/etc/group", "r");
+    if (!f) return 0;
+
+    int n = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), f) && n < max) {
+        /* format: name:passwd:gid:member,member,...  (fields may be empty) */
+        char *p = line;
+        char *field[4] = { NULL, NULL, NULL, NULL };
+        int nf = 0;
+        field[nf++] = p;
+        while (*p && nf < 4) {
+            if (*p == ':') { *p = '\0'; field[nf++] = p + 1; }
+            p++;
+        }
+        if (nf < 4) continue;
+
+        char *nl = strchr(field[3], '\n');
+        if (nl) *nl = '\0';
+
+        gid_t g = (gid_t)strtoul(field[2], NULL, 10);
+        if (g == primary) continue;   /* primary comes from setgid() */
+
+        char *m = field[3];
+        while (*m) {
+            char *comma = strchr(m, ',');
+            if (comma) *comma = '\0';
+            if (strcmp(m, username) == 0) { out[n++] = g; break; }
+            if (!comma) break;
+            m = comma + 1;
+        }
+    }
+    fclose(f);
+    return n;
+}
+
+static int is_safe_to_run_as_root(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) < 0) {
+        WARN("privilege check: stat() failed on a file we were about to run as root");
+        return 0;
+    }
+    if (st.st_uid != 0) {
+        WARN("privilege check: file is not owned by root — refusing to run it as root");
+        return 0;
+    }
+    if (st.st_mode & (S_IWGRP | S_IWOTH)) {
+        WARN("privilege check: file is group/world writable — refusing to run it as root");
+        return 0;
+    }
+    return 1;
+}
+
 /* ── start all services ──────────────────────────────────────────── */
 
 static void start_services(void)
@@ -428,48 +522,24 @@ static void start_services(void)
     /* 0. Wired ethernet — start dhclient immediately so DHCP runs in the
      *    background while we bring up D-Bus and NetworkManager.
      *    By the time Archer starts (~6s later) the IP is already assigned. */
-    bring_up_ethernet();
-
     uid_t archer_uid = 1000;
     gid_t archer_gid = 1000;
     get_uid_gid(ARCHER_USER, &archer_uid, &archer_gid);
 
-    /* 1. D-Bus system daemon — must start BEFORE NetworkManager.
-     *    NetworkManager uses D-Bus for all inter-process communication.
-     *    Without it, NM starts but can't manage interfaces. */
-    {
-        /* Create the D-Bus runtime directory if missing */
-        mkdir("/run/dbus", 0755);
-        char *argv[] = { "/usr/bin/dbus-daemon", "--system", "--nofork",
-                         "--nopidfile", NULL };
-        pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
-        if (pid > 0) {
-            LOG("dbus-daemon started");
-            sleep(2);  /* wait for D-Bus socket to be ready before NM connects */
-        } else {
-            WARN("dbus-daemon failed — NetworkManager may not work");
-        }
-    }
-
-    /* 2. NetworkManager — manages WiFi and USB tethering */
-    {
-        char *argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
-        pid_network = spawn("/usr/sbin/NetworkManager", argv, "/", 0, 0);
-        if (pid_network > 0)
-            LOG("NetworkManager started");
-        else
-            WARN("NetworkManager failed to start");
-    }
-
-    /* 3. Avahi daemon — mDNS, makes archer.local work on the LAN */
-    {
-        char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
-        pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
-        if (pid_avahi > 0)
-            LOG("avahi-daemon started");
-        /* non-critical, no warning if it fails */
-    }
-
+    /* ── ORDERING NOTE (boot latency) ─────────────────────────────────
+     * What the user waits for is the screen, so the graphical session and
+     * the backend start FIRST and everything else overlaps behind them.
+     *
+     * This used to run dbus -> NetworkManager -> avahi -> getty -> archer.py,
+     * so the login screen was queued behind three daemons, and archer.py —
+     * which needs seconds just to import its Python dependencies — was dead
+     * last. Nothing about X, the login UI, or the Flask app needs dbus or the
+     * network up first, so that ordering bought nothing and charged the user
+     * the entire daemon-startup time before anything appeared on screen.
+     *
+     * Now: tty1 (login/kiosk) -> archer.py -> tty2 -> network stack, so the
+     * slow Python import overlaps daemon startup instead of following it.
+     */
     /* 4a. Getty on tty1 — autologin as archer → .bash_profile → startx → kiosk.
      *     We open /dev/tty1 explicitly so stdin/stdout/stderr go there. */
     {
@@ -499,7 +569,14 @@ static void start_services(void)
     }
 
     /* 4b. Getty on tty2 — maintenance shell, always accessible via Ctrl+Alt+F2.
-     *     Also autologin as archer so you don't need a password to debug. */
+     *     Deliberately NOT autologin: tty1 is the public-facing kiosk display,
+     *     but tty2 is a full shell, and anyone with physical keyboard access to
+     *     the head unit can hit Ctrl+Alt+F2. Autologin here would hand out an
+     *     authenticated shell as 'archer' to anyone standing at the truck, no
+     *     password required. Require a normal login prompt instead — the
+     *     'archer' account has no password set by default (see build.sh), so
+     *     until an operator explicitly runs `passwd archer`, tty2 is unusable,
+     *     which is the safe default. */
     {
         pid_t pid = fork();
         if (pid == 0) {
@@ -514,7 +591,6 @@ static void start_services(void)
             ioctl(STDIN_FILENO, TIOCSCTTY, 1);
             char *argv[] = {
                 "/sbin/agetty",
-                "--autologin", "archer",
                 "--noclear",
                 "tty2", "linux", NULL
             };
@@ -523,49 +599,7 @@ static void start_services(void)
         }
         pid_getty2 = pid;
         if (pid_getty2 > 0)
-            LOG("getty started on tty2 (maintenance)");
-    }
-
-    /* Small delay: let NetworkManager initialize before Archer tries to use the network */
-    sleep(2);
-
-    /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
-     *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
-     *    Non-blocking: if the Pi isn't present or auth fails, Archer still starts
-     *    (just without OBD data). Result written to /run/archer_obd_auth for archer.py. */
-    {
-        char *argv[] = {
-            ARCHER_VENV,
-            "/opt/archer/archer-os/obd-auth/obd_auth_client.py",
-            NULL
-        };
-        pid_t pid = fork();
-        if (pid == 0) {
-            int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
-            if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
-            execv(ARCHER_VENV, argv);
-            _exit(1);
-        }
-        if (pid > 0) {
-            /* Wait up to 10 seconds — don't stall boot forever */
-            int waited = 0;
-            int auth_status = -1;
-            while (waited < 10) {
-                pid_t r = waitpid(pid, &auth_status, WNOHANG);
-                if (r == pid) break;
-                sleep(1); waited++;
-            }
-            if (waited >= 10) {
-                WARN("OBD2 auth: timeout — killing auth process");
-                kill(pid, SIGKILL);
-                waitpid(pid, NULL, 0);
-            }
-            int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
-            int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
-            if (ok) LOG("OBD2 authentication successful — port unlocked");
-            else    WARN("OBD2 authentication skipped or failed");
-        }
+            LOG("getty started on tty2 (maintenance, password login required)");
     }
 
     /* 6. Archer Flask app — the truck AI */
@@ -588,13 +622,44 @@ static void start_services(void)
         pid_t pid = fork();
         if (pid == 0) {
             if (chdir(ARCHER_DIR) < 0) _exit(1);
+
+            /* Open the log sink and /dev/null BEFORE dropping privileges.
+             *
+             * This used to happen after setuid(), and it silently threw away
+             * every line archer.py ever wrote. devtmpfs creates /dev/kmsg
+             * mode 0644 root:root, so as uid 1000 that open() returns EACCES,
+             * kmsg came back -1, and the guarded dup2 pair was skipped
+             * entirely — confirmed empirically, not deduced. That is why a
+             * failing archer.py has been invisible in dmesg the whole time
+             * and why the white-dashboard failure was so hard to pin down.
+             * File descriptors survive setuid, so opening first and dup2'ing
+             * after is both correct and safe.
+             *
+             * Sink is a real file rather than /dev/kmsg: userspace writes to
+             * /dev/kmsg are printk-ratelimited (~10 records per 5s) and any
+             * single write over 1024 bytes is rejected with EINVAL, so a
+             * Python traceback — the exact thing worth capturing — is the
+             * output most likely to be truncated or dropped. /run is a tmpfs
+             * archer_init mounts itself, so this always works and never
+             * touches the read-only-until-remounted root.
+             */
+            int log_fd = open(ARCHER_LOG, O_WRONLY | O_CREAT | O_APPEND | O_NOCTTY, 0644);
+            if (log_fd < 0) log_fd = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+            int null_fd = open("/dev/null", O_RDONLY);
+
+            /* Supplementary groups must be set while still root, and
+             * before setuid(). See get_supp_groups() for why this is a
+             * hand parse rather than initgroups(). Non-fatal on failure:
+             * better to run with only the primary group than to refuse to
+             * start the application at all. */
+            gid_t supp[32];
+            int nsupp = get_supp_groups(ARCHER_USER, archer_gid, supp, 32);
+            if (nsupp > 0) setgroups((size_t)nsupp, supp);
+
             if (setgid(archer_gid) < 0 || setuid(archer_uid) < 0) _exit(1);
 
-            int null_fd = open("/dev/null", O_RDONLY);
             if (null_fd >= 0) { dup2(null_fd, STDIN_FILENO); close(null_fd); }
-
-            int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
-            if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+            if (log_fd >= 0) { dup2(log_fd, STDOUT_FILENO); dup2(log_fd, STDERR_FILENO); close(log_fd); }
 
             execve(ARCHER_VENV, argv, env);
             _exit(127);
@@ -604,6 +669,190 @@ static void start_services(void)
             LOG("Archer app started");
         else
             ERR("Archer app failed to start — this is a critical failure");
+    }
+
+
+    /* ── network stack: started after the UI, overlapping with it ── */
+    bring_up_ethernet();
+    /* 1. D-Bus system daemon — must start BEFORE NetworkManager.
+     *    NetworkManager uses D-Bus for all inter-process communication.
+     *    Without it, NM starts but can't manage interfaces. */
+    {
+        /* Create the D-Bus runtime directory if missing */
+        mkdir("/run/dbus", 0755);
+        char *argv[] = { "/usr/bin/dbus-daemon", "--system", "--nofork",
+                         "--nopidfile", NULL };
+        pid_t pid = spawn("/usr/bin/dbus-daemon", argv, "/", 0, 0);
+        if (pid > 0) {
+            LOG("dbus-daemon started");
+            /* Poll for the socket instead of sleeping a flat 2s. NetworkManager
+             * only needs the bus to be listening, which normally happens in
+             * tens of milliseconds — a fixed sleep(2) spent that time on every
+             * single boot regardless. Cap at 2s so a broken dbus still can't
+             * wedge the boot. */
+            for (int i = 0; i < 200; i++) {
+                if (access("/run/dbus/system_bus_socket", F_OK) == 0) break;
+                usleep(10000);  /* 10ms */
+            }
+        } else {
+            WARN("dbus-daemon failed — NetworkManager may not work");
+        }
+    }
+
+    /* 2. NetworkManager — manages WiFi and USB tethering */
+    {
+        char *argv[] = { "/usr/sbin/NetworkManager", "--no-daemon", NULL };
+        pid_network = spawn("/usr/sbin/NetworkManager", argv, "/", 0, 0);
+        if (pid_network > 0)
+            LOG("NetworkManager started");
+        else
+            WARN("NetworkManager failed to start");
+    }
+
+    /* 2b. Bluetooth daemon — org.bluez on the system bus, needed to bind a
+     *     previously-paired OBDLink MX+ Bluetooth OBD-II adapter to a
+     *     serial device node. Path is the standard Debian bluez package
+     *     location. NOT verified against this specific image — no
+     *     Bluetooth hardware or booted VM was available while this was
+     *     written; confirm the path and that bluetoothd actually starts
+     *     before trusting this on real hardware. See
+     *     archer-os/obd-auth/obd_bt_pair.sh (one-time manual pairing) and
+     *     obd_bt_bind.sh (the rebind step run right below), same caveat. */
+    {
+        char *argv[] = { "/usr/lib/bluetooth/bluetoothd", "-n", NULL };
+        pid_bluetooth = spawn("/usr/lib/bluetooth/bluetoothd", argv, "/", 0, 0);
+        if (pid_bluetooth > 0)
+            LOG("bluetoothd started");
+        /* non-critical, same as avahi below — OBD still works over a
+         * directly-wired USB/serial adapter without this */
+    }
+
+    /* 2c. Bind a previously-paired OBDLink MX+ to /dev/rfcomm0, if
+     *     obd_bt_pair.sh has been run at least once (it writes the paired
+     *     MAC to /etc/archer/obd_bt_mac). obd_bt_bind.sh exits quietly if
+     *     that file doesn't exist — first boot before pairing is normal,
+     *     not an error. bluetoothd doesn't expose a socket to poll for
+     *     readiness the way dbus does, so this just gives it a moment. */
+    if (pid_bluetooth > 0) {
+        usleep(500000);  /* 500ms for bluetoothd to register on the bus */
+        const char *bind_script = "/opt/archer/archer-os/obd-auth/obd_bt_bind.sh";
+        if (!is_safe_to_run_as_root(bind_script)) {
+            WARN("obd_bt_bind.sh: skipped — not root-owned/is writable by 'archer'");
+        } else {
+            char *argv[] = { "/bin/bash", (char *)bind_script, NULL };
+            pid_t pid_bind = fork();
+            if (pid_bind == 0) {
+                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+                execv("/bin/bash", argv);
+                _exit(1);
+            } else if (pid_bind > 0) {
+                int waited = 0, bind_status = -1;
+                while (waited < 5) {
+                    pid_t r = waitpid(pid_bind, &bind_status, WNOHANG);
+                    if (r == pid_bind) break;
+                    sleep(1); waited++;
+                }
+                if (waited >= 5) {
+                    WARN("obd_bt_bind.sh: timed out, killing it — boot continues without a Bluetooth OBD bind");
+                    kill(pid_bind, SIGKILL);
+                    waitpid(pid_bind, NULL, 0);
+                } else if (WIFEXITED(bind_status) && WEXITSTATUS(bind_status) == 0) {
+                    LOG("obd_bt_bind.sh: ran (see kmsg for whether a bind actually happened)");
+                } else {
+                    WARN("obd_bt_bind.sh: exited non-zero — Bluetooth OBD bind likely failed");
+                }
+            }
+        }
+    }
+
+    /* 4. Avahi daemon — mDNS, makes archer.local work on the LAN */
+    {
+        char *argv[] = { "/usr/sbin/avahi-daemon", "--no-chroot", NULL };
+        pid_avahi = spawn("/usr/sbin/avahi-daemon", argv, "/", 0, 0);
+        if (pid_avahi > 0)
+            LOG("avahi-daemon started");
+        /* non-critical, no warning if it fails */
+    }
+
+    /* No delay here any more. archer.py does not need the network to be up in
+     * order to start — it binds a local socket and serves the dashboard; any
+     * network use is lazy and already failure-tolerant. Sleeping 2s here just
+     * pushed the backend (and therefore the dashboard) 2s later on every boot. */
+
+    /* 5. OBD2 port authentication — send HMAC-SHA256 handshake to the Pi gatekeeper.
+     *    The Pi keeps the OBD2 connector dead until we prove we hold the shared key.
+     *    If the Pi isn't present or auth fails, Archer still starts (just
+     *    without OBD data). The result is written to /run/archer_obd_auth.
+     *
+     *    NOTE: nothing actually reads that file — grepped the whole repo, it
+     *    is write-only. It is kept as a boot-time diagnostic, not a handoff.
+     *
+     *    This used to run to completion BEFORE archer.py was forked, and the
+     *    wait below is capped at 10s. In QEMU that cost nothing because
+     *    /dev/ttyUSB0 does not exist, so the client raised immediately — but
+     *    on real hardware the port DOES exist, and with the Pi absent or slow
+     *    the client burns two 5s readline timeouts, hits the cap, and gets
+     *    SIGKILLed. That was a flat 10s added to the delay before Flask even
+     *    began importing, on hardware that is already slow to start it. Since
+     *    archer.py never consumes the result, there is no reason to serialise
+     *    them: the child is forked here and collected in step 5b, after
+     *    archer.py is already on its way.
+     *
+     *    This runs as root — before we drop to the unprivileged 'archer' user —
+     *    because it needs to read the root-only shared key at
+     *    /etc/archer/obd_auth.key. That means we must NOT blindly trust the
+     *    interpreter/script we're about to run: both live under /opt/archer,
+     *    which is owned by 'archer' (see build.sh). Verify they are root-owned
+     *    and not group/world-writable first; fail closed (skip auth, boot
+     *    continues without OBD data) if that check doesn't pass. */
+    pid_t pid_obd = -1;
+    {
+        const char *obd_auth_script = "/opt/archer/archer-os/obd-auth/obd_auth_client.py";
+        char *argv[] = {
+            ARCHER_VENV,
+            (char *)obd_auth_script,
+            NULL
+        };
+
+        if (!is_safe_to_run_as_root(ARCHER_VENV) || !is_safe_to_run_as_root(obd_auth_script)) {
+            ERR("OBD2 auth: skipped — interpreter or script is not root-owned/is writable by 'archer'");
+            int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) { dprintf(fd, "0\n"); close(fd); }
+        } else {
+            pid_obd = fork();
+            if (pid_obd == 0) {
+                int kmsg = open("/dev/kmsg", O_WRONLY | O_NOCTTY);
+                if (kmsg >= 0) { dup2(kmsg, STDOUT_FILENO); dup2(kmsg, STDERR_FILENO); close(kmsg); }
+                execv(ARCHER_VENV, argv);
+                _exit(1);
+            }
+            /* Deliberately NOT waited on here — see step 5b below. */
+        }
+    }
+
+    /* 5b. Collect the OBD2 auth result, now that archer.py is already
+     *     starting. Same 10s cap and SIGKILL as before — the only change is
+     *     WHERE it happens, so the wait overlaps archer.py's (slow) import
+     *     instead of delaying it. See step 5 above for why this is safe. */
+    if (pid_obd > 0) {
+        int waited = 0;
+        int auth_status = -1;
+        while (waited < 10) {
+            pid_t r = waitpid(pid_obd, &auth_status, WNOHANG);
+            if (r == pid_obd) break;
+            sleep(1); waited++;
+        }
+        if (waited >= 10) {
+            WARN("OBD2 auth: timeout — killing auth process");
+            kill(pid_obd, SIGKILL);
+            waitpid(pid_obd, NULL, 0);
+        }
+        int ok = (WIFEXITED(auth_status) && WEXITSTATUS(auth_status) == 0) ? 1 : 0;
+        int fd = open("/run/archer_obd_auth", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { dprintf(fd, "%d\n", ok); close(fd); }
+        if (ok) LOG("OBD2 authentication successful — port unlocked");
+        else    WARN("OBD2 authentication skipped or failed");
     }
 }
 
@@ -768,16 +1017,96 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
     else
         LOG("root filesystem remounted read-write");
 
+    /* ── Start udevd BEFORE the module fallbacks below ──────────────────
+     * devtmpfs (built in) creates the device nodes themselves, so /dev looks
+     * populated even with no udev running — which is why this image could
+     * boot and paint a dashboard while still having a completely dead mouse
+     * and keyboard inside X. What devtmpfs does NOT do is populate the udev
+     * database under /run/udev, and that database is where the ID_INPUT_*
+     * properties live. Xorg enumerates input through libudev and matches its
+     * InputClass rules against exactly those properties, so with no udevd
+     * running it adds ZERO input devices. Xorg says so in its own log:
+     *   "The server relies on udev to provide the list of input devices.
+     *    If no devices become available, reconfigure udev or disable
+     *    AutoAddDevices."
+     * Observed on a real boot, not theorised.
+     *
+     * systemd-udevd is an ordinary daemon and does not require systemd to be
+     * PID 1 — it needs /proc, /sys, /dev and /run, all mounted above. It is
+     * also what makes modalias-based autoloading work, so USB input on the
+     * real head unit comes up without having to be named in the fallback
+     * table below. The path is probed rather than hardcoded because the
+     * binary moved between releases (bookworm ships a real
+     * /lib/systemd/systemd-udevd; newer ones make it a multi-call symlink
+     * to udevadm). */
+    {
+        static const char *const udevd_paths[] = {
+            "/lib/systemd/systemd-udevd",
+            "/usr/lib/systemd/systemd-udevd",
+            "/sbin/udevd",
+            "/usr/sbin/udevd",
+            NULL
+        };
+        static const char *const udevadm_paths[] = {
+            "/bin/udevadm",  "/sbin/udevadm",
+            "/usr/bin/udevadm", "/usr/sbin/udevadm",
+            NULL
+        };
+        const char *udevd = NULL, *udevadm = NULL;
+        for (int i = 0; udevd_paths[i]; i++)
+            if (access(udevd_paths[i], X_OK) == 0) { udevd = udevd_paths[i]; break; }
+        for (int i = 0; udevadm_paths[i]; i++)
+            if (access(udevadm_paths[i], X_OK) == 0) { udevadm = udevadm_paths[i]; break; }
+
+        if (!udevd) {
+            WARN("udevd not found — X will come up with no mouse or keyboard");
+        } else {
+            char *dargv[] = { (char *)udevd, "--daemon", NULL };
+            pid_t p = spawn(udevd, dargv, NULL, 0, 0);
+            if (p > 0) waitpid(p, NULL, 0);  /* --daemon detaches, launcher exits */
+
+            /* Devices that already existed when udevd started emit no
+             * uevents of their own, so without this trigger the boot-time
+             * mouse and keyboard never enter the database and the dead-input
+             * problem above persists regardless of the daemon running. */
+            if (udevadm) {
+                char *targv[] = { (char *)udevadm, "trigger", "--action=add", NULL };
+                p = spawn(udevadm, targv, NULL, 0, 0);
+                if (p > 0) waitpid(p, NULL, 0);
+
+                char *sargv[] = { (char *)udevadm, "settle", "--timeout=3", NULL };
+                p = spawn(udevadm, sargv, NULL, 0, 0);
+                if (p > 0) waitpid(p, NULL, 0);
+            } else {
+                WARN("udevadm not found — boot-time input devices may be missing");
+            }
+            LOG("udevd started");
+        }
+    }
+
     /* Load kernel modules that are =m (not built-in) but needed before udevd.
      * Network drivers: e1000 covers older VMware E1000 adapters.
      * GPU drivers: vmwgfx for VMware SVGA, then real-hardware drivers.
-     * Failures are silently ignored — built-in drivers are already active. */
+     * Failures are silently ignored — built-in drivers are already active.
+     *
+     * simpledrm deliberately isn't in this list — found by actually booting
+     * this image: it used to be here as "drm_simpledrm", which was simply
+     * the wrong module name (the real one is "simpledrm"), so this modprobe
+     * call was silently failing every boot regardless. It's now
+     * CONFIG_DRM_SIMPLEDRM=y (built in, see kernel/archer.config) instead
+     * of fixing the name here, because loading it this late would have
+     * been too late anyway — CONFIG_FB_EFI/CONFIG_FB_VESA are also built
+     * in and would have already claimed the boot framebuffer by the time
+     * this function runs, locking simpledrm out entirely (only one driver
+     * can bind to it). GRUB_CMDLINE_LINUX_DEFAULT now passes
+     * video=efifb:off video=vesafb:off so simpledrm gets it instead, at
+     * the same early boot stage those would have. */
     {
         static const char *const mods[] = {
             /* network */
             "e1000", "e1000e", "vmxnet3", "r8169",
             /* gpu — try vmwgfx first, fall back to real-hardware drivers */
-            "vmwgfx", "drm_simpledrm", "i915", "amdgpu", "nouveau",
+            "vmwgfx", "i915", "amdgpu", "nouveau",
             NULL
         };
         for (int i = 0; mods[i]; i++) {
@@ -792,7 +1121,8 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
             if (pid > 0) waitpid(pid, NULL, 0);
         }
         LOG("kernel modules loaded");
-        sleep(1); /* let uevents settle so /dev/fb0 and eth0 appear */
+        /* No sleep: `udevadm settle` above already waits for the uevent queue
+         * to drain, which is exactly what this second was approximating. */
     }
 
     /* Snapshot the kernel ring buffer now — if something hangs or panics
@@ -834,8 +1164,9 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         while ((dead = waitpid(-1, NULL, WNOHANG)) > 0) {
             char msg[64];
             if      (dead == pid_archer)  { snprintf(msg, sizeof(msg), "Archer (pid %d) exited", dead); ERR(msg); pid_archer = -1; }
-            else if (dead == pid_network) { snprintf(msg, sizeof(msg), "NetworkManager (pid %d) exited", dead); WARN(msg); pid_network = -1; }
-            else if (dead == pid_avahi)   { snprintf(msg, sizeof(msg), "avahi (pid %d) exited", dead); WARN(msg); pid_avahi = -1; }
+            else if (dead == pid_network)   { snprintf(msg, sizeof(msg), "NetworkManager (pid %d) exited", dead); WARN(msg); pid_network = -1; }
+            else if (dead == pid_avahi)     { snprintf(msg, sizeof(msg), "avahi (pid %d) exited", dead); WARN(msg); pid_avahi = -1; }
+            else if (dead == pid_bluetooth) { snprintf(msg, sizeof(msg), "bluetoothd (pid %d) exited", dead); WARN(msg); pid_bluetooth = -1; }
             else if (dead == pid_getty1)  { pid_getty1 = -1; }
             else if (dead == pid_getty2)  { pid_getty2 = -1; }
         }
@@ -870,7 +1201,8 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
                 int tty = open("/dev/tty2", O_RDWR | O_NOCTTY);
                 if (tty >= 0) { dup2(tty, 0); dup2(tty, 1); dup2(tty, 2); close(tty); }
                 setsid(); ioctl(0, TIOCSCTTY, 1);
-                char *a[] = { "/sbin/agetty", "--autologin", "archer", "--noclear", "tty2", "linux", NULL };
+                /* No --autologin here — see the tty2 spawn in start_services() for why. */
+                char *a[] = { "/sbin/agetty", "--noclear", "tty2", "linux", NULL };
                 execv("/sbin/agetty", a); _exit(1);
             }
             pid_getty2 = pid;

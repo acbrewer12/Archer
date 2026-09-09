@@ -55,19 +55,48 @@ sys.stdout = _TeeWriter(sys.stdout)
 sys.stderr = _TeeWriter(sys.stderr)
 
 # ── PLATFORM DETECTION ───────────────────
+# FLAGGED, not resolved: both archer-os/build.sh and build-vm.sh
+# debootstrap `--arch=amd64`, so `platform.machine()` reports 'x86_64' on
+# the actual built image, which never starts with 'arm' — meaning _IS_PI
+# would be False there regardless of what hardware it's installed on, and
+# everything gated behind it (Vosk, ReSpeaker, Piper TTS, the whole local
+# voice stack this session's work went into) would never actually run.
+# Found while investigating the PulseAudio/PortAudio work above; not
+# something this session resolved, since it's unclear which side is
+# wrong — PRODUCT.md says "Raspberry Pi 4" (ARM) in several places, but
+# the build scripts have targeted amd64 the whole time. Worth deciding
+# deliberately rather than leaving unreconciled.
 _IS_PI = (_platform.system() == 'Linux' and _platform.machine().startswith('arm'))
 _IS_HF = bool(os.environ.get('SPACE_ID'))  # True when running on HuggingFace Spaces
+
+if _IS_HF and not os.environ.get('BEAMNG_TOKEN'):
+    print('[SECURITY] WARNING: Running on a public HuggingFace Space with BEAMNG_TOKEN '
+          'unset — /beamng_data will accept telemetry from anyone on the internet with '
+          'no token. This is fine for local BeamNG-simulator testing but should be set '
+          'before exposing this deployment publicly.')
 
 # ── ENV FILE LOADER — picks up API keys from /etc/archer/archer.env ──────────
 def _load_env_file():
     for path in ('/etc/archer/archer.env', os.path.expanduser('~/.archer.env')):
         if os.path.isfile(path):
-            with open(path) as _f:
-                for _line in _f:
-                    _line = _line.strip()
-                    if _line and not _line.startswith('#') and '=' in _line:
-                        _k, _, _v = _line.partition('=')
-                        os.environ.setdefault(_k.strip(), _v.strip())
+            # Guarded because this runs at module scope, before Flask or any
+            # logging exists — an exception here kills the whole process with
+            # nothing but a traceback on a stream that may go nowhere.
+            # PermissionError is the realistic case, not a theoretical one:
+            # /etc/archer is mode 1770 root:archer, so a secrets file dropped
+            # in by root with the natural 0600 is stat-able (isfile() returns
+            # True) but unreadable by the archer uid the app runs as. Missing
+            # config should degrade to "no keys", never to "backend refuses
+            # to boot".
+            try:
+                with open(path) as _f:
+                    for _line in _f:
+                        _line = _line.strip()
+                        if _line and not _line.startswith('#') and '=' in _line:
+                            _k, _, _v = _line.partition('=')
+                            os.environ.setdefault(_k.strip(), _v.strip())
+            except OSError as _e:
+                print(f'[ENV] Could not read {path}: {_e} — continuing without it')
             break
 _load_env_file()
 
@@ -120,14 +149,60 @@ from archer_state import (
 )
 csrf_required = _csrf_required_imported
 
+def _pin_sounddevice_to_alsa(sd_module):
+    """Point sounddevice's default host API at ALSA specifically.
+
+    archer-os has no D-Bus session bus and no systemd (see CLAUDE.md §10)
+    — deliberately, not an oversight — so there is no PulseAudio here and
+    none should be added: Pulse's autospawn/session model is exactly the
+    kind of session infrastructure this OS was built to avoid, and nothing
+    about a single always-on ALSA capture actually needs it.
+
+    LIMIT, confirmed live on a Pi VM, not assumed: this only helps if
+    `import sounddevice` itself succeeds. It doesn't always — PortAudio
+    calls Pa_Initialize() unconditionally at import time (sounddevice.py's
+    own code, not something archer.py controls or can run anything before),
+    and on that VM it raised sounddevice.PortAudioError there, hard-failing
+    the whole import, because the Pulse host API failed to init — even
+    though ALSA had genuine working hardware underneath (confirmed
+    separately via arecord -l). This function runs after that import
+    already either succeeded or failed, so it cannot rescue a failed one;
+    it only affects default-device resolution for a *successful* import
+    that has multiple usable host APIs. The actual guard against a failed
+    import crashing Archer is the broad `except Exception` around the
+    `import sounddevice` call site, not this function. See
+    _find_respeaker_device() for the same ALSA filter applied to device
+    selection specifically. Returns True if ALSA was found and pinned,
+    False otherwise."""
+    for idx, hostapi in enumerate(sd_module.query_hostapis()):
+        if 'alsa' in (hostapi.get('name') or '').lower():
+            sd_module.default.hostapi = idx
+            return True
+    return False
+
 if _IS_PI:
     try:
         from vosk import Model as _VoskModel, KaldiRecognizer as _KaldiRec
         import sounddevice as _sd
+        try:
+            _pin_sounddevice_to_alsa(_sd)
+        except Exception as _e:
+            print(f'[VOICE] Could not pin ALSA host API (non-fatal): {_e}')
         _VOSK_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'vosk-model-small-en-us')
         _vosk_model = _VoskModel(_VOSK_MODEL_PATH) if os.path.exists(_VOSK_MODEL_PATH) else None
         _VOSK_AVAILABLE = _vosk_model is not None
-    except ImportError:
+    except Exception as _voice_init_err:
+        # Confirmed live on the Pi VM: `import sounddevice` itself can raise
+        # sounddevice.PortAudioError — Pa_Initialize() fails hard when ANY
+        # compiled-in host API fails to init (Pulse, here), even though ALSA
+        # has genuine working hardware underneath. That's not an ImportError,
+        # so the narrower `except ImportError:` this used to be would have
+        # let it escape uncaught and crash the entire `import archer` at
+        # startup — not just disable Vosk. Broadened deliberately, not by
+        # habit: this whole block exists so a broken optional voice backend
+        # degrades to the SpeechRecognition/PyAudio fallback, never to a
+        # dead server.
+        print(f'[VOICE] Vosk/sounddevice init failed (non-fatal, falling back): {_voice_init_err}')
         _VOSK_AVAILABLE = False
         _vosk_model     = None
 
@@ -462,7 +537,73 @@ try:
 except ImportError:
     mic_available = {'ok': False}
 
+# ReSpeaker mic array support. LOGIC-VERIFIED (this session, with a mocked
+# device list — no real ReSpeaker hardware or a booted Pi VM available):
+# device discovery by name, channel-count handling, and the fallback path
+# when no ReSpeaker is found. NOT hardware-verified: whether a real
+# ReSpeaker's actual multi-channel audio capture sounds right and
+# transcribes correctly — that needs the physical array in hand, same
+# caveat as the Bluetooth OBD work. See _find_respeaker_device() and
+# listen_once() below for exactly where that line falls.
+RESPEAKER_KEYWORDS = ('respeaker', 'seeed')
+# Which channel to feed the recognizer, out of however many the array
+# reports. Seeed's ReSpeaker USB Mic Array v2.0 (the most common one) is
+# 6-channel: 0-3 raw mic, 4 processed/beamformed, 5 playback loopback —
+# their own docs point at channel 0 for the simplest, most broadly
+# portable integration across ReSpeaker variants (2-mic, 4-mic, and the
+# 6-channel USB array all have a channel 0; not all have a "processed"
+# channel 4 in the same place). Override via env var for a specific model
+# where a different channel is known to work better.
+RESPEAKER_CHANNEL_INDEX = int(os.environ.get('RESPEAKER_CHANNEL_INDEX', '0'))
+
+mic_device = {'index': None, 'channels': 1, 'is_respeaker': False}
+
+def _find_respeaker_device():
+    """Return (device_index, channel_count) for a connected ReSpeaker, or
+    None if none is found — checked by name, not assumed to be whatever
+    the OS considers the default input device. Restricted to the ALSA
+    host API when one is present — a real USB ReSpeaker always shows up
+    there regardless of PulseAudio's state, so this costs nothing and
+    keeps a stray Pulse pseudo-device from ever being a candidate."""
+    try:
+        import sounddevice as _sd_scan
+        alsa_idx = next(
+            (i for i, api in enumerate(_sd_scan.query_hostapis()) if 'alsa' in (api.get('name') or '').lower()),
+            None,
+        )
+        for idx, dev in enumerate(_sd_scan.query_devices()):
+            if alsa_idx is not None and dev.get('hostapi') != alsa_idx:
+                continue
+            name = (dev.get('name') or '').lower()
+            if dev.get('max_input_channels', 0) > 0 and any(kw in name for kw in RESPEAKER_KEYWORDS):
+                return idx, dev['max_input_channels']
+    except Exception as e:
+        print(f'[VOICE] ReSpeaker device scan error: {e}')
+    return None
+
+def _extract_channel(raw_bytes, channel_index, num_channels):
+    """De-interleave one channel's int16 samples out of a multi-channel
+    raw PCM buffer (a ReSpeaker's 4-6 mic channels arrive interleaved —
+    feeding all of them straight to a mono-expecting recognizer produces
+    garbage, not just noisy audio)."""
+    import array
+    samples = array.array('h')
+    samples.frombytes(raw_bytes)
+    return samples[channel_index::num_channels].tobytes()
+
 def check_microphone():
+    found = _find_respeaker_device()
+    if found:
+        device_idx, channels = found
+        mic_device['index']        = device_idx
+        mic_device['channels']     = channels
+        mic_device['is_respeaker'] = True
+        mic_available['ok']        = True
+        print(f"[VOICE] ReSpeaker detected at device {device_idx} ({channels}ch, "
+              f"using channel {RESPEAKER_CHANNEL_INDEX}) — say 'Archer' to activate")
+        return
+
+    mic_device['is_respeaker'] = False
     try:
         import speech_recognition as sr
         with sr.Microphone() as source:
@@ -479,14 +620,24 @@ def listen_once(timeout=5, phrase_limit=8):
             import json as _json
             samplerate = 16000
             blocksize  = 8000
-            frames     = []
             max_frames = int(samplerate / blocksize * (timeout + phrase_limit))
             rec = _KaldiRec(_vosk_model, samplerate)
-            with _sd.RawInputStream(samplerate=samplerate, blocksize=blocksize,
-                                    dtype='int16', channels=1) as stream:
+            # channels=1, no device= when no ReSpeaker was found — identical
+            # to the pre-ReSpeaker behavior, unchanged, same default-device
+            # fallback spirit as "no microphone found, text input only".
+            stream_kwargs = {'samplerate': samplerate, 'blocksize': blocksize, 'dtype': 'int16'}
+            if mic_device['is_respeaker']:
+                stream_kwargs['device']   = mic_device['index']
+                stream_kwargs['channels'] = mic_device['channels']
+            else:
+                stream_kwargs['channels'] = 1
+            with _sd.RawInputStream(**stream_kwargs) as stream:
                 for _ in range(max_frames):
                     data, _ = stream.read(blocksize)
-                    if rec.AcceptWaveform(bytes(data)):
+                    raw = bytes(data)
+                    if mic_device['is_respeaker'] and mic_device['channels'] > 1:
+                        raw = _extract_channel(raw, RESPEAKER_CHANNEL_INDEX, mic_device['channels'])
+                    if rec.AcceptWaveform(raw):
                         result = _json.loads(rec.Result())
                         text = result.get('text', '').strip()
                         if text:
@@ -499,7 +650,17 @@ def listen_once(timeout=5, phrase_limit=8):
 
     try:
         import speech_recognition as sr
-        with sr.Microphone() as source:
+        # Device selection only — SpeechRecognition's Microphone always
+        # opens its PyAudio stream at channels=1 internally regardless of
+        # what the device actually supports (not something this codebase
+        # controls), so a ReSpeaker on this fallback path gets pointed at
+        # by device_index but doesn't get the same per-channel extraction
+        # the Vosk path above does. Real multi-channel handling on this
+        # path would need a system-level ALSA route/downmix, not an
+        # application-level fix — noted here rather than silently assumed
+        # to be solved.
+        mic_kwargs = {'device_index': mic_device['index']} if mic_device['is_respeaker'] else {}
+        with sr.Microphone(**mic_kwargs) as source:
             audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_limit)
         return recognizer.recognize_google(audio).lower()
     except Exception:
@@ -1521,7 +1682,7 @@ def update_awareness():
         if coolant > awareness['peak_coolant_temp']: awareness['peak_coolant_temp'] = coolant
 
         if oil > 215:   awareness['oil_trend'] = 'high'
-        elif oil > 205: awareness['oil_trend'] = 'warm'
+        elif oil < 190: awareness['oil_trend'] = 'low'
         else:           awareness['oil_trend'] = 'normal'
 
         score = 100
@@ -1953,12 +2114,49 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] Gemini failed: {e}")
 
-    # Try 4 — Local Ollama (Pi only; offline-emergency fallback)
+    # Try 4 — OpenRouter (QUATERNARY: OpenAI-compatible gateway, added as a
+    # genuine 4th waterfall step, not a replacement for Groq/Cerebras/Gemini —
+    # those are kept as independent providers deliberately, per the "different
+    # provider for true redundancy" reasoning already on the Cerebras step
+    # above; collapsing them into one OpenRouter key would trade that
+    # redundancy for a single upstream account/billing point of failure.
+    # Model choice (meta-llama/llama-3.3-70b-instruct) is a reasonable
+    # default, not a requirement — swap it for whatever OpenRouter model/
+    # routing preference is actually wanted.
+    if not response:
+        OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+        if OPENROUTER_KEY:
+            try:
+                payload = json.dumps({
+                    "model": "meta-llama/llama-3.3-70b-instruct",
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "max_tokens": 150, "temperature": 0.7,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    data=payload,
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    r = data['choices'][0]['message']['content'].strip()
+                    if r and len(r) > 2:
+                        response = r
+                        print("[AI] OpenRouter llama-3.3-70b")
+            except Exception as e:
+                print(f"[AI] OpenRouter failed: {e}")
+
+    # Try 5 — Local Ollama (Pi only; offline-emergency fallback)
+    # Measured on VM matching target hardware (4 cores/8GB, llama3.2:3b):
+    # 7-18s per response (cold start ~18s, warm ~6.9-8s) — confirms Groq/
+    # Cerebras/Gemini as primaries above was the right call, not a guess.
+    # Timeout is 25s (not ~18s) so a cold start isn't killed before it can
+    # answer — see TestLocalOllamaColdStart.
     if not response and _IS_PI:
         try:
             result = subprocess.run(
                 ['ollama', 'run', 'llama3.2', full_prompt],
-                capture_output=True, timeout=15,
+                capture_output=True, timeout=25,
                 encoding='utf-8', errors='replace'
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -1967,7 +2165,7 @@ Truck data right now:
         except Exception:
             pass
 
-    # Try 5 — Smart fallback
+    # Try 6 — Smart fallback
     if not response:
         response = smart_fallback(user_input)
         print("[AI] Fallback")
@@ -2723,6 +2921,14 @@ module_states = {
 active_faults = []   # {code, desc, module, severity, injected_at}
 
 # ── GATEKEEPER STATE ──────────────────────────────────────
+# NOTE: this dict is display-only — it is never written anywhere in this
+# file. pi/obd_gatekeeper.py is a separate, standalone process on the Pi
+# (serial HMAC auth + its own GPIO relay) with no network listener and no
+# IPC path to archer.py; the only live thing this process does is shell out
+# to `systemctl is-active obd_gatekeeper` (see obd_auth_status()) to check
+# whether that daemon is running. There is no way to command it to lock
+# from here today — see lockdown_state below for what actually can be
+# locked live, and PANIC MODE's docstring for why the two get conflated.
 gatekeeper_state = {
     'auth_state':        'LOCKED',    # LOCKED / UNLOCKED
     'key_type':          None,        # OWNER / MECHANIC / READONLY
@@ -2731,6 +2937,100 @@ gatekeeper_state = {
     'last_seen':         None,
     'lockout_until':     None,
 }
+
+# ── PANIC MODE (lockdown) ─────────────────────────────────
+# Named "lockdown_state" (not "panic_state") to avoid colliding with the
+# unrelated compustar['panic_active'] flag below — that one is the
+# Compustar alarm's own horn/light panic-button state, a completely
+# different feature that predates this one.
+#
+# Deliberately does NOT call ask_archer(), casual_monitor(), or any AI
+# provider (Groq/Cerebras/Gemini/OpenRouter/local Ollama) — every action in
+# activate_panic_mode() is a direct, local, non-LLM operation, so this
+# keeps working correctly even if all five are down simultaneously. Treat
+# any future edit that makes this depend on the AI chain, even indirectly,
+# as a bug — see TestPanicModeAiIndependence.
+#
+# "Locks the OBD2 Gatekeeper" (as originally scoped) turned out to name
+# the wrong subsystem — pi/obd_gatekeeper.py has no live control channel
+# from here (see gatekeeper_state's note above). What this actually locks
+# is the real, live-controllable equivalent: new device pairings/tier
+# grants via register_mac() / register_device_endpoint().
+lockdown_state = {
+    'active':                 False,
+    'activated_at':           None,
+    'expires_at':             None,
+    'window_secs':            None,
+    'location':               {'lat': None, 'lon': None, 'name': None},
+    # Not wired to anything yet — there is no voice-initiated GPIO relay
+    # control anywhere in this codebase today (confirmed by searching the
+    # whole repo for GPIO/relay use; the only real one is
+    # pi/obd_gatekeeper.py's own relay, gated by HMAC auth + a physical
+    # switch, never by voice). This flag is the safety hook that feature
+    # will need to check once it's built — set here now, deliberately,
+    # so it isn't forgotten and retrofitted in after the fact.
+    'relay_control_disabled': False,
+}
+
+PANIC_WINDOW_DEFAULT_SECS = 30 * 60
+PANIC_WINDOW_MIN_SECS     = 60
+PANIC_WINDOW_MAX_SECS     = 4 * 3600
+
+def _panic_lockdown_active() -> bool:
+    """True if a panic lockdown window is currently in effect.
+
+    Expires lazily on access, the same way obd_gatekeeper.py's own
+    _check_lockout() and archer.py's _revoked_tokens cleanup already work —
+    no background thread/timer needed, and no manual reset required once
+    expires_at passes."""
+    if not lockdown_state['active']:
+        return False
+    if lockdown_state['expires_at'] and time.time() >= lockdown_state['expires_at']:
+        lockdown_state['active'] = False
+        return False
+    return True
+
+def activate_panic_mode(window_secs=PANIC_WINDOW_DEFAULT_SECS):
+    """Trigger panic/lockdown mode. See the module note above lockdown_state
+    for the hard AI-independence constraint — nothing below may call
+    ask_archer(), casual_monitor(), or any AI provider, even indirectly.
+
+    - Blocks new device pairings/tier grants for the window (register_mac()
+      and register_device_endpoint() both check _panic_lockdown_active()),
+      including via the Tier-1 master code.
+    - Posts directly to SLACK_CHANNEL_PANIC via slack_post_message(),
+      bypassing slack_route_alert()'s normal tier-based channel fan-out.
+    - Snapshots the truck's current last-known location — same
+      location_data fields activate_parking_mode() already uses.
+    - Sets relay_control_disabled (see lockdown_state's own comment).
+    """
+    window_secs = max(PANIC_WINDOW_MIN_SECS, min(PANIC_WINDOW_MAX_SECS, int(window_secs)))
+    now = time.time()
+    lockdown_state['active']       = True
+    lockdown_state['activated_at'] = now
+    lockdown_state['expires_at']   = now + window_secs
+    lockdown_state['window_secs']  = window_secs
+    lockdown_state['location'] = {
+        'lat':  location_data.get('lat'),
+        'lon':  location_data.get('lon'),
+        'name': location_data.get('location_name') or 'unknown location',
+    }
+    lockdown_state['relay_control_disabled'] = True
+
+    lat  = lockdown_state['location']['lat']
+    lon  = lockdown_state['location']['lon']
+    name = lockdown_state['location']['name']
+    maps_link = f'https://maps.google.com/?q={lat},{lon}' if lat and lon else ''
+    minutes = window_secs // 60
+    message = (
+        f'\U0001F6A8 PANIC MODE ACTIVATED — {name}\n'
+        f'New device pairings locked for {minutes} min.'
+        + (f'\n{maps_link}' if maps_link else '')
+    )
+    slack_post_message(SLACK_CHANNEL_PANIC, message)
+    log_security('PANIC_MODE_ACTIVATED', window_secs=window_secs, lat=lat, lon=lon)
+    print(f'[PANIC] Activated — locked for {minutes} min, location: {name}')
+    return {'active': True, 'expires_at': lockdown_state['expires_at'], 'window_secs': window_secs}
 
 # ── EMULATOR FLAG ─────────────────────────────────────────
 USE_EMULATOR = True   # False when real OBDLink MX+ is detected
@@ -2806,6 +3106,50 @@ def check_maintenance():
     if not due:
         return 'All maintenance is up to date.'
     return 'Due soon: ' + ', '.join(due) + '.'
+
+# UI service-tracker rows — log_key links to maintenance_log when set.
+_MAINTENANCE_UI_SPECS = (
+    ('oil',     'oil_change',    'Oil Change',       5000,   90),
+    ('tranny',  None,            'Trans Fluid',      30000,  730),
+    ('air',     'air_filter',    'Air Filter',       15000,  365),
+    ('fuel',    None,            'Fuel Filter',      25000,  548),
+    ('coolant', None,            'Coolant Flush',    60000,  730),
+    ('plugs',   'spark_plugs',   'Spark Plugs',      100000, 1095),
+    ('diff',    None,            'Diff Fluid',       30000,  730),
+    ('tires',   'tire_rotation', 'Tire Rotation',    7500,   180),
+    ('brake',   'brake_fluid',   'Brake Fluid',      0,      730),
+    ('belt',    None,            'Serpentine Belt',  60000,  1460),
+    ('def',     None,            'DEF Top-off',      5000,   90),
+    ('pcv',     None,            'PCV Valve',        30000,  730),
+)
+
+
+def _days_since_maintenance_date(date_str):
+    if not date_str:
+        return 0
+    try:
+        done = datetime.strptime(date_str, '%B %d %Y')
+        return max(0, (datetime.now() - done).days)
+    except ValueError:
+        return 0
+
+
+def get_maintenance_items_payload():
+    """Build service-tracker rows for archer_maintenance.html."""
+    current_mi = int(odometer.get('miles') or 0)
+    items = []
+    for spec_id, log_key, name, interval_mi, interval_days in _MAINTENANCE_UI_SPECS:
+        log = maintenance_log.get(log_key, {}) if log_key else {}
+        items.append({
+            'id':            spec_id,
+            'name':          name,
+            'interval_mi':   interval_mi,
+            'last_mi':       int(log.get('last_miles') or 0),
+            'current_mi':    current_mi,
+            'interval_days': interval_days,
+            'last_days':     _days_since_maintenance_date(log.get('last_date')),
+        })
+    return items
 
 # ── PERFORMANCE CALCULATOR ───────────────
 def calc_hp_estimate(ethanol_pct, boost_psi):
@@ -3180,6 +3524,7 @@ def activate_parking_mode(location=''):
         title='PARKING MODE ON',
         channel='alerts',
         color=0x0055FF,
+        components=_DISCORD_PARKING_BUTTONS,
     )
     return msg
 
@@ -3804,14 +4149,20 @@ def _ambient_arduino_sync():
         arduino_send(f'AMBIENT:{zone_key.upper()}:{state}:{r},{g},{b},{bri}')
 
 def set_ambient(zone, on, color=None, brightness=None):
+    import re as _re
     if zone == 'all':
         for z in ambient_lighting['zones']:
             ambient_lighting['zones'][z]['on'] = on
         ambient_lighting['master'] = on
     elif zone in ambient_lighting['zones']:
         ambient_lighting['zones'][zone]['on'] = on
-        if color:      ambient_lighting['zones'][zone]['color']      = color
-        if brightness: ambient_lighting['zones'][zone]['brightness'] = brightness
+        if color and isinstance(color, str) and _re.fullmatch(r'#?[0-9a-fA-F]{6}', color):
+            ambient_lighting['zones'][zone]['color'] = color
+        if brightness is not None:
+            try:
+                ambient_lighting['zones'][zone]['brightness'] = max(0, min(100, int(brightness)))
+            except (TypeError, ValueError):
+                pass
     _ambient_arduino_sync()
     save_state()
     return f'Ambient {zone} {"on" if on else "off"}.'
@@ -4604,6 +4955,7 @@ def check_crash():
             title='CRASH ALERT',
             channel='alerts',
             color=0xFF0000,
+            components=_DISCORD_CRASH_BUTTONS,
         )
 
 # ══════════════════════════════════════════
@@ -5237,7 +5589,7 @@ def is_openclaw_task(text):
 # DISCORD NOTIFICATIONS
 # ══════════════════════════════════════════
 discord_config = {
-    'enabled':          False,
+    'enabled':          False,  # computed below, once DISCORD_PUBLIC_KEY is read — never leave hardcoded
     'webhook_alerts':   '',     # #alerts channel webhook
     'webhook_vitals':   '',     # #vitals channel webhook
     'webhook_radar':    '',     # #radar channel webhook
@@ -5253,6 +5605,113 @@ discord_config = {
     'cooldown_secs':    60,     # min seconds between same alert type
     'last_sent':        {},     # alert_type -> timestamp
 }
+
+# ── DISCORD BOT (slash commands, alert buttons, digests) ──
+# Webhooks (above) are outbound-only and can't carry interactive buttons —
+# Discord only routes a component click back to the app for messages the
+# app itself sent, not arbitrary incoming webhooks. So button-bearing
+# alerts go out via the bot token instead; plain alerts keep using the
+# webhook path untouched.
+DISCORD_BOT_TOKEN         = os.environ.get('DISCORD_BOT_TOKEN', '')
+DISCORD_PUBLIC_KEY        = os.environ.get('DISCORD_PUBLIC_KEY', '')
+DISCORD_APPLICATION_ID    = os.environ.get('DISCORD_APPLICATION_ID', '')
+DISCORD_OWNER_ID          = os.environ.get('DISCORD_OWNER_ID', '')            # Discord user ID allowed to run commands/buttons
+DISCORD_ALERTS_CHANNEL_ID = os.environ.get('DISCORD_ALERTS_CHANNEL_ID', '')   # channel ID for button-bearing alerts
+DISCORD_DIGEST_HOUR       = int(os.environ.get('DISCORD_DIGEST_HOUR', '20'))  # 24h local hour for the daily digest
+
+# Without this, Cloudflare's bot protection in front of Discord's API
+# rejects the request outright (HTTP 403, error code 1010) before it ever
+# reaches Discord — confirmed live via discord_register_commands.py, not a
+# guess. Python's default urllib User-Agent triggers it; every Discord API
+# call in this file needs this same header for the same reason.
+_DISCORD_USER_AGENT = 'DiscordBot (https://github.com/archer, 1.0)'
+
+# ── DISCORD PER-TIER USER IDS (DM fan-out) ──
+# Same static-allowlist pattern as Slack's SLACK_OWNER_USER_IDS/etc — a
+# known, deliberate shortcut, not an oversight: revocation means editing
+# archer.env and restarting, not something a person does in-app. That
+# tradeoff was accepted once already for Slack (see
+# self-host/README.md "Known gap, tracked deliberately"); this repeats it
+# for Discord rather than building the real one-time-code linking flow,
+# by the same explicit choice, not by not noticing the shortcut existed.
+#
+# DISCORD_OWNER_ID above is a DIFFERENT, older concept — it gates who can
+# run slash commands / click alert buttons (singular, one owner). These
+# four are who gets DMed by discord_dm_fanout() based on alert severity
+# (plural, one list per tier) — unrelated purposes, deliberately not
+# merged into one setting.
+#
+# Unlike Slack (which only tracks tiers 1-3, since it has no Tier-4/valet
+# channel), this goes to Tier 4 too: the fan-out model here sweeps a full
+# 1-4 threshold ("Tier 3 alert reaches 1-3, not 4"), so excluding Tier 4
+# needs a real roster to exclude *from*, not just an absent list.
+def _discord_user_ids(env_var):
+    return {u.strip() for u in os.environ.get(env_var, '').split(',') if u.strip()}
+
+DISCORD_OWNER_IDS     = _discord_user_ids('DISCORD_OWNER_USER_IDS')
+DISCORD_PASSENGER_IDS = _discord_user_ids('DISCORD_PASSENGER_USER_IDS')
+DISCORD_FAMILY_IDS    = _discord_user_ids('DISCORD_FAMILY_USER_IDS')
+DISCORD_VALET_IDS     = _discord_user_ids('DISCORD_VALET_USER_IDS')
+
+def _discord_user_tier(user_id):
+    if user_id in DISCORD_OWNER_IDS:     return 1
+    if user_id in DISCORD_PASSENGER_IDS: return 2
+    if user_id in DISCORD_FAMILY_IDS:    return 3
+    if user_id in DISCORD_VALET_IDS:     return 4
+    return None
+
+def _discord_all_known_users():
+    """Every Discord user ID with a known tier, deduplicated (a user
+    appearing in more than one list — a misconfiguration, not a supported
+    case — resolves to whichever list is checked last below)."""
+    users = {}
+    for uid in DISCORD_OWNER_IDS:     users[uid] = 1
+    for uid in DISCORD_PASSENGER_IDS: users[uid] = 2
+    for uid in DISCORD_FAMILY_IDS:    users[uid] = 3
+    for uid in DISCORD_VALET_IDS:     users[uid] = 4
+    return users
+
+# This was hardcoded False above with nothing ever flipping it — dead
+# regardless of what's set in archer.env. DISCORD_PUBLIC_KEY is the one
+# credential every part of the bot needs (signature verification gates
+# /discord/interactions; the rest is reached only through it), so its
+# presence is what "configured" actually means here. Webhook-only alerts
+# (discord_send, no bot at all) are a separate, still-unwired path — see
+# the note on discord_config['webhook_alerts'] etc.: those have no env var
+# of their own yet, only set_discord_webhook(), which nothing calls.
+def _compute_discord_enabled():
+    return bool(DISCORD_PUBLIC_KEY)
+
+discord_config['enabled'] = _compute_discord_enabled()
+
+_DISCORD_CRASH_BUTTONS = [{
+    'type': 1,  # action row
+    'components': [
+        {'type': 2, 'style': 3, 'label': "I'm OK",   'custom_id': 'crash_im_ok'},
+        {'type': 2, 'style': 4, 'label': 'Not OK',   'custom_id': 'crash_not_ok'},
+    ],
+}]
+_DISCORD_PARKING_BUTTONS = [{
+    'type': 1,
+    'components': [
+        {'type': 2, 'style': 4, 'label': 'Disarm', 'custom_id': 'parking_disarm'},
+    ],
+}]
+
+def _discord_verify_signature(signature, timestamp, body):
+    """Verify an inbound Discord interaction is genuinely from Discord
+    (Ed25519, per Discord's interactions security requirement)."""
+    if not DISCORD_PUBLIC_KEY or not signature or not timestamp:
+        return False
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+        VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY)).verify(
+            f'{timestamp}{body}'.encode(), bytes.fromhex(signature)
+        )
+        return True
+    except (BadSignatureError, ValueError, ImportError):
+        return False
 
 def discord_send(webhook_url, message, title='', color=0xCC0000):
     """Send a message to a Discord webhook."""
@@ -5272,7 +5731,7 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
         req  = urllib.request.Request(
             webhook_url,
             data    = data,
-            headers = {'Content-Type': 'application/json'},
+            headers = {'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
             method  = 'POST'
         )
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -5281,15 +5740,145 @@ def discord_send(webhook_url, message, title='', color=0xCC0000):
         print(f'[DISCORD] Failed: {str(e)[:60]}')
         return False
 
-def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000):
-    """Send alert with cooldown to prevent spam."""
-    if not discord_config['enabled']:
+def discord_send_bot_message(channel_id, message, title='', color=0xCC0000, components=None):
+    """Send a message via the bot token — required for interactive buttons
+    (see the note above DISCORD_BOT_TOKEN for why webhooks can't do this)."""
+    if not DISCORD_BOT_TOKEN or not channel_id or not discord_config['enabled']:
+        return False
+    try:
+        payload = {
+            'embeds': [{
+                'title':       title or 'ARCHER',
+                'description': message,
+                'color':       color,
+                'footer':      {'text': f'{get_vehicle_name()} — {datetime.now().strftime("%I:%M %p")}'},
+            }]
+        }
+        if components:
+            payload['components'] = components
+        data = json.dumps(payload).encode()
+        req  = urllib.request.Request(
+            f'https://discord.com/api/v10/channels/{channel_id}/messages',
+            data    = data,
+            headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
+            method  = 'POST'
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status in (200, 201)
+    except Exception as e:
+        print(f'[DISCORD] Bot message failed: {str(e)[:60]}')
+        return False
+
+def _discord_dm_channel_id(user_id):
+    """Open (or fetch the existing) DM channel with a user. Discord has no
+    single 'send this user a DM' endpoint — you create/fetch the DM channel
+    first, then post to it like any other channel (discord_send_bot_message
+    works unchanged on the returned ID)."""
+    if not DISCORD_BOT_TOKEN or not user_id:
+        return None
+    try:
+        req = urllib.request.Request(
+            'https://discord.com/api/v10/users/@me/channels',
+            data=json.dumps({'recipient_id': user_id}).encode(),
+            headers={'Authorization': f'Bot {DISCORD_BOT_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read()).get('id')
+    except Exception as e:
+        print(f'[DISCORD] Could not open DM channel for {user_id}: {str(e)[:60]}')
+        return None
+
+def _discord_send_dm(user_id, message, title=''):
+    channel_id = _discord_dm_channel_id(user_id)
+    if not channel_id:
+        return False
+    return discord_send_bot_message(channel_id, message, title)
+
+def discord_dm_fanout(alert_type, message, min_tier=None, extra_data=None, title=''):
+    """The one function every Discord alert path goes through to decide who
+    gets DMed and to send it — no call site builds its own recipient list.
+
+    Different fan-out model than Slack's, deliberately: slack_route_alert()
+    posts once per qualifying TIER CHANNEL (everyone in that channel sees
+    one shared message). This DMs every INDIVIDUAL known Discord user whose
+    tier is <= min_tier — a real many-recipient fan-out (e.g. a Tier-3
+    alert reaches the Tier-1, Tier-2, AND Tier-3 people, as separate DMs),
+    not a single owner DM and not a shared channel post.
+
+    min_tier: highest tier number that should receive this alert (3 means
+    "Tiers 1, 2, 3 — not 4"). Fails closed to 1 (owner only) if missing or
+    not a real tier number — an alert this function can't confidently scope
+    goes to the owner alone, never broadens by assumption.
+
+    extra_data: optional dict of _DISPLAY_DATA_SENSITIVE_FIELDS-shaped keys
+    (gps_lat/gps_lon/gps_name/etc — see _filter_display_data_for_tier) to
+    attach per-recipient, filtered per-recipient by their own tier — same
+    source of truth the dashboard itself uses for what a given tier sees,
+    not a separate redaction rule invented here. A dict with different key
+    names filters nothing; this only does real work when a caller shapes
+    its data to match.
+    """
+    if not discord_config['enabled'] or not DISCORD_BOT_TOKEN:
         return
+    try:
+        threshold = int(min_tier)
+        if threshold < 1:
+            threshold = 1
+    except (TypeError, ValueError):
+        threshold = 1
+
+    for user_id, tier in _discord_all_known_users().items():
+        if tier > threshold:
+            continue
+        recipient_message = message
+        if extra_data:
+            filtered = _filter_display_data_for_tier(dict(extra_data), tier)
+            extra_lines = []
+            if filtered.get('gps_lat') is not None and filtered.get('gps_lon') is not None:
+                extra_lines.append(f"https://maps.google.com/?q={filtered['gps_lat']},{filtered['gps_lon']}")
+            if filtered.get('gps_name'):
+                extra_lines.append(f"Location: {filtered['gps_name']}")
+            if extra_lines:
+                recipient_message = message + '\n' + '\n'.join(extra_lines)
+        _discord_send_dm(user_id, recipient_message, title)
+
+def discord_alert(alert_type, message, title='', channel='alerts', color=0xCC0000, components=None, extra_data=None):
+    """Send alert with cooldown to prevent spam. Pass components= to attach
+    buttons — this routes through the bot token (see discord_send_bot_message)
+    instead of the plain webhook path, and needs DISCORD_BOT_TOKEN and
+    DISCORD_ALERTS_CHANNEL_ID set."""
     now = time.time()
     last = discord_config['last_sent'].get(alert_type, 0)
     if now - last < discord_config['cooldown_secs']:
         return
     discord_config['last_sent'][alert_type] = now
+
+    try:
+        import fcm_push as _fcm
+        _fcm.send_vehicle_alert(
+            alert_type, message, title=title or 'ARCHER', skip_cooldown=True,
+        )
+    except Exception as _e:
+        print(f'[FCM] Alert dispatch failed: {str(_e)[:60]}')
+
+    slack_route_alert(alert_type, message, title, color)
+
+    # DM fan-out is independent of the channel-post path below — reuses
+    # _SLACK_ALERT_TIERS as the one shared alert-severity policy table
+    # (max() of its tuple = the highest tier that should see this alert)
+    # rather than a second, Discord-only table that could drift out of
+    # sync with Slack's. _slack_alert_tiers() already defaults unrecognized
+    # alert_types to (1,), so the fail-closed behavior here comes for free.
+    discord_dm_fanout(alert_type, message, max(_slack_alert_tiers(alert_type)), extra_data, title)
+
+    if not discord_config['enabled']:
+        return
+
+    if components and DISCORD_BOT_TOKEN and DISCORD_ALERTS_CHANNEL_ID:
+        discord_send_bot_message(DISCORD_ALERTS_CHANNEL_ID, message, title, color, components)
+        print(f'[DISCORD] Sent {alert_type} (with buttons) to alerts channel')
+        return
 
     webhook = discord_config.get(f'webhook_{channel}') or discord_config['webhook_alerts']
     if not webhook:
@@ -5318,60 +5907,59 @@ def discord_vitals():
 def discord_monitor():
     """Background thread — watches for alert conditions."""
     while True:
-        if discord_config['enabled']:
-            # Oil temp warning
-            if discord_config['notify_oil'] and truck_state['oil_temp'] > 225:
-                discord_alert('oil_high',
-                    f'Oil temp critical at **{truck_state["oil_temp"]}F**. Pull over.',
-                    '⚠️ OIL TEMP WARNING', 'alerts', 0xCC0000)
+        # Oil temp warning
+        if discord_config['notify_oil'] and truck_state['oil_temp'] > 225:
+            discord_alert('oil_high',
+                f'Oil temp critical at **{truck_state["oil_temp"]}F**. Pull over.',
+                '⚠️ OIL TEMP WARNING', 'alerts', 0xCC0000)
 
-            # Battery warning
-            if discord_config['notify_battery'] and truck_state['battery_main'] < 12.0:
-                discord_alert('bat_low',
-                    f'Battery low at **{truck_state["battery_main"]}V**. Check alternator.',
-                    '🔋 BATTERY WARNING', 'alerts', 0xFF6600)
+        # Battery warning
+        if discord_config['notify_battery'] and truck_state['battery_main'] < 12.0:
+            discord_alert('bat_low',
+                f'Battery low at **{truck_state["battery_main"]}V**. Check alternator.',
+                '🔋 BATTERY WARNING', 'alerts', 0xFF6600)
 
-            # Boost spike
-            if discord_config['notify_boost'] and truck_state['boost'] > 13:
-                discord_alert('boost_high',
-                    f'Boost spiking at **{truck_state["boost"]} PSI**.',
-                    '💨 BOOST SPIKE', 'alerts', 0xFF6600)
+        # Boost spike
+        if discord_config['notify_boost'] and truck_state['boost'] > 13:
+            discord_alert('boost_high',
+                f'Boost spiking at **{truck_state["boost"]} PSI**.',
+                '💨 BOOST SPIKE', 'alerts', 0xFF6600)
 
-            # Radar alert
-            if discord_config['notify_radar'] and radar_detector['alert_level'] in ['strong','laser']:
-                band = radar_detector['band'] or 'Unknown'
-                discord_alert('radar',
-                    f'**{band} band** — {radar_detector["direction"]} — {radar_detector["strength"]} bars\n'
-                    f'Road: {road_memory[current_road]["name"] if current_road else "unknown"}',
-                    '🚨 RADAR ALERT', 'radar', 0xFF0000)
+        # Radar alert
+        if discord_config['notify_radar'] and radar_detector['alert_level'] in ['strong','laser']:
+            band = radar_detector['band'] or 'Unknown'
+            discord_alert('radar',
+                f'**{band} band** — {radar_detector["direction"]} — {radar_detector["strength"]} bars\n'
+                f'Road: {road_memory[current_road]["name"] if current_road else "unknown"}',
+                '🚨 RADAR ALERT', 'radar', 0xFF0000)
 
-            # Valet doing something bad
-            if discord_config['notify_valet'] and tier_state['current'] >= 4:
-                if truck_state['rpm'] > 3000:
-                    discord_alert('valet_rpm',
-                        f'Valet hit **{truck_state["rpm"]} RPM**.',
-                        '👀 VALET ALERT', 'alerts', 0xFFAA00)
+        # Valet doing something bad
+        if discord_config['notify_valet'] and tier_state['current'] >= 4:
+            if truck_state['rpm'] > 3000:
+                discord_alert('valet_rpm',
+                    f'Valet hit **{truck_state["rpm"]} RPM**.',
+                    '👀 VALET ALERT', 'alerts', 0xFFAA00)
 
-            # Weather alert
-            if discord_config['notify_weather']:
-                if weather_alerts.get('tornado_warn'):
-                    discord_alert('tornado',
-                        'Tornado WARNING active for Salem area.',
-                        '🌪️ TORNADO WARNING', 'alerts', 0xFF0000)
-                elif weather_alerts.get('severe_storm'):
-                    discord_alert('storm',
-                        'Severe thunderstorm warning active.',
-                        '⛈️ SEVERE STORM', 'alerts', 0xFF6600)
+        # Weather alert
+        if discord_config['notify_weather']:
+            if weather_alerts.get('tornado_warn'):
+                discord_alert('tornado',
+                    'Tornado WARNING active for Salem area.',
+                    '🌪️ TORNADO WARNING', 'alerts', 0xFF0000)
+            elif weather_alerts.get('severe_storm'):
+                discord_alert('storm',
+                    'Severe thunderstorm warning active.',
+                    '⛈️ SEVERE STORM', 'alerts', 0xFF6600)
 
-            # New personal record
-            if discord_config['notify_records']:
-                if drag_timer['best_et'] and drag_timer['stage'] == 'done':
-                    et  = drag_timer['best_et']
-                    mph = drag_timer['best_mph']
-                    discord_alert('new_record',
-                        f'New best ET: **{et}s @ {mph} MPH** 🔥\n'
-                        f'E{truck_state["ethanol"]} — {truck_state["boost"]} PSI boost',
-                        '🏆 NEW PERSONAL BEST', 'alerts', 0x00CC44)
+        # New personal record
+        if discord_config['notify_records']:
+            if drag_timer['best_et'] and drag_timer['stage'] == 'done':
+                et  = drag_timer['best_et']
+                mph = drag_timer['best_mph']
+                discord_alert('new_record',
+                    f'New best ET: **{et}s @ {mph} MPH** 🔥\n'
+                    f'E{truck_state["ethanol"]} — {truck_state["boost"]} PSI boost',
+                    '🏆 NEW PERSONAL BEST', 'alerts', 0x00CC44)
 
         time.sleep(15)
 
@@ -5384,6 +5972,507 @@ def set_discord_webhook(channel, url):
         save_state()
         return f'Discord {channel} webhook set.'
     return f'Channels: alerts vitals radar build'
+
+def _build_discord_digest():
+    session_mins = round((time.time() - awareness['drive_session_start']) / 60)
+    return (
+        f'**Session** {session_mins} min | **Peak RPM** {awareness["peak_rpm"]} | '
+        f'**Peak boost** {awareness["peak_boost"]} PSI | **Peak oil** {awareness["peak_oil_temp"]}F\n'
+        f'**Drive quality** {awareness["drive_quality"]}/100\n'
+        f'**Best 0-60** {personal_bests["best_0_60"]}s | **Launches** {personal_bests["launch_count"]}\n'
+        f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+    )
+
+def discord_digest_monitor():
+    """Background thread — sends one daily digest at DISCORD_DIGEST_HOUR
+    local time. /digest sends the same content on demand."""
+    sent_on = None
+    while True:
+        now = datetime.now()
+        if discord_config['enabled'] and now.hour == DISCORD_DIGEST_HOUR and sent_on != now.date():
+            webhook = discord_config['webhook_vitals'] or discord_config['webhook_alerts']
+            discord_send(webhook, _build_discord_digest(), 'DAILY DIGEST', 0x8855FF)
+            sent_on = now.date()
+        time.sleep(60)
+
+# ── DISCORD SLASH COMMANDS / BUTTONS (HTTP interactions endpoint) ──
+# Discord POSTs interaction payloads here instead of Archer holding an
+# always-on gateway connection — simpler and lighter on an 8GB box, and
+# it's just another Flask route rather than a second long-running process.
+def _discord_reply(content, ephemeral=False):
+    data = {'content': content}
+    if ephemeral:
+        data['flags'] = 64  # EPHEMERAL
+    return jsonify({'type': 4, 'data': data})
+
+def _discord_deferred_ask(interaction, question):
+    """Runs ask_archer() off the request thread and PATCHes the deferred
+    reply in — ask_archer can fall through to local Ollama (measured 7-18s,
+    see archer.py:1974), which blows Discord's 3s interaction window."""
+    answer = ask_archer(question)
+    try:
+        data = json.dumps({'content': answer}).encode()
+        req = urllib.request.Request(
+            f'https://discord.com/api/v10/webhooks/{DISCORD_APPLICATION_ID}/{interaction["token"]}/messages/@original',
+            data=data,
+            headers={'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT},
+            method='PATCH',
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        print(f'[DISCORD] Deferred /ask edit failed: {str(e)[:60]}')
+
+def _discord_handle_command(interaction, authorized):
+    if not authorized:
+        return _discord_reply('Not authorized.', ephemeral=True)
+
+    name = interaction.get('data', {}).get('name', '')
+    opts = {o['name']: o.get('value') for o in interaction.get('data', {}).get('options', [])}
+
+    if name == 'status':
+        msg = (
+            f'**RPM** {truck_state["rpm"]} | **Oil** {truck_state["oil_temp"]}F | '
+            f'**Coolant** {truck_state["coolant_temp"]}F | **Boost** {truck_state["boost"]} PSI | '
+            f'**Battery** {truck_state["battery_main"]}V | **Ethanol** {truck_state["ethanol"]}%\n'
+            f'**Score** {awareness["drive_quality"]}/100 | '
+            f'**Weather** {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+        return _discord_reply(msg)
+
+    if name == 'ask':
+        question = (opts.get('question') or '').strip()
+        if not question:
+            return _discord_reply('Ask what?', ephemeral=True)
+        threading.Thread(target=_discord_deferred_ask, args=(interaction, question), daemon=True).start()
+        return jsonify({'type': 5})  # DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+
+    if name == 'parking':
+        action = opts.get('action', '')
+        if action == 'arm':
+            msg = activate_parking_mode()
+        elif action == 'disarm':
+            msg = deactivate_parking_mode()
+        else:
+            msg = 'Usage: /parking arm|disarm'
+        return _discord_reply(msg)
+
+    if name == 'digest':
+        return _discord_reply(_build_discord_digest())
+
+    return _discord_reply(f'Unknown command: {name}', ephemeral=True)
+
+def _discord_handle_component(interaction, authorized):
+    if not authorized:
+        return _discord_reply('Not authorized.', ephemeral=True)
+
+    custom_id = interaction.get('data', {}).get('custom_id', '')
+
+    if custom_id == 'crash_im_ok':
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'confirmed_ok'
+        return _discord_reply('Good to hear. Logged.')
+
+    if custom_id == 'crash_not_ok':
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'needs_attention'
+        return _discord_reply("Logged as needs attention. Archer can't place calls — call for help directly if needed.")
+
+    if custom_id == 'parking_disarm':
+        return _discord_reply(deactivate_parking_mode())
+
+    return _discord_reply('Unknown action.', ephemeral=True)
+
+@display_app.route('/discord/interactions', methods=['POST'])
+def discord_interactions():
+    signature = request.headers.get('X-Signature-Ed25519', '')
+    timestamp = request.headers.get('X-Signature-Timestamp', '')
+    body      = request.get_data(as_text=True)
+
+    if not _discord_verify_signature(signature, timestamp, body):
+        return ('invalid request signature', 401)
+
+    interaction = request.get_json(silent=True) or {}
+    itype = interaction.get('type')
+
+    if itype == 1:  # PING — Discord's endpoint-verification handshake
+        return jsonify({'type': 1})
+
+    if not discord_config['enabled']:
+        return _discord_reply('Discord integration is disabled.', ephemeral=True)
+
+    member_or_user = interaction.get('member', {}).get('user', {}) or interaction.get('user', {})
+    user_id = member_or_user.get('id', '')
+    authorized = bool(DISCORD_OWNER_ID) and user_id == DISCORD_OWNER_ID
+
+    if itype == 2:  # APPLICATION_COMMAND
+        return _discord_handle_command(interaction, authorized)
+    if itype == 3:  # MESSAGE_COMPONENT
+        return _discord_handle_component(interaction, authorized)
+
+    return _discord_reply('Unsupported interaction.', ephemeral=True)
+
+# ══════════════════════════════════════════
+# SLACK BOT — ported from Discord above, plus tiered channel routing
+# ══════════════════════════════════════════
+# Same feature set as the Discord integration (slash commands, alert
+# buttons, digests), on Slack's actual request/response contract — not a
+# renamed copy of the Discord code, since the mechanisms genuinely differ
+# (HMAC-SHA256 signing vs Ed25519, Block Kit vs embeds, response_url vs
+# interaction-token webhook edits, form-encoded bodies vs raw JSON). The
+# Discord code above is untouched and still works if re-enabled — this is
+# additive, wired in as the new live path via slack_route_alert() below.
+slack_config = {'enabled': False}  # computed below, once the two credentials are read — never leave hardcoded
+
+SLACK_SIGNING_SECRET = os.environ.get('SLACK_SIGNING_SECRET', '')
+SLACK_BOT_TOKEN       = os.environ.get('SLACK_BOT_TOKEN', '')
+
+# Same bug existed here as in Discord's enabled flag above: this dict was
+# defined before SLACK_SIGNING_SECRET/SLACK_BOT_TOKEN existed, so 'enabled'
+# could never have referenced them — hardcoded False regardless of what's
+# actually set in archer.env. Both credentials are required (signing
+# secret to verify anything reaches /slack/interactions genuinely from
+# Slack; bot token to post anything back), so both must be present.
+def _compute_slack_enabled():
+    return bool(SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN)
+
+slack_config['enabled'] = _compute_slack_enabled()
+
+# Tier -> Slack channel ID. Tiers 1-3 only, by design — Valet has no
+# ongoing user who'd plausibly be in a Slack workspace, and Public/Fan is
+# explicitly no-login (see PRODUCT.md).
+SLACK_TIER_CHANNELS = {
+    1: os.environ.get('SLACK_CHANNEL_OWNER', ''),
+    2: os.environ.get('SLACK_CHANNEL_PASSENGER', ''),
+    3: os.environ.get('SLACK_CHANNEL_FAMILY', ''),
+}
+
+# Single dedicated channel for panic-mode alerts — deliberately NOT part of
+# SLACK_TIER_CHANNELS. activate_panic_mode() posts here directly via
+# slack_post_message(), bypassing slack_route_alert()'s tier-based fan-out
+# entirely, per the "one specific, single high-priority channel" requirement.
+SLACK_CHANNEL_PANIC = os.environ.get('SLACK_CHANNEL_PANIC', '')
+
+# Slack user ID -> tier. Slack has no equivalent of the web dashboard's
+# MAC-whitelist/JWT tier system, so this explicit, auditable mapping is the
+# source of truth for who's who in Slack specifically.
+#
+# KNOWN GAP, tracked deliberately, not forgotten: this is a static env-var
+# allowlist, not the dynamic one-time-code linking flow the web dashboard
+# already has for exactly this problem (generate_one_time_code() /
+# validate_one_time_code() / one_time_codes, archer.py ~L9874 — a Tier-1
+# owner generates a 6-digit code, the new person redeems it once, tier is
+# recorded, no server access needed). Real cost of the current shape:
+# revoking access means editing archer.env and restarting the service, not
+# an in-app decision; onboarding a new person needs whoever manages the
+# server, not just the Owner; and because tier assignment lives in infra
+# config rather than application state, deployed reality can quietly drift
+# from what anyone believes is currently authorized. Fine for the current
+# small, known set of users — worth replacing before the user base grows
+# or trust boundaries matter more. The real fix: a `/link <code>` Slack
+# command that calls validate_one_time_code() and persists user_id->tier
+# (replacing SLACK_*_USER_IDS entirely, not running both in parallel), a
+# revoke path from the existing device-management UI, and end-to-end tests
+# for that flow specifically — matching the rigor the rest of this
+# integration was held to.
+def _slack_user_ids(env_var):
+    return {u.strip() for u in os.environ.get(env_var, '').split(',') if u.strip()}
+
+SLACK_OWNER_IDS     = _slack_user_ids('SLACK_OWNER_USER_IDS')
+SLACK_PASSENGER_IDS = _slack_user_ids('SLACK_PASSENGER_USER_IDS')
+SLACK_FAMILY_IDS    = _slack_user_ids('SLACK_FAMILY_USER_IDS')
+
+def _slack_user_tier(user_id):
+    if user_id in SLACK_OWNER_IDS:     return 1
+    if user_id in SLACK_PASSENGER_IDS: return 2
+    if user_id in SLACK_FAMILY_IDS:    return 3
+    return None
+
+def _slack_verify_signature(signature, timestamp, body):
+    """Verify an inbound Slack request — HMAC-SHA256 over 'v0:{ts}:{body}'
+    with the Signing Secret, per Slack's documented verification method
+    (api.slack.com/authentication/verifying-requests-from-slack). Also
+    rejects timestamps more than 5 minutes old, per the same doc's replay
+    guidance — not just the raw signature check."""
+    if not SLACK_SIGNING_SECRET or not signature or not timestamp:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > 60 * 5:
+        return False
+    basestring = f'v0:{timestamp}:{body}'.encode()
+    computed = 'v0=' + hmac.new(SLACK_SIGNING_SECRET.encode(), basestring, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, signature)
+
+def slack_post_message(channel, text, blocks=None):
+    """Send a message via chat.postMessage."""
+    if not SLACK_BOT_TOKEN or not channel or not slack_config['enabled']:
+        return False
+    try:
+        payload = {'channel': channel, 'text': text}
+        if blocks:
+            payload['blocks'] = blocks
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            'https://slack.com/api/chat.postMessage',
+            data=data,
+            headers={'Authorization': f'Bearer {SLACK_BOT_TOKEN}', 'Content-Type': 'application/json; charset=utf-8'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            result = json.loads(r.read())
+            if not result.get('ok'):
+                print(f'[SLACK] API error: {result.get("error")}')
+            return bool(result.get('ok'))
+    except Exception as e:
+        print(f'[SLACK] Send failed: {str(e)[:60]}')
+        return False
+
+# ── Tiered alert routing ──
+# Which tiers' channels a given alert_type reaches. This is new policy, not
+# derived from _filter_display_data_for_tier — that function only strips a
+# fixed set of location/surveillance fields from a dashboard dict at
+# tier>=3; it has no concept of "which alert types matter to which
+# audience," which is what this table decides. _filter_display_data_for_tier
+# IS reused, correctly, wherever this code touches display_data-shaped
+# fields (it isn't needed here since alerts are plain strings, not dicts).
+_SLACK_ALERT_TIERS = {
+    'oil_high':         (1,),
+    'bat_low':          (1,),
+    'battery_aux_low':  (1,),
+    'boost_high':       (1,),
+    'radar':            (1,),
+    'valet_rpm':        (1,),
+    'heat_soak':        (1,),
+    'trailer_sway':     (1,),
+    'new_record':       (1, 2),
+    'parking_armed':    (1, 2),
+    'parking_disarmed': (1, 2),
+    'request':          (1, 2),   # add_tier_notification — passenger request-system activity
+    'crash':            (1, 2, 3),
+    'tornado':          (1, 2, 3),
+    'storm':            (1, 2, 3),
+}
+_SLACK_ALERT_TIER_PREFIXES = {
+    # geofence alert_types are generated per-geofence-name (geofence_enter_<name>)
+    'geofence_enter_': (1,),
+    'geofence_exit_':  (1,),
+}
+
+def _slack_alert_tiers(alert_type):
+    if alert_type in _SLACK_ALERT_TIERS:
+        return _SLACK_ALERT_TIERS[alert_type]
+    for prefix, tiers in _SLACK_ALERT_TIER_PREFIXES.items():
+        if alert_type.startswith(prefix):
+            return tiers
+    return (1,)  # unrecognized alert types default to owner-only, not everyone
+
+_SLACK_CRASH_BUTTONS = [{
+    'type': 'actions',
+    'elements': [
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': "I'm OK"}, 'style': 'primary', 'action_id': 'crash_im_ok',  'value': 'crash_im_ok'},
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': 'Not OK'}, 'style': 'danger',  'action_id': 'crash_not_ok', 'value': 'crash_not_ok'},
+    ],
+}]
+_SLACK_PARKING_BUTTONS = [{
+    'type': 'actions',
+    'elements': [
+        {'type': 'button', 'text': {'type': 'plain_text', 'text': 'Disarm'}, 'style': 'danger', 'action_id': 'parking_disarm', 'value': 'parking_disarm'},
+    ],
+}]
+_SLACK_ALERT_BUTTONS = {'crash': _SLACK_CRASH_BUTTONS, 'parking_armed': _SLACK_PARKING_BUTTONS}
+# Which tiers get the buttons, not just the alert text — e.g. parking
+# disarm is owner-only (mirrors parking_activate_route/deactivate_parking_mode's
+# existing tier>1 => 403), so only tier 1 gets that button at all; a
+# passenger clicking a button they were never shown isn't something to
+# design around, but not handing it to them in the first place is cleaner.
+_SLACK_ALERT_BUTTON_TIERS = {'crash': (1, 2), 'parking_armed': (1,)}
+
+def slack_route_alert(alert_type, message, title='', color=0xCC0000):
+    if not slack_config['enabled']:
+        return
+    buttons      = _SLACK_ALERT_BUTTONS.get(alert_type)
+    button_tiers = _SLACK_ALERT_BUTTON_TIERS.get(alert_type, ())
+    for tier in _slack_alert_tiers(alert_type):
+        channel = SLACK_TIER_CHANNELS.get(tier)
+        if not channel:
+            continue
+        blocks = [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': f'*{title or "ARCHER"}*\n{message}'}}]
+        if buttons and tier in button_tiers:
+            blocks = blocks + buttons
+        slack_post_message(channel, message, blocks)
+
+# ── Tiered command/digest content ──
+# Command availability per tier — max tier number allowed to invoke (lower
+# tier number = more access). 'parking' at 1 mirrors the existing Owner-only
+# check on parking_activate_route/parking_deactivate_route; calling
+# activate_parking_mode()/deactivate_parking_mode() directly here bypasses
+# that route's own get_request_tier() check, so it has to be re-enforced here.
+_SLACK_COMMAND_MAX_TIER = {'vstatus': 3, 'digest': 3, 'ask': 2, 'parking': 1}
+
+def _slack_vstatus_message(tier):
+    if tier == 1:
+        return (
+            f'*RPM* {truck_state["rpm"]} | *Oil* {truck_state["oil_temp"]}F | '
+            f'*Coolant* {truck_state["coolant_temp"]}F | *Boost* {truck_state["boost"]} PSI | '
+            f'*Battery* {truck_state["battery_main"]}V | *Ethanol* {truck_state["ethanol"]}%\n'
+            f'*Score* {awareness["drive_quality"]}/100 | '
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    if tier == 2:
+        return (
+            f'*Speed* {truck_state["speed"]} mph | '
+            f'*Music* {music_state["current_song"] if music_state["playing"] else "off"}\n'
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    # Tier 3 (Family) — safety-status only, no raw diagnostics. Matches the
+    # Family web dashboard's actual read-only behavior (PRODUCT.md), not
+    # just "slightly less than tier 2."
+    warnings = awareness['warnings_active']
+    status = 'All systems normal.' if not warnings else f'Active warnings: {", ".join(warnings)}.'
+    return f'{status}\n*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+
+def _slack_digest_message(tier):
+    if tier == 1:
+        return _build_discord_digest()  # identical "everything" content — reused, not re-implemented
+    if tier == 2:
+        return (
+            f'*Drive quality* {awareness["drive_quality"]}/100\n'
+            f'*Best 0-60* {personal_bests["best_0_60"]}s | *Launches* {personal_bests["launch_count"]}\n'
+            f'*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+        )
+    warnings = awareness['warnings_active']
+    status = 'No issues today.' if not warnings else f'Flagged: {", ".join(warnings)}.'
+    return f'{status}\n*Weather* {weather["temp"]}F {weather.get("desc") or weather["condition"]}'
+
+def slack_digest_monitor():
+    """Background thread — sends one daily digest per tier channel at
+    DISCORD_DIGEST_HOUR (shared schedule with the Discord digest)."""
+    sent_on = None
+    while True:
+        now = datetime.now()
+        if slack_config['enabled'] and now.hour == DISCORD_DIGEST_HOUR and sent_on != now.date():
+            for tier, channel in SLACK_TIER_CHANNELS.items():
+                if channel:
+                    slack_post_message(channel, _slack_digest_message(tier))
+            sent_on = now.date()
+        time.sleep(60)
+
+# ── Slash commands / block actions (one shared HTTP endpoint) ──
+def _slack_reply_json(text, blocks=None, ephemeral=True):
+    data = {'response_type': 'ephemeral' if ephemeral else 'in_channel', 'text': text}
+    if blocks:
+        data['blocks'] = blocks
+    return jsonify(data)
+
+def _slack_deferred_ask(response_url, question):
+    """Runs ask_archer() off the request thread and posts to response_url —
+    same reason as Discord's deferred /ask: ask_archer can fall through to
+    local Ollama (measured 7-18s, see archer.py:1974), which blows past
+    Slack's own short initial-response window."""
+    answer = ask_archer(question)
+    try:
+        data = json.dumps({'response_type': 'ephemeral', 'text': answer, 'replace_original': True}).encode()
+        req = urllib.request.Request(response_url, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        print(f'[SLACK] Deferred /ask reply failed: {str(e)[:60]}')
+
+def _slack_handle_command(form):
+    user_id = form.get('user_id', '')
+    tier = _slack_user_tier(user_id)
+    if tier is None:
+        return _slack_reply_json('Not authorized.')
+
+    command  = form.get('command', '').lstrip('/')
+    max_tier = _SLACK_COMMAND_MAX_TIER.get(command)
+    if max_tier is None:
+        return _slack_reply_json(f'Unknown command: {command}')
+    if tier > max_tier:
+        return _slack_reply_json('Not authorized for your tier.')
+
+    if command == 'vstatus':
+        return _slack_reply_json(_slack_vstatus_message(tier))
+
+    if command == 'digest':
+        return _slack_reply_json(_slack_digest_message(tier))
+
+    if command == 'ask':
+        question = (form.get('text') or '').strip()
+        if not question:
+            return _slack_reply_json('Ask what?')
+        threading.Thread(target=_slack_deferred_ask, args=(form.get('response_url', ''), question), daemon=True).start()
+        return _slack_reply_json('Thinking...')
+
+    if command == 'parking':
+        action = (form.get('text') or '').strip().lower()
+        if action == 'arm':
+            msg = activate_parking_mode()
+        elif action == 'disarm':
+            msg = deactivate_parking_mode()
+        else:
+            msg = 'Usage: /parking arm|disarm'
+        return _slack_reply_json(msg)
+
+    return _slack_reply_json(f'Unknown command: {command}')
+
+def _slack_handle_block_action(payload):
+    user_id = (payload.get('user') or {}).get('id', '')
+    tier = _slack_user_tier(user_id)
+    if tier is None:
+        return _slack_reply_json('Not authorized.')
+
+    actions   = payload.get('actions') or []
+    action_id = actions[0].get('action_id', '') if actions else ''
+
+    if action_id == 'crash_im_ok':
+        if tier > 2:
+            return _slack_reply_json('Not authorized for your tier.')
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'confirmed_ok'
+        return _slack_reply_json('Good to hear. Logged.')
+
+    if action_id == 'crash_not_ok':
+        if tier > 2:
+            return _slack_reply_json('Not authorized for your tier.')
+        if crash_detection['last_event']:
+            crash_detection['last_event']['status'] = 'needs_attention'
+        return _slack_reply_json("Logged as needs attention. Archer can't place calls — call for help directly if needed.")
+
+    if action_id == 'parking_disarm':
+        if tier != 1:
+            return _slack_reply_json('Owner only.')
+        return _slack_reply_json(deactivate_parking_mode())
+
+    return _slack_reply_json('Unknown action.')
+
+@display_app.route('/slack/interactions', methods=['POST'])
+def slack_interactions():
+    timestamp = request.headers.get('X-Slack-Request-Timestamp', '')
+    signature = request.headers.get('X-Slack-Signature', '')
+    body      = request.get_data(as_text=True)
+
+    if not _slack_verify_signature(signature, timestamp, body):
+        return ('invalid request signature', 401)
+
+    if not slack_config['enabled']:
+        return _slack_reply_json('Slack integration is disabled.')
+
+    form = request.form
+    if 'payload' in form:
+        try:
+            payload = json.loads(form['payload'])
+        except ValueError:
+            return ('bad payload', 400)
+        return _slack_handle_block_action(payload)
+
+    if 'command' in form:
+        return _slack_handle_command(form)
+
+    return ('unrecognized request', 400)
 
 # ── ARCHER MEMORY FUNCTIONS ──────────────
 def log_moment(category, description):
@@ -5741,6 +6830,20 @@ Archer says:"""
                         req = urllib.request.Request(
                             'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
                             data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req, timeout=10) as r:
+                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                    except Exception:
+                        pass
+            if not response:
+                OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+                if OPENROUTER_KEY:
+                    try:
+                        payload = json.dumps({'model': 'meta-llama/llama-3.3-70b-instruct',
+                                              'messages': [{'role': 'user', 'content': prompt}],
+                                              'max_tokens': 80, 'temperature': 0.8}).encode()
+                        req = urllib.request.Request(
+                            'https://openrouter.ai/api/v1/chat/completions',
+                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json'})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -8317,7 +9420,7 @@ def voice_command_endpoint():
 
 
 # ── FCM DEVICE TOKEN ─────────────────────────────────────────────────────────
-_fcm_tokens: set = set()
+import fcm_push as _fcm_push
 
 @display_app.route('/fcm_token', methods=['POST'])
 @_limiter.limit('10 per minute')
@@ -8330,24 +9433,11 @@ def fcm_token_route():
     can send targeted push notifications via firebase-admin.
     """
     from flask import request as flask_request
-    import json as _json_lib
     data  = flask_request.get_json() or {}
     token = data.get('token', '').strip()
     if not token or len(token) > 512:
         return jsonify({'error': 'Invalid token'}), 400
-    _fcm_tokens.add(token)
-    try:
-        tok_path = os.path.join(os.path.dirname(__file__), 'fcm_tokens.json')
-        existing = []
-        if os.path.exists(tok_path):
-            with open(tok_path) as _f:
-                existing = _json_lib.load(_f)
-        if token not in existing:
-            existing.append(token)
-            with open(tok_path, 'w') as _f:
-                _json_lib.dump(existing, _f)
-    except Exception:
-        pass
+    _fcm_push.register_token(token)
     return jsonify({'ok': True})
 
 
@@ -8413,6 +9503,7 @@ def _resolve_location_from_nws(lat, lon):
         _save_location_cache(lat, lon, fallback)
 
 @display_app.route('/location/update', methods=['POST'])
+@_limiter.limit('20 per minute')
 @csrf_required
 def location_update_route():
     global _nws_station_url, _nws_forecast_url
@@ -8505,6 +9596,11 @@ def build_part_remove():
     return jsonify({'ok': True, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
 
+# NOTE (found while wiring panic mode's registration lock, not fixed here —
+# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
+# own /register_device, which Werkzeug's url_map dispatches to instead
+# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
+# The panic-mode lockdown check lives on the blueprint's version, not here.
 @display_app.route('/register_device', methods=['POST'])
 @csrf_required
 def register_device_endpoint():
@@ -8531,11 +9627,17 @@ def device_tier_endpoint():
 
 
 # ── TIER ROUTES ON MAIN APP (for ngrok remote access) ───
+# Each page requires the caller's resolved tier to be at least as privileged as
+# the page it's requesting (tier 1 = owner may view any page; tier 4 may only
+# view its own). Unlike '/', these direct routes previously served the full
+# dashboard HTML to anyone with no auth check at all — fixed to match '/'.
 @display_app.route('/display')
 @display_app.route('/ayden')
 @display_app.route('/tier1')
 def tier1_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) != 1:
+        return _redir('/')
     resp = FR(get_tier_html(1), mimetype='text/html')
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
@@ -8545,19 +9647,25 @@ def tier1_page():
 @display_app.route('/passenger')
 @display_app.route('/tier2')
 def tier2_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 2:
+        return _redir('/')
     return FR(get_tier_html(2), mimetype='text/html')
 
 @display_app.route('/family')
 @display_app.route('/tier3')
 def tier3_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 3:
+        return _redir('/')
     return FR(get_tier_html(3), mimetype='text/html')
 
 @display_app.route('/valet')
 @display_app.route('/tier4')
 def tier4_page():
-    from flask import Response as FR
+    from flask import Response as FR, request as freq, redirect as _redir
+    if get_request_tier(freq) > 4:
+        return _redir('/')
     return FR(get_tier_html(4), mimetype='text/html')
 
 # ── TERMINAL ACCESS CONTROL ─────────────────────────────
@@ -8587,12 +9695,60 @@ def _revoke_by_name(name: str, tier: int):
     # Revoke all JWT sessions for this name+tier issued before now
     _revoked_names[f'{name}:{tier}'] = time.time()
 
-def get_request_tier(request):
-    """Resolve the tier for any request using HS256 JWT cookie or device fingerprint.
+def is_unauthenticated_visitor(request):
+    """True when the request carries neither an archer_auth nor archer_fp cookie.
 
-    Returns tier int (1=owner, 2=passenger, 3=family, 4=valet, 5=unauthenticated).
-    Only accepts signed JWTs — the old tier:name:hmac cookie format is disabled
-    to prevent downgrade attacks.  Revoked tokens/names are checked immediately.
+    A caller in this state has never signed in and was never issued a device
+    fingerprint by this server — there is nothing to resolve a tier from.
+    Routes that serve live vehicle data (currently /display_data and
+    /display_data/stream) check this FIRST and send these callers to the
+    public fan page instead of running them through get_request_tier(),
+    which would otherwise silently bucket them alongside real tier-4
+    (valet) devices. Not used inside get_request_tier() itself, since that
+    function also backs routes — /register_device among them — where
+    redirecting to the fan page would not make sense.
+
+    Loopback requests (127.0.0.1 / ::1) are exempt — this is what the
+    in-VM kiosk display looks like to Flask, since nothing mints it an
+    archer_auth cookie at boot. A connection that arrives from anywhere
+    else, including through a port-forward or an ngrok tunnel, can never
+    present as loopback here: kernels drop externally-arriving packets
+    that claim a 127.0.0.1/::1 source, so this only ever matches a process
+    running on the same machine as the server. An exempted loopback caller
+    still isn't handed a tier directly — it falls through to
+    get_request_tier()'s existing fingerprint branch same as before, which
+    resolves it to tier 4 (the same "untrusted device" default every other
+    unrecognized fingerprint gets), so sensitive fields stay filtered.
+    """
+    if request.remote_addr in ('127.0.0.1', '::1'):
+        return False
+    return not request.cookies.get('archer_auth') and not request.cookies.get('archer_fp')
+
+def get_request_tier(request):
+    """Resolve the tier for a request that presented some credential.
+
+    Returns tier int:
+      1-4 = owner/passenger/family/valet, decoded from a valid archer_auth
+            JWT cookie. Only accepts signed JWTs — the old tier:name:hmac
+            cookie format is disabled to prevent downgrade attacks.
+      5   = a credential was presented but rejected: invalid/tampered/expired
+            JWT, or a token/name revoked since it was issued. This is NOT
+            returned just because no credential was presented at all — a
+            request with no archer_auth cookie falls through to the
+            fingerprint branch below and resolves to a real tier (1-4) via
+            get_device_tier(), same as an unrecognized fingerprint does.
+            Callers that want to distinguish "no credential presented"
+            from "some tier" should check is_unauthenticated_visitor()
+            before calling this function, not rely on getting 5 back.
+    Revoked tokens/names are checked immediately.
+
+    The archer_fp cookie branch is effectively legacy: nothing in this
+    codebase sets an archer_fp cookie today (in-cabin device fingerprints
+    live only in browser localStorage and get sent as a query param, which
+    this function deliberately never reads, to prevent URL-based privilege
+    escalation) — so in practice this branch is reached via a missing
+    fingerprint, not a present one, and always resolves through
+    get_device_tier(None) to tier 4.
     """
     cookie_val = request.cookies.get('archer_auth', '')
     if cookie_val:
@@ -9016,8 +10172,148 @@ one_time_codes = {}
 # ── MASTER SIGN-IN CODE ───────────────────────────────────────────────────────
 # Persistent Tier 1 code that Ayden controls. Auto-enabled when no Tier 1
 # devices are registered so he can always get back in.
-_master_code = os.environ.get('ARCHER_MASTER_CODE', '250022')
+# No hardcoded fallback here on purpose — a fixed default shipped in public
+# source would grant Tier 1 to anyone who reads the repo. If ARCHER_MASTER_CODE
+# isn't set, generate a random one each restart and print it to the server log
+# (console/journalctl access only) rather than baking in a known value.
+_master_code = os.environ.get('ARCHER_MASTER_CODE', '')
+if not _master_code:
+    _master_code = str(secrets.randbelow(900000) + 100000)
+    print(f'[SECURITY] ARCHER_MASTER_CODE not set — generated a random Tier-1 master '
+          f'code for this session: {_master_code}  (view again via journalctl -u archer; '
+          f'set ARCHER_MASTER_CODE in archer.env for a stable code across restarts)')
 _master_code_enabled = True   # toggled from Tier 1 dashboard
+
+# ── OWNER CREDENTIAL (persistent login) ───────────────────────────────────────
+# The master code above is regenerated randomly on every restart when
+# ARCHER_MASTER_CODE is unset, which makes it useless as an actual login: the
+# head unit reboots and the code the owner memorised is gone. This is the
+# persistent credential the login screen uses instead.
+#
+# Storage and hashing live in pin.py, NOT here, because the console login that
+# runs on tty1 before X starts has to check the same PIN without importing
+# Flask and its multi-second dependency graph. Two copies of the hashing would
+# be a correctness hazard — change the scrypt cost in one and the other
+# silently stops matching.
+import pin as _pin
+
+OWNER_CRED_FILE = _pin.CRED_FILE
+
+# Failed-attempt throttle for the WEB login specifically, in memory. The
+# console login does its own throttling; they intentionally differ. Not
+# persisted: an attacker with physical access could clear a persisted counter
+# anyway, and losing the count on reboot is the right trade for never locking
+# the owner out of their own truck permanently.
+_login_fails = {'count': 0, 'until': 0.0}
+_LOGIN_MAX_FAILS = 5
+_LOGIN_LOCKOUT_SECS = 30
+
+
+def owner_is_configured():
+    """True once a PIN has been set. Drives setup-vs-login routing."""
+    return _pin.is_configured()
+
+
+def save_owner_pin(pin_value):
+    """Write a new owner PIN. Returns (ok, error_message)."""
+    return _pin.save(pin_value)
+
+
+def verify_owner_pin(pin_value):
+    """Constant-time PIN check with a lockout. Returns (ok, error_message)."""
+    now = time.time()
+    if now < _login_fails['until']:
+        return False, f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    if not _pin.is_configured():
+        return False, 'No PIN is set up on this device'
+    if _pin.verify(pin_value):
+        _login_fails['count'] = 0
+        _login_fails['until'] = 0.0
+        return True, ''
+    _login_fails['count'] += 1
+    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
+        _login_fails['until'] = now + _LOGIN_LOCKOUT_SECS
+        _login_fails['count'] = 0
+        return False, f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS}s'
+    return False, 'Incorrect PIN'
+
+
+_SETUP_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER — Setup</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{background:#050508;color:#dde4e8;font-family:'Share Tech Mono',monospace;
+display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:54px;letter-spacing:8px;color:#00e5ff;
+line-height:1;text-shadow:0 0 30px rgba(0,229,255,0.35)}
+.sub{font-size:11px;color:#6a7a88;letter-spacing:3px;margin-top:6px;text-align:center}
+.card{background:#0a0a12;border:1px solid #1e1e35;border-top:2px solid #00e5ff;border-radius:12px;
+padding:26px 24px;margin-top:26px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px}
+.lbl{font-size:11px;color:#6a7a88;letter-spacing:2px;text-align:center}
+input{background:#050508;border:1px solid #1e1e35;border-radius:8px;color:#dde4e8;
+font-family:'Share Tech Mono',monospace;font-size:26px;letter-spacing:10px;text-align:center;
+padding:12px;outline:none;width:100%}
+input:focus{border-color:#00e5ff;box-shadow:0 0 0 2px rgba(0,229,255,0.15)}
+button{background:#00e5ff;border:none;border-radius:8px;padding:13px;color:#04141a;
+font-family:'Bebas Neue',sans-serif;font-size:19px;letter-spacing:4px;cursor:pointer;width:100%}
+button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
+.err{color:#ff3333;font-size:11px;letter-spacing:1px;text-align:center;min-height:14px}
+.hint{color:#30394a;font-size:10px;letter-spacing:1px;text-align:center;line-height:1.8}</style></head><body><div class="logo">ARCHER</div><div class="sub">FIRST-TIME SETUP</div><div class="card"><div class="lbl">CHOOSE A PIN</div><input id="p1" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12" placeholder="4-12 digits"><div class="lbl">CONFIRM PIN</div><input id="p2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12"><div class="err" id="err"></div><button id="go">SET PIN</button><div class="hint">This unlocks the truck on every start.<br>Keep it somewhere safe \u2014 it cannot be recovered,<br>only reset from the maintenance shell.</div></div><script>async function post(url, body){
+  let tok='';
+  try{ const r=await fetch('/csrf_token'); tok=(await r.json()).token; }catch(e){}
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tok},
+    body:JSON.stringify(body)});
+  let d={}; try{ d=await r.json(); }catch(e){}
+  return {ok:r.ok, d};
+}
+const e=document.getElementById("err"),b=document.getElementById("go");
+async function submit(){ b.disabled=true; e.textContent="";
+  const r=await post("/setup",{pin:document.getElementById("p1").value,confirm:document.getElementById("p2").value});
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  e.textContent=(r.d&&r.d.error)||"Setup failed"; b.disabled=false; }
+b.addEventListener("click",submit);
+document.getElementById("p2").addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
+document.getElementById("p1").focus();
+</script></body></html>"""
+
+_LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{background:#050508;color:#dde4e8;font-family:'Share Tech Mono',monospace;
+display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:54px;letter-spacing:8px;color:#00e5ff;
+line-height:1;text-shadow:0 0 30px rgba(0,229,255,0.35)}
+.sub{font-size:11px;color:#6a7a88;letter-spacing:3px;margin-top:6px;text-align:center}
+.card{background:#0a0a12;border:1px solid #1e1e35;border-top:2px solid #00e5ff;border-radius:12px;
+padding:26px 24px;margin-top:26px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px}
+.lbl{font-size:11px;color:#6a7a88;letter-spacing:2px;text-align:center}
+input{background:#050508;border:1px solid #1e1e35;border-radius:8px;color:#dde4e8;
+font-family:'Share Tech Mono',monospace;font-size:26px;letter-spacing:10px;text-align:center;
+padding:12px;outline:none;width:100%}
+input:focus{border-color:#00e5ff;box-shadow:0 0 0 2px rgba(0,229,255,0.15)}
+button{background:#00e5ff;border:none;border-radius:8px;padding:13px;color:#04141a;
+font-family:'Bebas Neue',sans-serif;font-size:19px;letter-spacing:4px;cursor:pointer;width:100%}
+button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
+.err{color:#ff3333;font-size:11px;letter-spacing:1px;text-align:center;min-height:14px}
+.hint{color:#30394a;font-size:10px;letter-spacing:1px;text-align:center;line-height:1.8}</style></head><body><div class="logo">ARCHER</div><div class="sub">ENTER PIN TO UNLOCK</div><div class="card"><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="12" autofocus><div class="err" id="err"></div><button id="go">UNLOCK</button></div><script>async function post(url, body){
+  let tok='';
+  try{ const r=await fetch('/csrf_token'); tok=(await r.json()).token; }catch(e){}
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tok},
+    body:JSON.stringify(body)});
+  let d={}; try{ d=await r.json(); }catch(e){}
+  return {ok:r.ok, d};
+}
+const e=document.getElementById("err"),b=document.getElementById("go"),p=document.getElementById("pin");
+const nxt=new URLSearchParams(location.search).get("next")||"/dashboard";
+async function submit(){ b.disabled=true; e.textContent="";
+  const r=await post("/login",{pin:p.value,next:nxt});
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  e.textContent=(r.d&&r.d.error)||"Incorrect PIN"; p.value=""; b.disabled=false; p.focus(); }
+b.addEventListener("click",submit);
+p.addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
+p.focus();
+</script></body></html>"""
+
+
 
 def _check_master_auto_enable():
     """Keep master code enabled if no Tier 1 devices are registered."""
@@ -9102,6 +10398,7 @@ def get_tier_for_mac(mac):
     return whitelist.get(mac.upper())
 
 @display_app.route('/')
+@_limiter.limit('10 per minute; 40 per hour')
 def index():
     """Main entry — MAC first, cookie fallback, registration last."""
     from flask import request as freq, make_response
@@ -9109,7 +10406,7 @@ def index():
 
     # 0. Owner PIN bypass (for HuggingFace where ARP doesn't work)
     owner_pin = os.environ.get('ARCHER_OWNER_PIN', '')
-    if owner_pin and freq.args.get('pin') == owner_pin:
+    if owner_pin and hmac.compare_digest(freq.args.get('pin', ''), owner_pin):
         jwt_val = make_auth_jwt(1, 'Ayden')
         from flask import Response as FR
         r2 = FR(get_tier_html(1), mimetype='text/html')
@@ -9374,6 +10671,11 @@ async function submitCode() {{
 </script>
 </body></html>"""
 
+# NOTE (found while wiring panic mode's registration lock, not fixed here —
+# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
+# own /register_mac, which Werkzeug's url_map dispatches to instead
+# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
+# The panic-mode lockdown check lives on the blueprint's version, not here.
 @display_app.route('/register_mac', methods=['POST'])
 @_limiter.limit('5 per minute; 20 per hour')
 @csrf_required
@@ -9703,6 +11005,11 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
     })
     tier_responses[nid] = 'pending'
     print(f'[TIER NOTIFY] {from_name}: {message}')
+    try:
+        import fcm_push as _fcm
+        _fcm.send_tier_request(from_name, message)
+    except Exception as _e:
+        print(f'[FCM] Tier request push failed: {str(_e)[:60]}')
     return nid
 
 @display_app.route('/notify_tier1', methods=['POST'])
@@ -10009,9 +11316,27 @@ def truck_image():
             return FR(f.read(), mimetype='image/jpeg')
     return FR('', status=404)
 
+# Fields that reveal live location, surveillance/camera state, or valet activity —
+# stripped for Tier 3 (family, read-only) and Tier 4 (valet, speed-only) callers.
+_DISPLAY_DATA_SENSITIVE_FIELDS = (
+    'destination', 'gps_lat', 'gps_lon', 'gps_name',
+    'surveillance', 'cameras', 'valet_events', 'parking_active', 'parking_loc',
+)
+
+def _filter_display_data_for_tier(d, tier):
+    if tier >= 3:
+        for f in _DISPLAY_DATA_SENSITIVE_FIELDS:
+            d.pop(f, None)
+    return d
+
 @display_app.route('/display_data')
 def display_data_endpoint():
-    from flask import request as flask_request
+    from flask import request as flask_request, redirect as _redir
+    if is_unauthenticated_visitor(flask_request):
+        return _redir('/fans')
+    tier = get_request_tier(flask_request)
+    if tier >= 5:
+        return jsonify({'error': 'Authentication required'}), 403
     session_id  = flask_request.args.get('sid', 'unknown')
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
@@ -10027,13 +11352,21 @@ def display_data_endpoint():
     d['device_tier']       = device_tier
     d['device_registered'] = fingerprint in trusted_devices
     d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
-    return jsonify(d)
+    return jsonify(_filter_display_data_for_tier(d, tier))
 
 
 @display_app.route('/display_data/stream')
 def display_data_stream():
     """SSE push endpoint — replaces /display_data polling in the UI."""
     from flask import request as flask_request
+    if is_unauthenticated_visitor(flask_request):
+        # EventSource treats any non-200 response as a terminal failure (no
+        # auto-retry) as long as it isn't text/event-stream — a redirect to
+        # an HTML fan page isn't something an SSE connection can follow.
+        return Response('', status=403)
+    tier = get_request_tier(flask_request)
+    if tier >= 5:
+        return Response('', status=403)
     session_id  = flask_request.args.get('sid', 'unknown')
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
@@ -10052,7 +11385,7 @@ def display_data_stream():
                 d['device_tier']       = device_tier
                 d['device_registered'] = fingerprint in trusted_devices
                 d['device_name']       = trusted_devices.get(fingerprint, {}).get('name', '')
-                yield f'data: {json.dumps(d)}\n\n'
+                yield f'data: {json.dumps(_filter_display_data_for_tier(d, tier))}\n\n'
             except Exception:
                 break
             _t.sleep(0.5)
@@ -10118,7 +11451,7 @@ def get_tier_html(tier, name=None):
     <div style="color:#444;font-size:11px;margin-top:8px">TIER {tier}</div></div></body></html>"""
 
 
-_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static'}
+_BOOT_EXEMPT = {'/boot', '/init', '/boot/status', '/maintenance', '/fans', '/fan', '/fans/ask', '/register', '/', '/static', '/login', '/setup', '/csrf_token'}
 
 _BOOT_EXEMPT_PREFIXES = ('/static', '/spotify/', '/terminal', '/weather/compare')
 
@@ -10132,6 +11465,48 @@ def require_boot():
     path = _req.path
     if path in _BOOT_EXEMPT or any(path.startswith(p) for p in _BOOT_EXEMPT_PREFIXES):
         return None
+
+    # ── LOGIN GATE ────────────────────────────────────────────────────────
+    # Runs before the boot gate: an unauthenticated visitor should meet the
+    # login screen, not the boot animation. The login page is static and
+    # paints immediately, so this is also the fastest possible first frame.
+    #
+    # Only HTML page loads are gated. AJAX/SSE fall through exactly as they do
+    # for the boot gate below, so a signed-in dashboard's polling is unaffected
+    # and an unauthenticated one still gets the tier checks each endpoint
+    # already enforces for itself.
+    if 'text/html' in _req.headers.get('Accept', ''):
+        _sess = _req.cookies.get('archer_auth', '')
+        _signed_in = False
+        if _sess:
+            try:
+                decode_auth_jwt(_sess)
+                _signed_in = True
+            except ValueError:
+                _signed_in = False
+        # The head unit's own kiosk browser is exempt once the console login
+        # has been cleared for this boot. Without this the driver enters the
+        # same PIN twice — once on the console before X starts, then again in
+        # Chromium — which is worse than either gate alone.
+        #
+        # Both halves matter. The marker is created by console-login.sh only
+        # after a correct PIN and lives in /run (tmpfs), so it is per-boot, not
+        # persistent. The loopback test keeps it local: a phone, the Roku, or
+        # anything else over the network is a different remote_addr and still
+        # meets /login. Nothing rewrites remote_addr here — there is no
+        # ProxyFix and no reverse proxy in front of this app — so it is the
+        # real peer address rather than a spoofable header.
+        if (not _signed_in
+                and _req.remote_addr in ('127.0.0.1', '::1')
+                and os.path.exists('/run/archer-console-unlock')):
+            _signed_in = True
+        if not _signed_in:
+            # First boot has no credential yet — send them to create one
+            # rather than to a login screen nothing can satisfy.
+            _dest = '/setup' if not owner_is_configured() else '/login'
+            if path != _dest:
+                return _redir(f'{_dest}?next={path}' if _dest == '/login' else _dest)
+            return None
     # Maintenance — browser page loads only; AJAX passes through so terminal works
     maintenance_active = (
         system_health['maintenance'] or
@@ -10210,18 +11585,18 @@ def boot_status():
 
     # 5. AI backend
     hf_ok   = bool(os.environ.get('HF_TOKEN', '').strip())
-    groq_ok = bool(os.environ.get('GROQ_API_KEY', '').strip())
-    if hf_ok and groq_ok:
-        ai_detail = 'HuggingFace + Groq'
-    elif hf_ok:
-        ai_detail = 'HuggingFace'
-    elif groq_ok:
-        ai_detail = 'Groq'
-    else:
-        ai_detail = 'local fallback only'
+    _AI_PROVIDER_KEYS = {
+        'GROQ_API_KEY':       'Groq',
+        'CEREBRAS_API_KEY':   'Cerebras',
+        'GEMINI_API_KEY':     'Gemini',
+        'OPENROUTER_API_KEY': 'OpenRouter',
+    }
+    providers_ok = [name for var, name in _AI_PROVIDER_KEYS.items() if os.environ.get(var, '').strip()]
+    detail_parts = (['HuggingFace'] if hf_ok else []) + providers_ok
+    ai_detail = ' + '.join(detail_parts) if detail_parts else 'local fallback only'
     all_checks.append({
         'id': 'ai', 'label': 'AI BACKEND',
-        'status': 'ok' if (hf_ok or groq_ok) else 'warn',
+        'status': 'ok' if (hf_ok or providers_ok) else 'warn',
         'detail': ai_detail,
     })
 
@@ -10307,6 +11682,68 @@ def boot_page():
     return FR('<html><body style="background:#000;color:#cc0000;font-family:monospace;text-align:center;padding:40px">ARCHER INITIALIZING...</body></html>', mimetype='text/html')
 
 
+@display_app.route('/setup', methods=['GET'])
+def setup_page():
+    """First-run: choose the owner PIN. Redirects away once one exists so this
+    can never be used to silently replace a configured credential."""
+    from flask import Response as FR, redirect as _redir
+    if owner_is_configured():
+        return _redir('/login')
+    return FR(_SETUP_HTML, mimetype='text/html')
+
+
+@display_app.route('/setup', methods=['POST'])
+@_limiter.limit('10 per minute')
+@csrf_required
+def setup_submit():
+    from flask import request as _req, jsonify as _js, make_response as _mk
+    if owner_is_configured():
+        # Changing an existing PIN is a signed-in action, not a setup action.
+        return _js({'ok': False, 'error': 'Already set up — sign in instead'}), 403
+    data = _req.get_json(silent=True) or {}
+    pin, confirm = data.get('pin', ''), data.get('confirm', '')
+    if pin != confirm:
+        return _js({'ok': False, 'error': 'PINs do not match'}), 400
+    ok, err = save_owner_pin(pin)
+    if not ok:
+        return _js({'ok': False, 'error': err}), 400
+    resp = _mk(_js({'ok': True, 'redirect': '/dashboard'}))
+    resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
+                    httponly=True, samesite='Lax', secure=_USE_TLS)
+    print('[AUTH] Owner PIN configured — first-run setup complete')
+    return resp
+
+
+@display_app.route('/login', methods=['GET'])
+def login_page():
+    """PIN entry. Sends first-run users to setup rather than showing a login
+    screen no credential can satisfy."""
+    from flask import Response as FR, redirect as _redir
+    if not owner_is_configured():
+        return _redir('/setup')
+    return FR(_LOGIN_HTML, mimetype='text/html')
+
+
+@display_app.route('/login', methods=['POST'])
+@_limiter.limit('20 per minute')
+@csrf_required
+def login_submit():
+    from flask import request as _req, jsonify as _js, make_response as _mk
+    data = _req.get_json(silent=True) or {}
+    ok, err = verify_owner_pin(data.get('pin', ''))
+    if not ok:
+        return _js({'ok': False, 'error': err}), 401
+    nxt = data.get('next') or '/dashboard'
+    # Only ever redirect to a local path — never let the client hand us an
+    # absolute URL, which would turn the login into an open redirect.
+    if not nxt.startswith('/') or nxt.startswith('//'):
+        nxt = '/dashboard'
+    resp = _mk(_js({'ok': True, 'redirect': nxt}))
+    resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
+                    httponly=True, samesite='Lax', secure=_USE_TLS)
+    return resp
+
+
 @display_app.route('/tpms', methods=['GET', 'POST'])
 @csrf_required
 def tpms_endpoint():
@@ -10375,6 +11812,14 @@ def tpms_endpoint():
         'target':  target,
         'overall': 'critical' if any_low else ('warn' if any_warn else 'ok'),
     })
+
+
+@display_app.route('/maintenance/data')
+def maintenance_data():
+    """JSON service-tracker rows for archer_maintenance.html (not the maintenance-mode splash)."""
+    if get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
+    return jsonify({'items': get_maintenance_items_payload()})
 
 
 @display_app.route('/maintenance')
@@ -11066,6 +12511,10 @@ _BEAMNG_BOUNDS = {
 def beamng_data():
     import time as _time
     from flask import request as req
+    # BEAMNG_TOKEN is intentionally optional (local dev/testing convenience —
+    # see archer.env.example) so this stays open with no token configured,
+    # same as before. A startup-time warning above (near _IS_HF) covers the
+    # case this ends up unset on a genuinely public deployment.
     _bt = os.environ.get('BEAMNG_TOKEN', '')
     if _bt:
         import hmac as _hm
@@ -11120,6 +12569,9 @@ def beamng_status():
 @display_app.route('/obd_auth')
 def obd_auth_status():
     """Gatekeeper / OBD auth status page — shows relay state and last auth result."""
+    from flask import request as flask_request
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     connected   = obd2_display.get('connected', False)
     mode        = obd2_display.get('mode', 'default')
     last_update = system_health.get('last_obd_update', 0)
@@ -11149,6 +12601,9 @@ def obd_auth_status():
 @display_app.route('/archer_os')
 def archer_os_status():
     """Archer OS / USB-OS status — shows connection state and build info."""
+    from flask import request as flask_request
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     usb_connected = False
     usb_info      = {}
     if _IS_PI:
@@ -11276,6 +12731,55 @@ def compustar_status_route():
         'last_trigger': compustar['last_trigger'],
         'trigger_count': len(compustar['trigger_log']),
     })
+
+# ── PANIC MODE (lockdown) ROUTE ───────────────────────────
+def _is_tailscale_or_loopback(remote_addr: str) -> bool:
+    """Network-level guard for the panic endpoint, independent of tier auth.
+
+    Caddy is bound to the tailnet IP for the self-hosted deployment, which
+    already keeps outside traffic off the dashboard — but archer.py's own
+    listener is still bound to 0.0.0.0 (a separately tracked, still-open
+    gap: archer.py's run_display_server() passes host='0.0.0.0'), so relying
+    on Caddy's bind alone would not actually stop something reaching this
+    endpoint directly on archer.py's own port. This is the app-level
+    backstop for that gap, scoped to exactly this one sensitive endpoint
+    rather than a blanket fix — loopback stays allowed for local testing,
+    same as the rest of the dashboard's existing loopback exemptions.
+    """
+    import ipaddress
+    if remote_addr in ('127.0.0.1', '::1'):
+        return True
+    try:
+        return ipaddress.ip_address(remote_addr) in ipaddress.ip_network('100.64.0.0/10')
+    except ValueError:
+        return False
+
+@display_app.route('/panic/activate', methods=['POST'])
+@_limiter.limit('5 per minute')
+@csrf_required
+def panic_activate_route():
+    """POST /panic/activate — trigger panic/lockdown mode.
+
+    Owner (Tier 1) only, and only reachable over Tailscale or loopback (see
+    _is_tailscale_or_loopback()). Hard constraint, not a preference: this
+    must keep working even if Groq/Cerebras/Gemini/OpenRouter/local Ollama
+    are all down at once — activate_panic_mode() never calls ask_archer(),
+    casual_monitor(), or any AI provider. See TestPanicModeAiIndependence.
+
+    JSON body: {window_minutes?: int} — defaults to 30, clamped 1-240.
+    """
+    from flask import request as flask_request
+    if not _is_tailscale_or_loopback(flask_request.remote_addr or ''):
+        return jsonify({'error': 'Not reachable from this network'}), 403
+    if get_request_tier(flask_request) != 1:
+        return jsonify({'error': 'Owner only'}), 403
+    data = flask_request.get_json(silent=True) or {}
+    try:
+        window_secs = int(data.get('window_minutes', PANIC_WINDOW_DEFAULT_SECS // 60)) * 60
+    except (TypeError, ValueError):
+        window_secs = PANIC_WINDOW_DEFAULT_SECS
+    result = activate_panic_mode(window_secs)
+    return jsonify(result)
 
 # ── AMBIENT LIGHTING ──────────────────────────────────────
 @display_app.route('/ambient/set', methods=['POST'])
@@ -11509,26 +13013,34 @@ def obd_autodetect():
     """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
     Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
+    # Manual override (documented in config.py/archer.env.example) for adapters
+    # the scan below can't find — a Bluetooth OBDLink MX+ bound to /dev/rfcommN
+    # (see archer-os/obd-auth/obd_bt_bind.sh) doesn't expose the description/
+    # manufacturer strings comports() keyword-matches against, so it never
+    # gets auto-detected regardless of retries. When set, this is authoritative:
+    # the scan is skipped entirely, every loop iteration, not just tried once.
+    OBD_PORT = os.environ.get('OBD_PORT', '')
 
     while True:
-        # ── Scan for adapter ──────────────────────────────────
-        port_device = None
-        try:
-            import serial
-            import serial.tools.list_ports
-            for p in serial.tools.list_ports.comports():
-                desc = (p.description or '').lower()
-                mfr  = (p.manufacturer or '').lower()
-                if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
-                    port_device = p.device
-                    break
-        except ImportError:
-            time.sleep(10)
-            continue
-        except Exception as e:
-            print(f'[OBD] scan error: {e}')
-            time.sleep(5)
-            continue
+        # ── Scan for adapter (skipped if OBD_PORT overrides it) ──
+        port_device = OBD_PORT or None
+        if not port_device:
+            try:
+                import serial
+                import serial.tools.list_ports
+                for p in serial.tools.list_ports.comports():
+                    desc = (p.description or '').lower()
+                    mfr  = (p.manufacturer or '').lower()
+                    if any(kw in desc or kw in mfr for kw in OBD_KEYWORDS):
+                        port_device = p.device
+                        break
+            except ImportError:
+                time.sleep(10)
+                continue
+            except Exception as e:
+                print(f'[OBD] scan error: {e}')
+                time.sleep(5)
+                continue
 
         if not port_device:
             time.sleep(5)
@@ -11777,6 +13289,8 @@ def main():
     threading.Thread(target=voice_monitor,       daemon=True).start()
     threading.Thread(target=run_display_server,  daemon=True).start()
     threading.Thread(target=discord_monitor,     daemon=True).start()
+    threading.Thread(target=discord_digest_monitor, daemon=True).start()
+    threading.Thread(target=slack_digest_monitor,   daemon=True).start()
     threading.Thread(target=openclaw_monitor,    daemon=True).start()
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()

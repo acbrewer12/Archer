@@ -21,6 +21,8 @@ def _a():
 @csrf_required
 def build_update_route():
     a = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     data = request.get_json() or {}
     bool_keys = {'cold_air_intake', 'long_tube_headers', 'full_exhaust', 'intake_manifold',
                  'throttle_body_upgrade', 'cam_swap', 'heads_upgrade', 'wideband_o2',
@@ -60,6 +62,8 @@ def build_part_add():
     import uuid
     from datetime import datetime
     a    = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     data = request.get_json() or {}
     part = {
         'id':          str(uuid.uuid4())[:8],
@@ -88,6 +92,8 @@ def build_part_add():
 @csrf_required
 def build_part_update():
     a    = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     data = request.get_json() or {}
     pid  = data.get('id')
     part = next((p for p in a.build_tracker['parts'] if p.get('id') == pid), None)
@@ -109,6 +115,8 @@ def build_part_update():
 @csrf_required
 def build_part_remove():
     a   = _a()
+    if a.get_request_tier(request) != 1:
+        return jsonify({'error': 'Tier 1 required'}), 403
     pid = (request.get_json() or {}).get('id')
     a.build_tracker['parts'] = [p for p in a.build_tracker['parts'] if p.get('id') != pid]
     a._recalc_build_spent()

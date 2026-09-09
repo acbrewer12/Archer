@@ -1,10 +1,29 @@
 #!/bin/bash
 # update.sh — Pull latest Archer code and restart the app.
-# Usage: sudo /opt/archer/usb-os/update.sh
+# Usage: sudo /opt/archer/usb-os/update.sh [--yes]
+#
+# SECURITY: this repo has no published release checksums/signatures or
+# tagged-release convention yet (see usb-os/install.sh for the full
+# rationale — checked via `git tag -l` / `git log`: only an unrelated
+# `latest-apk` tag exists). REF below should be pinned to a specific
+# commit or, once tags exist, `tags/vX.Y.Z` — not a mutable branch head
+# — because this script does a blind `git reset --hard` to REF's remote
+# tip on every run, on hardware with real OBD/GPIO/remote-start control
+# over a vehicle. As a stopgap until signed/tagged releases exist, this
+# script prints the exact commit it's about to reset to and requires
+# either an interactive "y" confirmation or an explicit --yes flag
+# before applying it.
 
 ARCHER_DIR="/opt/archer"
-BRANCH="claude/archer-truck-ai-system-TlfGE"
+REF="${ARCHER_REF:-claude/archer-truck-ai-system-TlfGE}"   # pin to a commit/tag, not a floating branch
 VENV="$ARCHER_DIR/.venv/bin"
+
+ASSUME_YES=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) ASSUME_YES=true ;;
+    esac
+done
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BOLD='\033[1m'; NC='\033[0m'
@@ -31,16 +50,46 @@ ok "Network reachable"
 log "Fetching latest from GitHub..."
 cd "$ARCHER_DIR" || die "Cannot find $ARCHER_DIR"
 
-git fetch origin "$BRANCH" --quiet 2>&1 || die "git fetch failed"
+git fetch origin "$REF" --quiet 2>&1 || die "git fetch failed"
 
 CURRENT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-LATEST=$(git rev-parse "origin/$BRANCH" 2>/dev/null) || die "Cannot resolve branch"
+LATEST=$(git rev-parse FETCH_HEAD 2>/dev/null) || die "Cannot resolve ref: $REF"
 
 if [ "$CURRENT" = "$LATEST" ]; then
     ok "Already up to date ($(git rev-parse --short HEAD))"
     UPDATED=false
 else
-    git reset --hard "origin/$BRANCH" --quiet
+    warn "New commit available for ref '$REF':"
+    echo "      $(git rev-parse --short "$CURRENT") → $(git rev-parse --short "$LATEST")  (full: $LATEST)"
+
+    # ── Signature check — see pi/ota_update.sh's ONE-TIME SETUP comment.
+    # Until commit signing is configured this always fails, which is why
+    # --yes alone does NOT skip the human confirmation below: an unattended
+    # run with no real verification and no human watching would otherwise
+    # silently apply anything pushed to $REF, on hardware with real
+    # OBD/GPIO/remote-start control.
+    SIGNATURE_VERIFIED=false
+    if command -v gpg &>/dev/null && git verify-commit "$LATEST" &>/dev/null; then
+        SIGNATURE_VERIFIED=true
+        ok "Signature check passed — $LATEST is GPG-signed by a trusted key."
+    fi
+
+    if [ "$SIGNATURE_VERIFIED" != "true" ]; then
+        if [ "$ASSUME_YES" = "true" ]; then
+            die "--yes was given but $LATEST is not a trusted GPG-signed commit, so this cannot proceed unattended. Configure commit signing (see pi/ota_update.sh) or re-run without --yes to confirm by hand."
+        fi
+        if [ -r /dev/tty ]; then
+            printf "  Apply this update? This is a hard reset — local changes on the truck will be lost. [y/N] "
+            read -r CONFIRM </dev/tty
+        else
+            CONFIRM="n"
+        fi
+        case "$CONFIRM" in
+            y|Y) ;;
+            *) die "Aborted by user." ;;
+        esac
+    fi
+    git reset --hard "$LATEST" --quiet
     ok "Updated: $(git rev-parse --short "$CURRENT") → $(git rev-parse --short HEAD)"
     UPDATED=true
 fi

@@ -8,6 +8,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Alert, BackHandler,
   KeyboardAvoidingView, Platform, AppState, Animated,
+  PermissionsAndroid,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as SecureStore      from 'expo-secure-store';
@@ -60,9 +61,37 @@ async function requestNotifPermission() {
   return status === 'granted';
 }
 
+// Android's WifiInfo API (what @react-native-community/netinfo reads the
+// SSID from) returns null/unknown for the SSID unless the app both declares
+// AND is actually granted ACCESS_FINE_LOCATION at runtime — the manifest
+// entry alone (app.json) does nothing without this request. Without it,
+// detectTruckHotspot() below silently never matches TRUCK_SSID on a real
+// device, no matter how correct the rest of the detection logic is. Not
+// applicable off Android (no PermissionsAndroid there), and denial is not
+// fatal — the existing saved-IP / manual-SetupScreen fallback in the
+// startup effect below already handles detection returning null.
+async function requestLocationPermission() {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      {
+        title: 'Wi-Fi network access',
+        message: 'Archer uses your location permission only to detect the truck\'s Wi-Fi hotspot automatically — no location data is collected or sent anywhere.',
+        buttonPositive: 'Allow',
+        buttonNegative: 'Not now',
+      }
+    );
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
 // ── Hotspot auto-detect ───────────────────────────────────
 async function detectTruckHotspot() {
   try {
+    await requestLocationPermission();
     const state = await NetInfo.fetch();
     const url = getTruckUrlFromNetInfo(state);
     if (url) {
