@@ -9596,24 +9596,6 @@ def build_part_remove():
     return jsonify({'ok': True, 'power': estimate_power_from_parts(),
                     'parts': list(build_tracker['parts'])})
 
-# NOTE (found while wiring panic mode's registration lock, not fixed here —
-# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
-# own /register_device, which Werkzeug's url_map dispatches to instead
-# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
-# The panic-mode lockdown check lives on the blueprint's version, not here.
-@display_app.route('/register_device', methods=['POST'])
-@csrf_required
-def register_device_endpoint():
-    from flask import request as flask_request
-    data        = flask_request.get_json()
-    fingerprint = data.get('fingerprint', '')
-    name        = data.get('name', 'Unknown')
-    tier        = max(2, min(4, int(data.get('tier', 2))))  # self-register max Tier 2
-    if not fingerprint:
-        return jsonify({'ok': False, 'error': 'No fingerprint'})
-    register_device(fingerprint, name, tier)
-    return jsonify({'ok': True, 'name': name, 'tier': tier})
-
 @display_app.route('/device_tier', methods=['POST'])
 @csrf_required
 def device_tier_endpoint():
@@ -10670,79 +10652,6 @@ async function submitCode() {{
 }}
 </script>
 </body></html>"""
-
-# NOTE (found while wiring panic mode's registration lock, not fixed here —
-# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
-# own /register_mac, which Werkzeug's url_map dispatches to instead
-# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
-# The panic-mode lockdown check lives on the blueprint's version, not here.
-@display_app.route('/register_mac', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def register_mac():
-    """Register a new device using a one-time code."""
-    from flask import request as freq, make_response
-    data = freq.json or {}
-    code = data.get('code', '').strip()
-    mac  = data.get('mac', '').upper()
-
-    if not code:
-        return jsonify({'success': False, 'error': 'Missing code'})
-
-    # Check master Tier 1 code first
-    entry = None
-    if _master_code_enabled and _master_code and code == _master_code:
-        entry = {'name': 'Ayden', 'tier': 1}
-
-    # Fall back to one-time code
-    if not entry:
-        entry = validate_one_time_code(code)
-    if not entry:
-        return jsonify({'success': False, 'error': 'Invalid or expired code'})
-
-    tier = entry['tier']
-    name = entry['name']
-
-    # Save MAC if we have one
-    if mac and mac != 'UNKNOWN':
-        whitelist = load_mac_whitelist()
-        whitelist[mac] = {
-            'tier':          tier,
-            'name':          name,
-            'registered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'last_seen':     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        }
-        save_mac_whitelist(whitelist)
-        print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
-
-    # Set auth cookie (HS256 JWT)
-    redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
-    resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax', secure=_USE_TLS)
-    return resp
-
-@display_app.route('/deregister_mac', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def deregister_mac():
-    """Remove a MAC from the whitelist (Tier 1 only).
-
-    Also revokes the session token for the removed device so their browser
-    session is invalidated immediately without waiting for cookie expiry.
-    """
-    from flask import request as freq
-    data = freq.json or {}
-    mac  = data.get('mac', '').upper()
-    whitelist = load_mac_whitelist()
-    if mac in whitelist and whitelist[mac]['tier'] != 1:
-        entry = whitelist[mac]
-        del whitelist[mac]
-        save_mac_whitelist(whitelist)
-        # Revoke any active session cookie for this device
-        _revoke_by_name(entry['name'], entry['tier'])
-        log_security('MAC_DEREGISTERED', mac=mac, name=entry['name'], tier=entry['tier'])
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'error': 'Not found or protected'})
 
 @display_app.route('/registered_devices')
 def registered_devices():
