@@ -329,6 +329,15 @@ def rate_limit_handler(e):
 obd2_display = {
     'connected': False,
     'mode':      'default',
+    # Tier ceiling granted by the current live connection's OBD_ACCESS_TOKEN
+    # (see _resolve_obd_connection_tier() / obd_autodetect()) — None means no
+    # authorized real connection exists (sim mode, or a real adapter found
+    # but with no valid token, which is treated the same as not connected).
+    # _filter_display_data_for_tier() checks this on every call, not just at
+    # connect time — a caller whose own tier is numerically greater (less
+    # privileged) than this ceiling never sees live OBD fields, regardless
+    # of how long the connection has been open.
+    'tier':      None,
 }
 
 arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None,
@@ -11232,9 +11241,26 @@ _DISPLAY_DATA_SENSITIVE_FIELDS = (
     'surveillance', 'cameras', 'valet_events', 'parking_active', 'parking_loc',
 )
 
+# The exact get_display_data() keys sourced from real OBD2 PID reads in
+# obd_autodetect() (oil_temp/rpm/speed/boost/battery/coolant map 1:1 to its
+# PID_TABLE + battery voltage read; 'sensor_data' is the nested mirror of the
+# same live readings) — not every truck_state field, just the ones that are
+# actually OBD2 telemetry rather than accessory/customization state.
+_OBD2_LIVE_FIELDS = ('oil_temp', 'rpm', 'speed', 'boost', 'battery', 'coolant', 'sensor_data')
+
 def _filter_display_data_for_tier(d, tier):
     if tier >= 3:
         for f in _DISPLAY_DATA_SENSITIVE_FIELDS:
+            d.pop(f, None)
+    # Per-tier OBDLink auth (archer.py:_resolve_obd_connection_tier): a real
+    # connection's granted tier ceiling caps who sees live OBD fields on
+    # *every* call here, not just once at connect time. Sim/emulated data
+    # (obd2_display['mode'] != 'live') and a real connection's own tier
+    # itself both bypass this — there's nothing to gate when the ceiling is
+    # None (no authorized real connection exists to have granted one).
+    obd_tier_ceiling = obd2_display.get('tier')
+    if obd2_display.get('mode') == 'live' and obd_tier_ceiling is not None and tier > obd_tier_ceiling:
+        for f in _OBD2_LIVE_FIELDS:
             d.pop(f, None)
     return d
 
@@ -12918,9 +12944,38 @@ def _obd_bytes(raw):
             continue
     return []
 
+def _resolve_obd_connection_tier(token: str):
+    """Verify a signed OBD-access token and return its granted tier ceiling
+    (1-4), or None if missing/malformed/expired/unparseable — the fail-closed
+    default. Reuses decode_auth_jwt() (the exact same HS256 JWT already used
+    to verify archer_auth web sessions — same secret, same code path) rather
+    than a second, parallel verification scheme.
+
+    Deliberately does not distinguish *why* a token failed (missing vs.
+    forged vs. expired vs. garbage) in its return value — obd_autodetect()
+    treats all of them identically: no real connection opens. See
+    TestObdConnectionTier for each failure mode covered individually."""
+    if not token:
+        return None
+    try:
+        payload = decode_auth_jwt(token)
+        return max(1, min(4, int(payload['tier'])))
+    except (ValueError, KeyError, TypeError):
+        return None
+
 def obd_autodetect():
     """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
-    Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
+    Updates truck_state and sensor_data directly; falls back to sim on disconnect.
+
+    Per-tier Bluetooth/OBDLink auth: a real connection only opens with a
+    valid OBD_ACCESS_TOKEN (see _resolve_obd_connection_tier()) — missing or
+    invalid means this behaves exactly as if no adapter were found at all
+    (mirrors pi/obd_gatekeeper.py's own "wrong key -> port stays locked"
+    philosophy for its separate, wired connection — see that file's module
+    docstring; the two are unrelated hardware paths, not integrated here).
+    The token's tier then continues to cap who can see the resulting data on
+    every /display_data-family call via _filter_display_data_for_tier(), not
+    just once at connect time."""
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
     # Manual override (documented in config.py/archer.env.example) for adapters
     # the scan below can't find — a Bluetooth OBDLink MX+ bound to /dev/rfcommN
@@ -12955,6 +13010,16 @@ def obd_autodetect():
             time.sleep(5)
             continue
 
+        # ── Per-tier auth gate — checked before the port is even opened ──
+        # Re-resolved every attempt (not just once outside the loop) so a
+        # freshly-rotated OBD_ACCESS_TOKEN takes effect on the next retry
+        # without requiring a process restart.
+        granted_tier = _resolve_obd_connection_tier(os.environ.get('OBD_ACCESS_TOKEN', ''))
+        if granted_tier is None:
+            print('[OBD] SECURITY: missing/invalid OBD_ACCESS_TOKEN — refusing live connection, staying in simulation')
+            time.sleep(5)
+            continue
+
         # ── Connect and initialize ─────────────────────────────
         ser = None
         try:
@@ -12968,8 +13033,9 @@ def obd_autodetect():
 
             obd2_display['connected'] = True
             obd2_display['mode']      = 'live'
+            obd2_display['tier']      = granted_tier
             sim_flags["random_enabled"] = False
-            print(f'[OBD] Connected on {port_device} — live data active')
+            print(f'[OBD] Connected on {port_device} — live data active (tier ceiling {granted_tier})')
 
             # ── OBD sensor bounds validation ───────────────────
             def _validate_obd(value, lo, hi, name):
@@ -13116,6 +13182,7 @@ def obd_autodetect():
                 pass
             obd2_display['connected'] = False
             obd2_display['mode']      = 'default'
+            obd2_display['tier']      = None
             sim_flags["random_enabled"] = True
             print('[OBD] Disconnected — simulation resumed')
 

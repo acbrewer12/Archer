@@ -141,6 +141,14 @@ FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', 
 # Examples: /dev/ttyUSB0 (Linux), COM3 (Windows)
 OBD_PORT = os.environ.get('OBD_PORT', '')
 
+# Signed tier-ceiling token for the OBDLink connection (archer.py:
+# _resolve_obd_connection_tier / obd_autodetect). Mint one with
+# archer_state.make_obd_token(tier) — e.g. make_obd_token(1) for an
+# owner-ceiling connection. Missing or invalid means obd_autodetect() never
+# opens a real connection at all (fail-closed — same as no adapter found),
+# regardless of whether real OBD hardware is actually present.
+OBD_ACCESS_TOKEN = os.environ.get('OBD_ACCESS_TOKEN', '')
+
 # Arduino serial port for gauge/lighting control. Auto-detected if not set.
 ARDUINO_PORT = os.environ.get('ARDUINO_PORT', '')
 

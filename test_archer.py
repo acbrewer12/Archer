@@ -2224,6 +2224,157 @@ class TestJWT:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 40b. Per-tier OBDLink Bluetooth auth (archer.py: make_obd_token via
+# archer_state, _resolve_obd_connection_tier(), obd2_display['tier'],
+# _filter_display_data_for_tier()'s OBD-field gate). No physical Pi exists
+# yet — see the class docstrings below for exactly what that does and
+# doesn't cover, rather than claiming hardware-level proof this can't give.
+# ═══════════════════════════════════════════════════════════════
+class TestMakeObdToken:
+    def test_round_trips_through_decode_auth_jwt(self):
+        """make_obd_token() must produce something decode_auth_jwt() (the
+        same verifier archer_auth sessions use) accepts — not a parallel
+        token format."""
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(2)
+        payload = decode_auth_jwt(token)
+        assert payload['tier'] == 2
+        assert payload['name'] == 'OBDLink'
+
+    def test_custom_name_preserved(self):
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(1, name='Owner Bluetooth Link')
+        assert decode_auth_jwt(token)['name'] == 'Owner Bluetooth Link'
+
+    def test_default_expiry_is_long_lived(self):
+        """Default expiry should suit a hardware connection's lifetime
+        (365 days), not a web session's (30) — confirms the two callers of
+        make_auth_jwt() aren't accidentally sharing the wrong default."""
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(1)
+        payload = decode_auth_jwt(token)
+        assert payload['exp'] - payload['iat'] == pytest.approx(86400 * 365, abs=5)
+
+
+class TestResolveObdConnectionTier:
+    """_resolve_obd_connection_tier() is the fail-closed gate obd_autodetect()
+    checks before ever opening a real serial connection — tested standalone
+    since the surrounding function is an infinite loop doing real hardware
+    I/O, not something to instantiate in a unit test."""
+
+    def test_valid_token_returns_its_tier(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(3)
+        assert archer._resolve_obd_connection_tier(token) == 3
+
+    def test_missing_token_returns_none(self):
+        assert archer._resolve_obd_connection_tier('') is None
+
+    def test_malformed_token_returns_none(self):
+        assert archer._resolve_obd_connection_tier('not-a-real-token') is None
+
+    def test_tampered_signature_returns_none(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(1)
+        parts = token.split('.')
+        parts[2] = parts[2][:-4] + 'XXXX'
+        assert archer._resolve_obd_connection_tier('.'.join(parts)) is None
+
+    def test_expired_token_returns_none(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(1, days=-1)
+        assert archer._resolve_obd_connection_tier(token) is None
+
+    def test_out_of_range_tier_is_clamped_not_rejected(self):
+        """Matches get_request_tier()'s own existing max(1, min(4, tier))
+        clamp — a valid, correctly-signed token with a nonsensical tier
+        number is normalized, not treated as equivalent to no token at all."""
+        from archer_state import make_obd_token
+        token_low  = make_obd_token(0)
+        token_high = make_obd_token(99)
+        assert archer._resolve_obd_connection_tier(token_low)  == 1
+        assert archer._resolve_obd_connection_tier(token_high) == 4
+
+    def test_non_numeric_tier_in_payload_returns_none(self):
+        """A well-signed token whose tier claim isn't int-convertible at all
+        (not just out of range) must fail closed, not raise uncaught."""
+        from archer_state import _b64url_enc, _JWT_HEADER, _csrf_secret
+        import json, hmac, hashlib
+        body_dict = {'tier': 'not-a-number', 'name': 'OBDLink', 'iat': 0, 'exp': 9999999999}
+        body = _b64url_enc(json.dumps(body_dict).encode())
+        msg  = f'{_JWT_HEADER}.{body}'
+        sig  = _b64url_enc(hmac.new(_csrf_secret, msg.encode(), hashlib.sha256).digest())
+        token = f'{msg}.{sig}'
+        assert archer._resolve_obd_connection_tier(token) is None
+
+
+class TestObdTierFiltering:
+    """_filter_display_data_for_tier()'s OBD-field gate — enforced on every
+    call, not just once at connect time (requirement #2)."""
+
+    def setup_method(self):
+        self._backup = dict(archer.obd2_display)
+
+    def teardown_method(self):
+        archer.obd2_display.clear()
+        archer.obd2_display.update(self._backup)
+
+    def _sample_dict(self):
+        return {f: 'x' for f in archer._OBD2_LIVE_FIELDS}
+
+    def test_caller_below_ceiling_loses_obd_fields(self):
+        """Tier 3 caller, connection granted tier 1 (owner-only) -> stripped."""
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 1
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 3)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f not in d
+
+    def test_caller_at_ceiling_keeps_obd_fields(self):
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 3
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 3)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_caller_more_privileged_than_ceiling_keeps_obd_fields(self):
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 3
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 1)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_sim_mode_never_gates_obd_fields(self):
+        """No real, tier-tokened connection exists in sim mode — nothing to
+        enforce, regardless of caller tier."""
+        archer.obd2_display['mode'] = 'default'
+        archer.obd2_display['tier'] = None
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 4)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_live_mode_with_no_ceiling_does_not_gate(self):
+        """Defensive case: mode says live but tier is somehow None (should
+        not happen given obd_autodetect()'s own gating, but the filter
+        itself must not crash or silently over-restrict if it does)."""
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = None
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 4)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_sensitive_gps_fields_still_gated_independently(self):
+        """Regression check: the pre-existing GPS/surveillance gate must
+        keep working unchanged alongside the new OBD gate."""
+        archer.obd2_display['mode'] = 'default'
+        archer.obd2_display['tier'] = None
+        d = {f: 'x' for f in archer._DISPLAY_DATA_SENSITIVE_FIELDS}
+        d = archer._filter_display_data_for_tier(d, 3)
+        for f in archer._DISPLAY_DATA_SENSITIVE_FIELDS:
+            assert f not in d
+
+
+# ═══════════════════════════════════════════════════════════════
 # 41. Logout — JWT jti revocation
 # ═══════════════════════════════════════════════════════════════
 class TestLogoutJWT:
@@ -3461,8 +3612,15 @@ class TestSlackDigest:
 class TestObdPortOverride:
     def test_obd_port_set_skips_scan_and_connects_there(self):
         """When OBD_PORT is set, it must be used directly, every loop
-        iteration — not just consulted once alongside the scan."""
-        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0'}), \
+        iteration — not just consulted once alongside the scan.
+
+        Needs a valid OBD_ACCESS_TOKEN too now — the per-tier auth gate
+        (checked before the port is even opened) would otherwise block this
+        before serial.Serial() is ever reached, which isn't what this test
+        is about (see TestResolveObdConnectionTier/TestObdTierFiltering for
+        that)."""
+        from archer_state import make_obd_token
+        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0', 'OBD_ACCESS_TOKEN': make_obd_token(1)}), \
              patch('serial.tools.list_ports.comports') as mock_comports, \
              patch('serial.Serial', side_effect=RuntimeError('boom')) as mock_serial_cls, \
              patch('time.sleep', side_effect=RuntimeError('stop-loop')):
