@@ -43,6 +43,7 @@ session, then remove line 2.
 Install as a systemd service on the Pi:
   sudo cp obd_gatekeeper.py /opt/archer/obd_gatekeeper.py
   sudo cp key_manager.py /opt/archer/key_manager.py    # needed for scope lookup
+  sudo cp config_sanity_check.py /opt/archer/config_sanity_check.py  # server config check, runs first
   sudo cp obd_gatekeeper.service /etc/systemd/system/
   sudo systemctl enable --now obd_gatekeeper
 
@@ -81,6 +82,17 @@ try:
 except ImportError:
     KEY_MANAGER_AVAILABLE = False
 
+# config_sanity_check.py is a required sibling file (same directory), not
+# an optional pip dependency — see its own module docstring for what it
+# does and why it runs before anything else in main(). A bare import only
+# resolves when this file's own directory is on sys.path, which is true
+# when run directly on the Pi (script dir is sys.path[0]) but NOT when
+# imported as the pi.obd_gatekeeper package submodule (e.g. test_archer.py's
+# TestGatekeeperHandshake) — the explicit insert makes the same bare
+# import work in both contexts without relying on the caller's sys.path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config_sanity_check
+
 KEY_FILE      = "/etc/archer/obd_auth.key"
 AUTH_PORT     = os.environ.get("GATEKEEPER_AUTH_PORT", "/dev/ttyAMA0")
 ELM_PORT      = os.environ.get("GATEKEEPER_ELM_PORT",  "/dev/ttyAMA1")
@@ -91,6 +103,16 @@ OVERRIDE_HOLD = 3.0    # seconds switch must be held to trigger (prevents accide
 AUTH_TIMEOUT  = 10.0   # seconds to complete the full handshake
 TIMESTAMP_WINDOW = 30  # seconds — reject challenges older than this
 MAX_SESSION_SECS = 4 * 3600  # force re-auth after 4 hours
+
+# ── server config sanity check (config_sanity_check.py) ──────────────
+# ARCHER_URL/ARCHER_PI_TOKEN reuse the exact same values pi_connect.sh's
+# own env vars already use for the same "how do I reach/authenticate to
+# the server" purpose — not a second, redundant pair of secrets/URLs for
+# the same question.
+ARCHER_URL                 = os.environ.get("ARCHER_URL", "")
+ARCHER_PI_TOKEN             = os.environ.get("ARCHER_PI_TOKEN", "")
+PI_EXPECTED_SERVER_IP       = os.environ.get("PI_EXPECTED_SERVER_IP", "")
+PI_EXPECTED_OBDLINK_SERIAL  = os.environ.get("PI_EXPECTED_OBDLINK_SERIAL", "")
 
 # Rate limiting — protects against brute-force / fuzzing attacks
 MAX_FAILURES_SOFT  = 3   # → 30s lockout
@@ -518,7 +540,40 @@ def handle_connection(port: serial.Serial, keys: list[bytes]) -> Optional[List[s
 
 # ── main loop ────────────────────────────────────────────────────────
 
+def _run_config_sanity_check():
+    """Fail closed if this Pi's config disagrees with the server's, or if
+    the server can't be reached to check at all — never fail open on
+    doubt. See config_sanity_check.py's own module docstring for the full
+    design rationale.
+
+    SKIP_CONFIG_SANITY_CHECK=1 bypasses this entirely — bench
+    testing/development only, never set on the real, in-vehicle Pi."""
+    if os.environ.get("SKIP_CONFIG_SANITY_CHECK", "") == "1":
+        log.warning("SKIP_CONFIG_SANITY_CHECK=1 — server config sanity check bypassed")
+        return
+    if not ARCHER_URL or not ARCHER_PI_TOKEN:
+        log.critical(
+            "ARCHER_URL and ARCHER_PI_TOKEN must both be set to run the server "
+            "config sanity check (or set SKIP_CONFIG_SANITY_CHECK=1 for bench "
+            "testing only) — refusing to start"
+        )
+        sys.exit(1)
+
+    ok, problems = config_sanity_check.check_config(
+        ARCHER_URL, ARCHER_PI_TOKEN,
+        PI_EXPECTED_SERVER_IP, PI_EXPECTED_OBDLINK_SERIAL,
+    )
+    if not ok:
+        log.critical("SERVER CONFIG SANITY CHECK FAILED — refusing to start:")
+        for p in problems:
+            log.critical(f"  - {p}")
+        sys.exit(1)
+    log.info("Server config sanity check passed")
+
+
 def main():
+    _run_config_sanity_check()
+
     setup_relay()
 
     try:

@@ -25,6 +25,7 @@ def _noop_start(self):
 threading.Thread.start = _noop_start
 
 import archer  # noqa: E402
+import config as archer_config  # noqa: E402
 
 threading.Thread.start = _real_thread_start
 
@@ -1846,6 +1847,260 @@ class TestGatekeeperHandshake:
         # Pass [new_key, old_key] — gatekeeper should fall back to old_key
         result = gk.handle_connection(port, [new_key, old_key])
         assert result is not None
+
+
+# ═══════════════════════════════════════════════════════════════
+# 30b. Server-to-Pi config sanity handshake
+# (blueprints/terminal.py: POST /terminal/pi_config_check;
+#  pi/config_sanity_check.py: check_config()).
+#
+# Real, motivating case (Self Hosting vault note): the server's own
+# Tailscale IP is hardcoded across several of its own config files: if it
+# ever drifts from what the Pi independently expects, this is the
+# mechanism meant to catch that loudly on the next Pi boot, rather than
+# the Pi silently continuing with a stale value. Covered below as its own
+# explicit test, not folded into the generic mismatch cases.
+# ═══════════════════════════════════════════════════════════════
+class TestPiConfigCheckRoute:
+    """Server side: POST /terminal/pi_config_check."""
+
+    def setup_method(self):
+        import blueprints.terminal as _terminal
+        self._terminal = _terminal
+        self._token_backup = _terminal._ARCHER_PI_TOKEN
+        _terminal._ARCHER_PI_TOKEN = 'test-pi-token'
+        self._cfg_backup = (
+            archer_config.SERVER_TAILSCALE_IP,
+            archer_config.GATEKEEPER_KEY_FINGERPRINT,
+            archer_config.OBDLINK_SERIAL,
+        )
+        archer_config.SERVER_TAILSCALE_IP       = '100.111.157.35'
+        archer_config.GATEKEEPER_KEY_FINGERPRINT = 'a' * 64
+        archer_config.OBDLINK_SERIAL             = 'OBDLINK-MX-12345'
+
+    def teardown_method(self):
+        self._terminal._ARCHER_PI_TOKEN = self._token_backup
+        (archer_config.SERVER_TAILSCALE_IP,
+         archer_config.GATEKEEPER_KEY_FINGERPRINT,
+         archer_config.OBDLINK_SERIAL) = self._cfg_backup
+
+    def test_valid_token_and_timestamp_returns_ground_truth(self):
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'test-pi-token', 'timestamp': time.time()})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['server_tailscale_ip'] == '100.111.157.35'
+        assert d['gatekeeper_key_fingerprint'] == 'a' * 64
+        assert d['obdlink_serial'] == 'OBDLINK-MX-12345'
+        assert d['tier_permissions']['OWNER'] == ['read_all', 'write_all', 'admin']
+
+    def test_wrong_token_rejected(self):
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'wrong-token', 'timestamp': time.time()})
+        assert r.status_code == 403
+
+    def test_missing_token_rejected(self):
+        r = client.post('/terminal/pi_config_check', json={'timestamp': time.time()})
+        assert r.status_code == 403
+
+    def test_stale_timestamp_rejected(self):
+        """Same 30s replay-protection window as obd_gatekeeper.py's own
+        handshake (TIMESTAMP_WINDOW)."""
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'test-pi-token', 'timestamp': time.time() - 60})
+        assert r.status_code == 403
+
+    def test_disabled_when_no_pi_token_configured(self):
+        self._terminal._ARCHER_PI_TOKEN = ''
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': '', 'timestamp': time.time()})
+        assert r.status_code == 403
+
+
+class TestPiConfigSanityCheck:
+    """Pi side: pi/config_sanity_check.check_config() — the fail-closed
+    gate obd_gatekeeper.py's main() calls before setup_relay()/load_keys().
+    Tested standalone (mocked HTTP + a real temp key file) since the real
+    obd_gatekeeper.py main() is an infinite loop doing hardware I/O, not
+    something to instantiate directly in a unit test."""
+
+    @staticmethod
+    def _module():
+        import pi.config_sanity_check as m
+        return m
+
+    @staticmethod
+    def _fake_response(body_dict):
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(body_dict).encode()
+        cm.__exit__.return_value = False
+        return cm
+
+    def _matching_server_cfg(self, key_fingerprint):
+        m = self._module()
+        return {
+            'server_tailscale_ip':        '100.111.157.35',
+            'gatekeeper_key_fingerprint': key_fingerprint,
+            'obdlink_serial':             'OBDLINK-MX-12345',
+            'tier_permissions':           dict(m.EXPECTED_TIER_PERMISSIONS),
+        }
+
+    def test_all_matching_starts_cleanly(self, tmp_path):
+        """The baseline case every mismatch test below is contrasted
+        against — must report ok with zero problems when everything
+        genuinely agrees."""
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(
+                 self._matching_server_cfg(real_fp))):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is True
+        assert problems == []
+
+    def test_mismatched_server_ip_refuses(self, tmp_path):
+        """The original motivating case: a server Tailscale IP that has
+        drifted from what the Pi expects must refuse to start cleanly,
+        not silently continue."""
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['server_tailscale_ip'] = '100.111.157.99'  # drifted
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35',  # Pi still expects the old address
+                'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('Tailscale IP' in p for p in problems)
+
+    def test_mismatched_key_fingerprint_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        server_cfg = self._matching_server_cfg('f' * 64)  # doesn't match the real file
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('fingerprint' in p for p in problems)
+
+    def test_mismatched_obdlink_serial_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['obdlink_serial'] = 'OBDLINK-MX-99999'
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('serial' in p for p in problems)
+
+    def test_mismatched_tier_permissions_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['tier_permissions'] = {'OWNER': ['read_all']}  # weakened
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('permission' in p for p in problems)
+
+    def test_unreachable_server_refuses_not_fails_open(self):
+        """A network/auth failure must itself count as a refusal — fail
+        closed on doubt, never fail open just because the check couldn't
+        run."""
+        m = self._module()
+        with patch('urllib.request.urlopen', side_effect=OSError('unreachable')):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert len(problems) == 1
+
+
+class TestObdGatekeeperConfigSanityWiring:
+    """obd_gatekeeper.py's own _run_config_sanity_check() — the glue that
+    calls check_config() and decides whether main() may proceed."""
+
+    def _gatekeeper(self):
+        import importlib, sys
+        sys.modules.setdefault('RPi', MagicMock())
+        sys.modules.setdefault('RPi.GPIO', MagicMock())
+        _serial_mock = MagicMock()
+        _serial_mock.SerialException = IOError
+        sys.modules['serial'] = _serial_mock
+        if 'pi.obd_gatekeeper' in sys.modules:
+            importlib.reload(sys.modules['pi.obd_gatekeeper'])
+        import pi.obd_gatekeeper as gk
+        return gk
+
+    def test_skip_env_var_bypasses_check_entirely(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': '1'}), \
+             patch.object(gk.config_sanity_check, 'check_config') as mock_check:
+            gk._run_config_sanity_check()  # must not raise/exit
+        mock_check.assert_not_called()
+
+    def test_missing_archer_url_or_token_refuses_before_calling_check(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', ''), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', ''), \
+             patch.object(gk.config_sanity_check, 'check_config') as mock_check:
+            with pytest.raises(SystemExit):
+                gk._run_config_sanity_check()
+        mock_check.assert_not_called()
+
+    def test_matching_config_does_not_exit(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', 'http://server.example'), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', 'test-pi-token'), \
+             patch.object(gk.config_sanity_check, 'check_config', return_value=(True, [])):
+            gk._run_config_sanity_check()  # must not raise/exit
+
+    def test_mismatched_config_exits_before_relay_setup(self):
+        """The concrete end-to-end wiring proof: a real mismatch must
+        reach sys.exit(1) via this exact call path, matching the
+        motivating case (a mismatched server IP)."""
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', 'http://server.example'), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', 'test-pi-token'), \
+             patch.object(gk.config_sanity_check, 'check_config',
+                          return_value=(False, ["server Tailscale IP mismatch: ..."])):
+            with pytest.raises(SystemExit):
+                gk._run_config_sanity_check()
 
 
 # ═══════════════════════════════════════════════════════════════

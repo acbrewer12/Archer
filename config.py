@@ -149,6 +149,42 @@ OBD_PORT = os.environ.get('OBD_PORT', '')
 # regardless of whether real OBD hardware is actually present.
 OBD_ACCESS_TOKEN = os.environ.get('OBD_ACCESS_TOKEN', '')
 
+# ── SERVER-TO-PI CONFIG SANITY HANDSHAKE ────────────────────────────────────
+# Ground truth for POST /terminal/pi_config_check (blueprints/terminal.py),
+# which pi/config_sanity_check.py calls on every Pi boot, before
+# obd_gatekeeper.py's own HMAC handshake runs. None of these three existed
+# anywhere on the server before this — confirmed by reading the code, not
+# assumed — so this is a new, explicit ground-truth store, not a reused one.
+# All three must be set to the SAME value the Pi independently expects
+# (PI_EXPECTED_SERVER_IP / PI_EXPECTED_OBDLINK_SERIAL / the Pi's real key
+# file, respectively) — same "operator keeps two copies in sync" pattern
+# already used for ARCHER_PI_TOKEN above, not a live-verified value.
+
+# This server's current Tailscale IP. Exists so the Pi has ONE authoritative
+# place to check this against, instead of only discovering drift the hard
+# way if Tailscale reassigns it or the server gets rebuilt — the real,
+# flagged fragility this whole feature exists to catch (see Self Hosting
+# vault note). Does not itself fix the separate, still-open problem of this
+# IP being hardcoded across Grafana/Caddy configs too.
+SERVER_TAILSCALE_IP = os.environ.get('SERVER_TAILSCALE_IP', '')
+
+# SHA-256 hex digest of the real Gatekeeper HMAC key
+# (/etc/archer/obd_auth.key on the Pi) — compute once with:
+#   sha256sum /etc/archer/obd_auth.key
+# Deliberately a fingerprint, not the raw key: the key itself must only
+# ever exist on the Pi (key_manager.py's own module docstring), never
+# transmitted or stored server-side.
+GATEKEEPER_KEY_FINGERPRINT = os.environ.get('GATEKEEPER_KEY_FINGERPRINT', '')
+
+# Canonical serial of the specific OBDLink MX+ unit this build uses. No
+# code anywhere reads a live serial from the adapter itself (confirmed by
+# inspecting obd_autodetect()'s ELM327 AT command set — no serial-query
+# command exists) — this check can only confirm the server's and Pi's own
+# independently-configured expectations agree with each other, not that
+# either one matches the physical hardware. Real hardware validation still
+# needed once the Pi/adapter exist — see pi/config_sanity_check.py.
+OBDLINK_SERIAL = os.environ.get('OBDLINK_SERIAL', '')
+
 # Arduino serial port for gauge/lighting control. Auto-detected if not set.
 ARDUINO_PORT = os.environ.get('ARDUINO_PORT', '')
 
