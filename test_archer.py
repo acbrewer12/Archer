@@ -4385,5 +4385,58 @@ class TestPanicActivateRoute:
         assert d['window_secs'] == 300
 
 
+# ═══════════════════════════════════════════════════════════════
+# AI provider calls must carry a real User-Agent, and the listener's bind
+# address must be overridable. Both found by re-verifying the security audit
+# on the physical server: Groq/Cerebras returned HTTP 403 (Cloudflare error
+# 1010) for Python-urllib's default UA, so every request silently fell
+# through to "[AI] Fallback"; and archer.py's port was reachable directly,
+# bypassing Caddy's path allowlist, because host was hard-coded to 0.0.0.0.
+# ═══════════════════════════════════════════════════════════════
+class TestAiProviderUserAgent:
+    def test_every_ask_archer_provider_request_sends_user_agent(self):
+        keys = {'GROQ_API_KEY': 'k1', 'CEREBRAS_API_KEY': 'k2',
+                'GEMINI_API_KEY': 'k3', 'OPENROUTER_API_KEY': 'k4'}
+        with patch.dict(os.environ, keys), \
+             patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+            archer.ask_archer('what is the capital of France?')
+        reqs = [c.args[0] for c in mock_urlopen.call_args_list
+                if hasattr(c.args[0], 'get_header')]
+        hosts = {r.host for r in reqs}
+        assert {'api.groq.com', 'api.cerebras.ai',
+                'generativelanguage.googleapis.com', 'openrouter.ai'} <= hosts
+        for r in reqs:
+            if r.host in ('api.groq.com', 'api.cerebras.ai',
+                          'generativelanguage.googleapis.com', 'openrouter.ai'):
+                assert r.get_header('User-agent') == archer._DISCORD_USER_AGENT, r.host
+
+    def test_casual_monitor_provider_calls_send_user_agent(self):
+        """The duplicate provider chain inside casual_monitor() swallows every
+        exception, so a missing header there would be completely silent —
+        check the source directly."""
+        import inspect, re
+        src = inspect.getsource(archer.casual_monitor)
+        calls = re.findall(r"urllib\.request\.Request\(\s*'https://(?:api\.groq|api\.cerebras|generativelanguage|openrouter)[^)]*\)", src, re.S)
+        assert len(calls) == 4
+        for c in calls:
+            assert "'User-Agent': _DISCORD_USER_AGENT" in c
+
+
+class TestBindHostOverride:
+    def _run(self, env):
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(archer, '_get_tls_context', return_value=None), \
+             patch.object(archer.display_app, 'run') as mock_run:
+            os.environ.pop('ARCHER_BIND_HOST', None) if 'ARCHER_BIND_HOST' not in env else None
+            archer.run_display_server()
+        return mock_run.call_args.kwargs
+
+    def test_default_bind_unchanged(self):
+        assert self._run({})['host'] == '0.0.0.0'
+
+    def test_env_override_binds_loopback(self):
+        assert self._run({'ARCHER_BIND_HOST': '127.0.0.1'})['host'] == '127.0.0.1'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

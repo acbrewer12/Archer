@@ -2064,7 +2064,9 @@ Truck data right now:
                 req = urllib.request.Request(
                     "https://api.groq.com/openai/v1/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+                    # User-Agent required: Cloudflare (error 1010) 403s Python-urllib's default
+                    # UA on Groq/Cerebras — same root cause as _DISCORD_USER_AGENT.
+                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read())
@@ -2088,7 +2090,7 @@ Truck data right now:
                 req = urllib.request.Request(
                     "https://api.cerebras.ai/v1/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {CEREBRAS_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {CEREBRAS_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
@@ -2112,7 +2114,7 @@ Truck data right now:
                 req = urllib.request.Request(
                     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
@@ -2144,7 +2146,7 @@ Truck data right now:
                 req = urllib.request.Request(
                     "https://openrouter.ai/api/v1/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
@@ -6810,7 +6812,7 @@ Archer says:"""
                                           'max_tokens': 80, 'temperature': 0.8}).encode()
                     req = urllib.request.Request(
                         'https://api.groq.com/openai/v1/chat/completions',
-                        data=payload, headers={'Authorization': f'Bearer {GROQ_KEY}', 'Content-Type': 'application/json'})
+                        data=payload, headers={'Authorization': f'Bearer {GROQ_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                     with urllib.request.urlopen(req, timeout=8) as r:
                         response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                 except Exception:
@@ -6824,7 +6826,7 @@ Archer says:"""
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
                             'https://api.cerebras.ai/v1/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {CEREBRAS_KEY}', 'Content-Type': 'application/json'})
+                            data=payload, headers={'Authorization': f'Bearer {CEREBRAS_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -6838,7 +6840,7 @@ Archer says:"""
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
                             'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                            data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -6852,7 +6854,7 @@ Archer says:"""
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
                             'https://openrouter.ai/api/v1/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json'})
+                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -13221,8 +13223,12 @@ def run_display_server():
     import logging as _log
     _log.getLogger('werkzeug').setLevel(_log.ERROR)
     port    = int(os.environ.get('PORT', 7860))
+    # ARCHER_BIND_HOST=127.0.0.1 for deployments where a reverse proxy (Caddy)
+    # is the only intended way in. Default stays 0.0.0.0 so the HF Space,
+    # Docker, and in-truck LAN deployments behave exactly as before.
+    bind_host = os.environ.get('ARCHER_BIND_HOST', '0.0.0.0')
     ssl_ctx = _get_tls_context()
-    display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False,
+    display_app.run(host=bind_host, port=port, debug=False, use_reloader=False,
                     threaded=True, ssl_context=ssl_ctx)
 
 def run_tier_server(tier, port):
