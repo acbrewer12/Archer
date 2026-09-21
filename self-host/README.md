@@ -62,7 +62,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo 
 sudo apt update && sudo apt install caddy
 ```
 
-**3. Fill in and deploy the Caddyfile** (in this folder) — replace `<your-tailscale-ip>` with the server's actual Tailscale IP (`tailscale ip -4`). No domain name or DNS is needed for either block — the private block binds that IP directly, the public block is plain HTTP on a bare port 80. Deploy with:
+**3. Fill in and deploy the Caddyfile** (in this folder) — replace `<your-tailscale-ip>` with the server's actual Tailscale IP (`tailscale ip -4`), and `<your-pi-tailscale-ip>` with the Pi's (the private block only lets that one source reach the four endpoints the Pi actually calls — delete the `@pi_denied` matcher and its `respond` line if you have no Pi). No domain name or DNS is needed for either block — the private block binds that IP directly, the public block is plain HTTP on a bare port 80. Deploy with:
 ```
 sudo cp Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
