@@ -4395,7 +4395,7 @@ class TestPanicActivateRoute:
 # ═══════════════════════════════════════════════════════════════
 class TestAiProviderUserAgent:
     def test_every_ask_archer_provider_request_sends_user_agent(self):
-        keys = {'GROQ_API_KEY': 'k1', 'CEREBRAS_API_KEY': 'k2',
+        keys = {'GROQ_API_KEY': 'k1', 'CLOUDFLARE_ACCOUNT_ID': 'acct1', 'CLOUDFLARE_API_TOKEN': 'k2',
                 'GEMINI_API_KEY': 'k3', 'OPENROUTER_API_KEY': 'k4'}
         with patch.dict(os.environ, keys), \
              patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
@@ -4403,10 +4403,10 @@ class TestAiProviderUserAgent:
         reqs = [c.args[0] for c in mock_urlopen.call_args_list
                 if hasattr(c.args[0], 'get_header')]
         hosts = {r.host for r in reqs}
-        assert {'api.groq.com', 'api.cerebras.ai',
+        assert {'api.groq.com', 'api.cloudflare.com',
                 'generativelanguage.googleapis.com', 'openrouter.ai'} <= hosts
         for r in reqs:
-            if r.host in ('api.groq.com', 'api.cerebras.ai',
+            if r.host in ('api.groq.com', 'api.cloudflare.com',
                           'generativelanguage.googleapis.com', 'openrouter.ai'):
                 assert r.get_header('User-agent') == archer._DISCORD_USER_AGENT, r.host
 
@@ -4416,10 +4416,62 @@ class TestAiProviderUserAgent:
         check the source directly."""
         import inspect, re
         src = inspect.getsource(archer.casual_monitor)
-        calls = re.findall(r"urllib\.request\.Request\(\s*'https://(?:api\.groq|api\.cerebras|generativelanguage|openrouter)[^)]*\)", src, re.S)
+        calls = re.findall(r"urllib\.request\.Request\(\s*f?'https://(?:api\.groq|api\.cloudflare|generativelanguage|openrouter)[^)]*\)", src, re.S)
         assert len(calls) == 4
         for c in calls:
             assert "'User-Agent': _DISCORD_USER_AGENT" in c
+
+# ═══════════════════════════════════════════════════════════════
+# Cloudflare Workers AI replaces Cerebras in the fallback chain's second slot
+# — a genuinely separate account/provider (confirmed live before wiring in:
+# real answer, ~2.9 Neurons/request against Cloudflare's 10,000/day free
+# allocation), not another model on an existing key. Cerebras' 402 Payment
+# Required was a real account-balance issue that a same-account model swap
+# could never have fixed.
+# ═══════════════════════════════════════════════════════════════
+class TestCloudflareWorkersAiProvider:
+    def _keys(self, **over):
+        k = {'GROQ_API_KEY': '', 'CLOUDFLARE_ACCOUNT_ID': 'acct123', 'CLOUDFLARE_API_TOKEN': 'tok456',
+             'GEMINI_API_KEY': '', 'OPENROUTER_API_KEY': ''}
+        k.update(over)
+        return k
+
+    def test_request_url_embeds_account_id_and_has_bearer_and_user_agent(self):
+        with patch.dict(os.environ, self._keys(), clear=False),              patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+            archer.ask_archer('what is the capital of France?')
+        cf = [c.args[0] for c in mock_urlopen.call_args_list
+              if hasattr(c.args[0], 'get_header') and c.args[0].host == 'api.cloudflare.com']
+        assert len(cf) == 1
+        req = cf[0]
+        assert req.full_url == ('https://api.cloudflare.com/client/v4/accounts/'
+                                 'acct123/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast')
+        assert req.get_header('Authorization') == 'Bearer tok456'
+        assert req.get_header('User-agent') == archer._DISCORD_USER_AGENT
+
+    def test_skipped_when_either_credential_missing(self):
+        for missing in ('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'):
+            with patch.dict(os.environ, self._keys(**{missing: ''}), clear=False),                  patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+                archer.ask_archer('what is the capital of France?')
+            assert not any(hasattr(c.args[0], 'host') and c.args[0].host == 'api.cloudflare.com'
+                            for c in mock_urlopen.call_args_list), missing
+
+    def test_parses_result_response_shape_not_choices_shape(self):
+        """Workers AI wraps its answer in {"result": {"response": ...}} —
+        the OpenAI-style {"choices": [{"message": ...}]} shape the other
+        four providers use does not apply here."""
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(
+            {'result': {'response': 'Paris is the capital of France.'}}).encode()
+        cm.__exit__.return_value = False
+        with patch.dict(os.environ, self._keys(), clear=False),              patch('urllib.request.urlopen', return_value=cm):
+            r = archer.ask_archer('what is the capital of France?')
+        assert r == 'Paris is the capital of France.'
+
+    def test_casual_monitor_has_no_cerebras_left(self):
+        import inspect
+        src = inspect.getsource(archer.casual_monitor)
+        assert 'cerebras' not in src.lower()
+        assert 'CLOUDFLARE_ACCOUNT_ID' in src and 'CLOUDFLARE_API_TOKEN' in src
 
 
 class TestBindHostOverride:

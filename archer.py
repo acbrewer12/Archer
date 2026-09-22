@@ -2081,29 +2081,35 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] Groq failed: {e}")
 
-    # Try 2 — Cerebras gpt-oss-120b (FALLBACK: 1M tokens/day, different provider for true redundancy)
+    # Try 2 — Cloudflare Workers AI llama-3.3-70b (FALLBACK: replaces
+    # Cerebras in this slot — Cerebras' 402 Payment Required was a real
+    # account-balance issue, not a model problem, and a genuinely separate
+    # account/provider was wanted here rather than another model on an
+    # existing key. Confirmed live before wiring in: real answer, ~2.9
+    # Neurons/request against a 10,000 Neurons/day free allocation —
+    # thousands of requests/day before any billing applies.)
     if not response:
-        CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
-        if CEREBRAS_KEY:
+        CF_ACCOUNT = os.environ.get('CLOUDFLARE_ACCOUNT_ID', '')
+        CF_TOKEN   = os.environ.get('CLOUDFLARE_API_TOKEN', '')
+        if CF_ACCOUNT and CF_TOKEN:
             try:
                 payload = json.dumps({
-                    "model": "gpt-oss-120b",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
                 req = urllib.request.Request(
-                    "https://api.cerebras.ai/v1/chat/completions",
+                    f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
                     data=payload,
-                    headers={"Authorization": f"Bearer {CEREBRAS_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
+                    headers={"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
-                    r = data['choices'][0]['message']['content'].strip()
+                    r = data['result']['response'].strip()
                     if r and len(r) > 2:
                         response = r
-                        print("[AI] Cerebras gpt-oss-120b")
+                        print("[AI] Cloudflare llama-3.3-70b")
             except Exception as e:
-                print(f"[AI] Cerebras failed: {e}")
+                print(f"[AI] Cloudflare failed: {e}")
 
     # Try 3 — Gemini 2.5 Flash-Lite (TERTIARY: thinking off by default, 1K RPD; 2.0 shuts down Sept 24 2026)
     if not response:
@@ -6827,17 +6833,17 @@ Archer says:"""
                 except Exception:
                     pass
             if not response:
-                CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
-                if CEREBRAS_KEY:
+                CF_ACCOUNT = os.environ.get('CLOUDFLARE_ACCOUNT_ID', '')
+                CF_TOKEN   = os.environ.get('CLOUDFLARE_API_TOKEN', '')
+                if CF_ACCOUNT and CF_TOKEN:
                     try:
-                        payload = json.dumps({'model': 'gpt-oss-120b',
-                                              'messages': [{'role': 'user', 'content': prompt}],
+                        payload = json.dumps({'messages': [{'role': 'user', 'content': prompt}],
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
-                            'https://api.cerebras.ai/v1/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {CEREBRAS_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
+                            f'https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+                            data=payload, headers={'Authorization': f'Bearer {CF_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
-                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                            response = json.loads(r.read())['result']['response'].strip()
                     except Exception:
                         pass
             if not response:
