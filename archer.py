@@ -2135,15 +2135,20 @@ Truck data right now:
     # provider for true redundancy" reasoning already on the Cerebras step
     # above; collapsing them into one OpenRouter key would trade that
     # redundancy for a single upstream account/billing point of failure.
-    # Model choice (meta-llama/llama-3.3-70b-instruct) is a reasonable
-    # default, not a requirement — swap it for whatever OpenRouter model/
-    # routing preference is actually wanted.
+    # Model choice: nvidia/nemotron-3-ultra-550b-a55b:free — the previous
+    # choice, meta-llama/llama-3.3-70b-instruct (no :free suffix), is a paid
+    # model on OpenRouter ($0.0000001/$0.00000032 per token, confirmed live
+    # against /api/v1/models) and was the actual, direct cause of the 402
+    # Payment Required seen in the audit, separate from any account-balance
+    # issue. This :free variant is confirmed $0/$0 pricing and a real
+    # response, live. Not a requirement — swap it for whatever OpenRouter
+    # model/routing preference is actually wanted.
     if not response:
         OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
         if OPENROUTER_KEY:
             try:
                 payload = json.dumps({
-                    "model": "meta-llama/llama-3.3-70b-instruct",
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
@@ -6853,7 +6858,7 @@ Archer says:"""
                 OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
                 if OPENROUTER_KEY:
                     try:
-                        payload = json.dumps({'model': 'meta-llama/llama-3.3-70b-instruct',
+                        payload = json.dumps({'model': 'nvidia/nemotron-3-ultra-550b-a55b:free',
                                               'messages': [{'role': 'user', 'content': prompt}],
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
