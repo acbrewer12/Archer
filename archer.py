@@ -2904,12 +2904,6 @@ def add_fault(code, description=None, severity='medium', status='active'):
         'time':     datetime.now().strftime('%I:%M %p'),
         'date':     datetime.now().strftime('%B %d %Y'),
     })
-    try:
-        from truck_diary import diary_log
-        diary_log('obd_anomaly', f'{code}: {description}',
-                   {'code': code, 'severity': severity, 'status': status})
-    except Exception as _e:
-        print(f'[ARCHER] diary_log failed: {_e}')
     speak(f'Fault code {code}. {description}')
 
 def clear_faults():
@@ -13296,13 +13290,6 @@ def main():
             archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
 
     load_state()
-
-    try:
-        from truck_diary import diary_log
-        diary_log('session', f"Session #{archer_memory['total_sessions']} started",
-                   {'total_sessions': archer_memory['total_sessions']})
-    except Exception as _e:
-        print(f'[ARCHER] diary_log failed: {_e}')
 
     # Export DTC database to JSON so external tools can reference it
     try:
