@@ -2051,13 +2051,17 @@ Truck data right now:
 
     response = None
 
-    # Try 1 — Groq llama-3.3-70b-versatile (PRIMARY: ~0.27s TTFT, 92.1 IFEval, no thinking mode)
+    # Try 1 — Groq openai/gpt-oss-120b (PRIMARY: llama-3.3-70b-versatile was
+    # retired from this account — confirmed live, HTTP 404 model_not_found —
+    # gpt-oss-120b is what's actually available and answers correctly at
+    # this max_tokens budget; gpt-oss-20b was tested too but its reasoning
+    # eats the whole budget before it emits any content)
     if not response:
         GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
         if GROQ_KEY:
             try:
                 payload = json.dumps({
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "openai/gpt-oss-120b",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
@@ -2900,6 +2904,12 @@ def add_fault(code, description=None, severity='medium', status='active'):
         'time':     datetime.now().strftime('%I:%M %p'),
         'date':     datetime.now().strftime('%B %d %Y'),
     })
+    try:
+        from truck_diary import diary_log
+        diary_log('obd_anomaly', f'{code}: {description}',
+                   {'code': code, 'severity': severity, 'status': status})
+    except Exception as _e:
+        print(f'[ARCHER] diary_log failed: {_e}')
     speak(f'Fault code {code}. {description}')
 
 def clear_faults():
@@ -6807,7 +6817,7 @@ Archer says:"""
             GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
             if GROQ_KEY:
                 try:
-                    payload = json.dumps({'model': 'llama-3.3-70b-versatile',
+                    payload = json.dumps({'model': 'openai/gpt-oss-120b',
                                           'messages': [{'role': 'user', 'content': prompt}],
                                           'max_tokens': 80, 'temperature': 0.8}).encode()
                     req = urllib.request.Request(
@@ -13286,6 +13296,13 @@ def main():
             archer_memory['first_drive'] = datetime.now().strftime('%B %d %Y')
 
     load_state()
+
+    try:
+        from truck_diary import diary_log
+        diary_log('session', f"Session #{archer_memory['total_sessions']} started",
+                   {'total_sessions': archer_memory['total_sessions']})
+    except Exception as _e:
+        print(f'[ARCHER] diary_log failed: {_e}')
 
     # Export DTC database to JSON so external tools can reference it
     try:
