@@ -774,8 +774,6 @@ def save_state():
         'drive_score':       calculate_drive_score()[0],
         'drive_grade':       calculate_drive_score()[1],
         'show_running':      show_sequence['running'],
-        'openclaw_connected': openclaw['connected'],
-        'openclaw_enabled':  openclaw['enabled'],
         'discord_enabled':   discord_config['enabled'],
         'crash_events':      len(crash_detection['events']),
         'auto_lights':       auto_features['auto_lights'],
@@ -5490,128 +5488,6 @@ def smart_fallback(text):
 
 
 # ══════════════════════════════════════════
-# OPENCLAW INTEGRATION
-# ══════════════════════════════════════════
-openclaw = {
-    'enabled':    False,
-    'url':        'http://localhost:18789',   # default OpenClaw gateway port
-    'api_key':    '',
-    'connected':  False,
-    'last_task':  None,
-    'task_log':   [],
-    'tier_access': [1, 2],   # Tiers that can use OpenClaw
-    'model':      'ollama/llama3.2',  # runs local — no API key needed
-}
-
-# Tasks Tier 2 is allowed to use
-OPENCLAW_TIER2_ALLOWED = [
-    'weather', 'news', 'search', 'remind', 'message',
-    'text', 'whatsapp', 'find', 'what is', 'look up',
-]
-
-def openclaw_check_connection():
-    try:
-        with urllib.request.urlopen(f'{openclaw["url"]}/health', timeout=3) as r:
-            if r.status == 200:
-                openclaw['connected'] = True
-                return True
-    except:
-        pass
-    openclaw['connected'] = False
-    return False
-
-def openclaw_task(task, tier=1):
-    """Send a task to OpenClaw and return the result."""
-    if not openclaw['enabled']:
-        return None
-    if tier not in openclaw['tier_access']:
-        return 'OpenClaw access not available for your tier.'
-
-    # Tier 2 filter — only allowed task types
-    if tier == 2:
-        allowed = any(kw in task.lower() for kw in OPENCLAW_TIER2_ALLOWED)
-        if not allowed:
-            return 'That task is not available in passenger mode.'
-
-    if not openclaw_check_connection():
-        return 'OpenClaw is not running. Start it with: npx clawdbot@latest'
-
-    try:
-        import json as _json
-        payload = _json.dumps({
-            'message': task,
-            'model':   openclaw['model'],
-        }).encode()
-
-        req = urllib.request.Request(
-            f'{openclaw["url"]}/api/message',
-            data    = payload,
-            headers = {
-                'Content-Type':  'application/json',
-                'Authorization': f'Bearer {openclaw["api_key"]}' if openclaw['api_key'] else '',
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            result = _json.loads(r.read())
-            text   = result.get('text') or result.get('content') or result.get('message') or str(result)
-
-            # Log the task
-            entry = {
-                'task':   task,
-                'result': text[:200],
-                'time':   datetime.now().strftime('%I:%M %p'),
-                'tier':   tier,
-            }
-            openclaw['task_log'].append(entry)
-            if len(openclaw['task_log']) > 50:
-                openclaw['task_log'].pop(0)
-            openclaw['last_task'] = entry
-
-            print(f'[OPENCLAW] Task: {task[:60]}')
-            print(f'[OPENCLAW] Result: {text[:120]}')
-            return text
-
-    except urllib.error.URLError as e:
-        return f'OpenClaw connection failed: {str(e)[:60]}'
-    except Exception as e:
-        return f'OpenClaw error: {str(e)[:60]}'
-
-def openclaw_monitor():
-    """Background thread — checks OpenClaw connection every 60s."""
-    while True:
-        if openclaw['enabled']:
-            was_connected = openclaw['connected']
-            now_connected = openclaw_check_connection()
-            if now_connected and not was_connected:
-                print('[OPENCLAW] Connected.')
-            elif not now_connected and was_connected:
-                print('[OPENCLAW] Disconnected.')
-        time.sleep(60)
-
-def is_openclaw_task(text):
-    """Detect if a command should be routed to OpenClaw instead of Archer."""
-    keywords = [
-        'check my email', 'read my email', 'send email', 'email',
-        'check my messages', 'send a message', 'text', 'whatsapp',
-        'search the web', 'look up', 'google', 'find online',
-        'browse', 'open website', 'go to website',
-        'remind me', 'set reminder', 'schedule',
-        'download', 'post to', 'tweet', 'instagram',
-        'order', 'buy', 'price check',
-        'news', 'latest news', 'what is happening',
-        'play music', 'pause music', 'next song',
-        'control', 'automate', 'run script',
-        'track my package', 'shipping',
-        'check price', 'how much is',
-        'calendar', 'what do i have today',
-        'notification', 'alert me when',
-    ]
-    t = text.lower()
-    return any(kw in t for kw in keywords)
-
-
-# ══════════════════════════════════════════
 # DISCORD NOTIFICATIONS
 # ══════════════════════════════════════════
 discord_config = {
@@ -7864,7 +7740,6 @@ canvas.graph { width:100%; border-radius:2px; }
   <div class="tab" onclick="setMode('build')">BUILD</div>
   <div class="tab" onclick="setMode('live')">LIVE</div>
   <div class="tab" onclick="setMode('cams')">CAMS</div>
-  <div class="tab" id="claw-tab" onclick="setMode('claw')" style="display:none">CLAW</div>
   <div class="tab" onclick="setMode('music')">MUSIC</div>
 </div>
 
@@ -8334,36 +8209,6 @@ canvas.graph { width:100%; border-radius:2px; }
     </div>
   </div>
 
-  <!-- OPENCLAW MODE — Tier 1 and 2 only -->
-  <div id="mode-claw" class="mode-screen">
-    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #00cc44;margin-bottom:6px">
-      <div style="font-size:9px;color:#00cc44;letter-spacing:3px">OPENCLAW AGENT</div>
-      <div id="claw-status-dot" style="width:6px;height:6px;border-radius:50%;background:#333"></div>
-      <div id="claw-status-text" style="font-size:8px;color:#333;letter-spacing:1px">OFFLINE</div>
-    </div>
-
-    <!-- Chat history -->
-    <div id="claw-history" style="flex:1;overflow-y:auto;font-size:10px;line-height:1.7;min-height:120px;max-height:220px;padding:2px 0;margin-bottom:6px">
-      <div style="color:#333;font-size:9px">OpenClaw can browse the web, check email, send messages, search for parts prices and more. Only you and your passenger can use this.</div>
-    </div>
-
-    <!-- Quick actions -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
-      <button class="vc-btn" onclick="clawQuick('check my email')"><span style="font-size:14px">📧</span><span>EMAIL</span></button>
-      <button class="vc-btn" onclick="clawQuick('latest news')"><span style="font-size:14px">📰</span><span>NEWS</span></button>
-      <button class="vc-btn" onclick="clawQuick('search RockAuto for LSA parts prices')"><span style="font-size:14px">🔍</span><span>PARTS</span></button>
-      <button class="vc-btn" onclick="clawQuick('what is the weather forecast for Salem MO this week')"><span style="font-size:14px">🌦</span><span>FORECAST</span></button>
-      <button class="vc-btn" onclick="clawQuick('check if I have any reminders today')"><span style="font-size:14px">🔔</span><span>REMINDERS</span></button>
-      <button class="vc-btn" onclick="clawQuick('track my latest package')"><span style="font-size:14px">📦</span><span>TRACKING</span></button>
-    </div>
-
-    <!-- Input -->
-    <div style="display:flex;gap:5px">
-      <input id="claw-input" placeholder="Tell OpenClaw to do something..." style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:8px;color:#fff;font-family:monospace;font-size:10px;outline:none;min-width:0"/>
-      <button onclick="clawSend()" style="background:#001a00;border:1px solid #00cc44;color:#00cc44;font-family:monospace;font-size:9px;padding:8px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;letter-spacing:1px">GO</button>
-    </div>
-  </div>
-
   <!-- MUSIC (Spotify) -->
   <div id="mode-music" class="mode-screen">
     <div id="t1-spotify-disconnected" style="text-align:center;padding:24px 8px">
@@ -8724,8 +8569,6 @@ function updateDisplay(d) {
     updateCamsTab(d);
     updateRadar(d);
     updateStatusExtras(d);
-    showClawTab(d.device_tier !== undefined ? d.device_tier : (d.tier || 4));
-    updateClawStatus(d.openclaw_connected || false);
 
     // Health
     const items = [
@@ -9159,65 +9002,6 @@ function updateStatusExtras(d) {
         if (sr && d.record_best_et) sr.textContent = 'BEST: ' + d.record_best_et + 's';
     }
 }
-
-// ── OPENCLAW DISPLAY ─────────────────────
-function showClawTab(tier) {
-    const tab = document.getElementById('claw-tab');
-    if (tab) tab.style.display = (tier <= 2) ? 'block' : 'none';
-}
-
-function updateClawStatus(connected) {
-    const dot  = document.getElementById('claw-status-dot');
-    const text = document.getElementById('claw-status-text');
-    if (dot)  dot.style.background = connected ? '#00cc44' : '#333';
-    if (text) { text.textContent = connected ? 'ONLINE' : 'OFFLINE'; text.style.color = connected ? '#00cc44' : '#333'; }
-}
-
-function clawAppend(msg, who) {
-    const hist = document.getElementById('claw-history');
-    if (!hist) return;
-    const div = document.createElement('div');
-    div.style.cssText = 'margin-bottom:5px;padding:4px 0;border-bottom:1px solid #0d0d0d';
-    const label = who === 'you' ? '<span style="color:#cc0000;font-size:8px">YOU</span>' : '<span style="color:#00cc44;font-size:8px">CLAW</span>';
-    const textNode = document.createElement('span');
-    textNode.style.color = '#aaa';
-    textNode.textContent = msg;
-    div.innerHTML = label + '<br>';
-    div.appendChild(textNode);
-    hist.appendChild(div);
-    hist.scrollTop = hist.scrollHeight;
-}
-
-function clawSend() {
-    const inp  = document.getElementById('claw-input');
-    const task = inp ? inp.value.trim() : '';
-    if (!task) return;
-    clawAppend(task, 'you');
-    if (inp) inp.value = '';
-    clawAppend('Working...', 'claw');
-    fetch('/voice_command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:task})})
-    .then(r=>r.json())
-    .then(d=>{
-        const hist = document.getElementById('claw-history');
-        if (hist && hist.lastChild) hist.removeChild(hist.lastChild);
-        clawAppend(d.response || 'Done.', 'claw');
-        if (audioReady && d.response) {
-            const u = new SpeechSynthesisUtterance(d.response);
-            u.rate = 0.95; u.pitch = 0.8;
-            window.speechSynthesis.speak(u);
-        }
-    })
-    .catch(()=>clawAppend('Error.','claw'));
-}
-
-function clawQuick(task) {
-    const inp = document.getElementById('claw-input');
-    if (inp) { inp.value = task; clawSend(); }
-}
-
-document.addEventListener('keydown', e=>{
-    if (document.activeElement && document.activeElement.id === 'claw-input' && e.key === 'Enter') clawSend();
-});
 
 // ── PWA ───────────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -13288,7 +13072,6 @@ def main():
     threading.Thread(target=discord_monitor,     daemon=True).start()
     threading.Thread(target=discord_digest_monitor, daemon=True).start()
     threading.Thread(target=slack_digest_monitor,   daemon=True).start()
-    threading.Thread(target=openclaw_monitor,    daemon=True).start()
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
