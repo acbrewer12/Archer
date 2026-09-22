@@ -4490,5 +4490,60 @@ class TestBindHostOverride:
         assert self._run({'ARCHER_BIND_HOST': '127.0.0.1'})['host'] == '127.0.0.1'
 
 
+# ═══════════════════════════════════════════════════════════════
+# Real, live-confirmed bug: Caddy proxies to loopback, so request.remote_addr
+# was always 127.0.0.1 for every request through it, real caller or not —
+# not "spoofable", unconditionally true — for every loopback check
+# (_is_tailscale_or_loopback(), the console-kiosk login bypass). ProxyFix
+# restores the real client IP, but only when ARCHER_BIND_HOST signals a
+# local proxy is actually in front (archer-os/HuggingFace have neither a
+# proxy nor this env var set, and must NOT trust a client-supplied
+# X-Forwarded-For, or they'd become newly spoofable). The gate is decided
+# at import time (module-level code next to display_app's creation), so it
+# needs a subprocess to test both branches — the already-imported archer
+# module in this test process reflects whatever ARCHER_BIND_HOST happened
+# to be unset at collection time.
+# ═══════════════════════════════════════════════════════════════
+class TestProxyFixGatedOnBindHost:
+    def test_not_applied_in_this_process_without_bind_host_set(self):
+        """Documents the default (this test process never set
+        ARCHER_BIND_HOST before importing archer): unwrapped wsgi_app,
+        remote_addr is the raw WSGI peer, matching archer-os/HuggingFace."""
+        assert type(archer.display_app.wsgi_app).__name__ != 'ProxyFix'
+
+    def _import_archer_in_subprocess(self, bind_host):
+        script = f'''
+import os, sys
+os.environ["ARCHER_SECRET"] = "test_secret_xyz"
+os.environ["HF_TOKEN"] = ""
+os.environ["GROQ_API_KEY"] = ""
+os.environ["GEOCODE_API_KEY"] = ""
+os.environ["PORT"] = "17861"
+if {bind_host!r} is not None:
+    os.environ["ARCHER_BIND_HOST"] = {bind_host!r}
+from unittest.mock import MagicMock
+import threading
+for mod in ["serial", "vosk", "sounddevice", "piper_tts"]:
+    sys.modules.setdefault(mod, MagicMock())
+threading.Thread.start = lambda self: None
+import archer
+print(type(archer.display_app.wsgi_app).__name__)
+'''
+        r = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr[-2000:]
+        return r.stdout.strip().splitlines()[-1]
+
+    def test_applied_when_bind_host_is_loopback(self):
+        assert self._import_archer_in_subprocess('127.0.0.1') == 'ProxyFix'
+
+    def test_not_applied_when_bind_host_is_default(self):
+        assert self._import_archer_in_subprocess(None) != 'ProxyFix'
+
+    def test_not_applied_when_bind_host_is_0000(self):
+        """Explicit 0.0.0.0 (the archer-os/HuggingFace default) must not
+        trust a client-supplied X-Forwarded-For either."""
+        assert self._import_archer_in_subprocess('0.0.0.0') != 'ProxyFix'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

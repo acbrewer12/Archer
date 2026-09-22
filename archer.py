@@ -228,6 +228,32 @@ import logging as _logging
 
 display_app            = Flask(__name__)
 display_app.secret_key = _ARCHER_SECRET
+
+# On the self-hosted deployment, Caddy reverse-proxies every request to this
+# app (both the public :80 and private :8080 blocks bind Caddy, not
+# archer.py, per self-host/Caddyfile), so request.remote_addr is Caddy's own
+# loopback connection, not the real client, unless something restores it.
+# Confirmed live: without this, every request through Caddy showed
+# remote_addr == 127.0.0.1 regardless of the real caller or any
+# X-Forwarded-For header, which makes every loopback check
+# (_is_tailscale_or_loopback(), the console-kiosk login bypass at
+# require_boot()) unconditionally true for ALL traffic — not "spoofable",
+# unconditionally bypassed. x_for=1 trusts exactly one hop, matching Caddy
+# being the only proxy in front — confirmed live that Caddy's default
+# reverse_proxy overwrites X-Forwarded-For with the real observed peer IP
+# rather than forwarding a client-supplied value, so this one hop is safe
+# to trust there.
+#
+# Gated on ARCHER_BIND_HOST==127.0.0.1 (the same signal run_display_server()
+# uses to mean "only a local reverse proxy can reach this directly") rather
+# than applied unconditionally: the in-truck archer-os build and the
+# HuggingFace Space have no local proxy sanitizing headers, so trusting
+# X-Forwarded-For there would let any direct LAN/console client spoof its
+# own IP — the opposite of this fix's purpose. Neither sets this env var,
+# so they are unaffected.
+if os.environ.get('ARCHER_BIND_HOST', '0.0.0.0') in ('127.0.0.1', 'localhost'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    display_app.wsgi_app = ProxyFix(display_app.wsgi_app, x_for=1)
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -11229,9 +11255,12 @@ def require_boot():
         # after a correct PIN and lives in /run (tmpfs), so it is per-boot, not
         # persistent. The loopback test keeps it local: a phone, the Roku, or
         # anything else over the network is a different remote_addr and still
-        # meets /login. Nothing rewrites remote_addr here — there is no
-        # ProxyFix and no reverse proxy in front of this app — so it is the
-        # real peer address rather than a spoofable header.
+        # meets /login. This marker/flow only exists on the in-truck archer-os
+        # build, which has no reverse proxy in front of archer.py — remote_addr
+        # there is the real peer, not a spoofable header. On the self-hosted
+        # deployment (Caddy in front), the ProxyFix block near display_app's
+        # creation restores the real client IP the same way — see its comment
+        # for why that one is conditional and confirmed safe live.
         if (not _signed_in
                 and _req.remote_addr in ('127.0.0.1', '::1')
                 and os.path.exists('/run/archer-console-unlock')):
@@ -12472,15 +12501,17 @@ def compustar_status_route():
 def _is_tailscale_or_loopback(remote_addr: str) -> bool:
     """Network-level guard for the panic endpoint, independent of tier auth.
 
-    Caddy is bound to the tailnet IP for the self-hosted deployment, which
-    already keeps outside traffic off the dashboard — but archer.py's own
-    listener is still bound to 0.0.0.0 (a separately tracked, still-open
-    gap: archer.py's run_display_server() passes host='0.0.0.0'), so relying
-    on Caddy's bind alone would not actually stop something reaching this
-    endpoint directly on archer.py's own port. This is the app-level
-    backstop for that gap, scoped to exactly this one sensitive endpoint
-    rather than a blanket fix — loopback stays allowed for local testing,
-    same as the rest of the dashboard's existing loopback exemptions.
+    Two things had to both be true for this to mean anything, and for a
+    while neither was: archer.py's own listener defaulted to host='0.0.0.0'
+    (fixed — see ARCHER_BIND_HOST in run_display_server()), and even with
+    that fixed, Caddy proxying to loopback made remote_addr always read
+    127.0.0.1 for every caller, real or not, since nothing was restoring the
+    real client IP (fixed — see the ProxyFix block near display_app's
+    creation, confirmed live that this function was unconditionally True for
+    all Caddy-proxied traffic before that). Loopback stays allowed for local
+    testing, same as the rest of the dashboard's existing loopback
+    exemptions — this is the app-level backstop for one sensitive endpoint,
+    not a blanket fix.
     """
     import ipaddress
     if remote_addr in ('127.0.0.1', '::1'):
