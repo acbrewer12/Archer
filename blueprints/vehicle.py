@@ -7,9 +7,11 @@ All mutable state and business logic live in archer.py and are accessed via
 late import (_a()) to avoid circular dependencies.
 """
 
+import functools
+
 from flask import Blueprint, jsonify, request
 
-from archer_state import _limiter, csrf_required
+from archer_state import _limiter, csrf_required, decode_auth_jwt
 
 bp = Blueprint('vehicle', __name__)
 
@@ -17,6 +19,43 @@ bp = Blueprint('vehicle', __name__)
 def _a():
     import archer as _ar
     return _ar
+
+
+def _owner_auth(f):
+    """Require tier 1 (Owner). Accepts a Bearer JWT or the archer_auth
+    cookie for tier resolution — same pattern as blueprints/roku.py's
+    _roku_auth, tightened to tier == 1.
+
+    Without this, a Bearer-only client (the Wear OS app; it has no
+    WebView session to share a cookie with) passed csrf_required() fine —
+    that decorator already accepts a valid Bearer JWT to satisfy CSRF —
+    but then hit get_request_tier(request), which only ever reads the
+    cookie, resolved to an unauthenticated tier, and 403'd as "Owner only"
+    regardless of what tier the Bearer token actually carried.
+
+    Note: csrf_required() (the outer decorator) also tries to decode any
+    Bearer header, to satisfy CSRF specifically. A genuinely invalid Bearer
+    token with no session cookie either gets caught by csrf_required's own
+    generic CSRF-failure 403 first — this decorator's more specific
+    "invalid or expired token" 401 only fires for a valid Bearer that
+    doesn't carry tier 1, or for the (unusual) case of a valid session
+    cookie/CSRF token present alongside a bad Bearer header. Both paths
+    fail closed either way."""
+    @functools.wraps(f)
+    def _w(*args, **kwargs):
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            try:
+                payload = decode_auth_jwt(auth[7:])
+            except Exception:
+                return jsonify({'error': 'invalid or expired token'}), 401
+            if payload.get('tier', 99) != 1:
+                return jsonify({'error': 'Owner only'}), 403
+            return f(*args, **kwargs)
+        if _a().get_request_tier(request) > 1:
+            return jsonify({'error': 'Owner only'}), 403
+        return f(*args, **kwargs)
+    return _w
 
 
 # ── GEOFENCE ──────────────────────────────────────────────
@@ -64,10 +103,9 @@ def geofence_remove():
 
 @bp.route('/remote/start', methods=['POST'])
 @csrf_required
+@_owner_auth
 def remote_start_route():
     a = _a()
-    if a.get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
     msg = a.remote_start_engine()
     return jsonify({'ok': True, 'status': a.remote_start['status'], 'msg': msg or 'Starting.'})
 

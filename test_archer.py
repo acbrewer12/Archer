@@ -2479,6 +2479,64 @@ class TestJWT:
 
 
 # ═══════════════════════════════════════════════════════════════
+# blueprints/vehicle.py's /remote/start — a real, live-relevant bug (the
+# Wear OS app has no WebView session to share a cookie with, so it
+# authenticates with only a Bearer JWT). csrf_required() already accepts a
+# Bearer JWT to satisfy CSRF, but get_request_tier() only ever read the
+# cookie, so a Bearer-only caller always 403'd as "Owner only" regardless
+# of its real tier. _owner_auth fixes this the same way blueprints/roku.py's
+# _roku_auth already does, tightened to tier == 1.
+# ═══════════════════════════════════════════════════════════════
+class TestRemoteStartOwnerAuth:
+    def setup_method(self):
+        self._patch = patch.object(archer, 'remote_start_engine', return_value=None)
+        self._patch.start()
+
+    def teardown_method(self):
+        self._patch.stop()
+
+    def test_tier1_bearer_succeeds_with_no_cookie_at_all(self):
+        """The actual Wear OS shape: no cookie, no CSRF token — Bearer only."""
+        from archer_state import make_auth_jwt
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': f'Bearer {make_auth_jwt(1, "Ayden")}'})
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+
+    def test_tier2_bearer_rejected_as_owner_only(self):
+        from archer_state import make_auth_jwt
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': f'Bearer {make_auth_jwt(2, "Khloe")}'})
+        assert r.status_code == 403
+        assert json.loads(r.data)['error'] == 'Owner only'
+
+    def test_invalid_bearer_with_no_session_hits_csrf_first(self):
+        """csrf_required() is the outer decorator and also tries to decode
+        any Bearer header to satisfy CSRF; when that fails too (garbage
+        token) and there's no session cookie either, its own CSRF-failure
+        403 fires before _owner_auth's more specific 401 ever gets a
+        chance to. Still fails closed — just via the outer decorator."""
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': 'Bearer not.a.valid.jwt'})
+        assert r.status_code == 403
+        assert json.loads(r.data)['error'] == 'CSRF validation failed'
+
+    def test_no_auth_falls_back_to_csrf_rejection(self):
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start')
+        assert r.status_code == 403
+
+    def test_owner_cookie_flow_still_works_unaffected(self):
+        """Confirms the fix didn't touch the existing browser/cookie path —
+        uses the same _authed_client() helper (fresh client + matching
+        session/CSRF token) other cookie-based route tests use."""
+        c = _authed_client(1, 'Ayden')
+        r = c.post('/remote/start')
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+
+
+# ═══════════════════════════════════════════════════════════════
 # 40b. Per-tier OBDLink Bluetooth auth (archer.py: make_obd_token via
 # archer_state, _resolve_obd_connection_tier(), obd2_display['tier'],
 # _filter_display_data_for_tier()'s OBD-field gate). No physical Pi exists
