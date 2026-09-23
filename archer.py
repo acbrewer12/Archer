@@ -9037,26 +9037,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 
 # ── FLASK ROUTES ─────────────────────────
 
-@display_app.route('/nav/save_place', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def nav_save_place():
-    from flask import request as _req
-    data    = _req.get_json()
-    name    = data.get('name', '').strip().lower()
-    lat     = data.get('lat')
-    lon     = data.get('lon')
-    address = data.get('address', '')
-    if not name or lat is None or lon is None:
-        return jsonify({'error': 'Need name, lat, lon'}), 400
-    nav_places[name] = {'lat': float(lat), 'lon': float(lon), 'address': address}
-    save_state()
-    print(f'[NAV] Saved place "{name}" → {lat},{lon}')
-    return jsonify({'ok': True, 'name': name})
 
-@display_app.route('/nav/places')
-def nav_list_places():
-    return jsonify({k: v for k, v in nav_places.items()})
 
 @display_app.route('/navigate')
 def navigate_endpoint():
@@ -9292,24 +9273,6 @@ def drag_launch_route():
     return jsonify({'ok': msg is None, 'stage': drag_timer['stage'], 'msg': msg or 'Launched.'})
 
 
-@display_app.route('/build/update', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def build_update_route():
-    data = request.get_json() or {}
-    bool_keys = {'cold_air_intake','long_tube_headers','full_exhaust','intake_manifold',
-                 'throttle_body_upgrade','cam_swap','heads_upgrade','wideband_o2',
-                 'electric_fan','underdrive_pulley','custom_tune'}
-    int_keys  = {'cam_level','heads_level'}
-    for k, v in data.items():
-        if k in bool_keys:
-            build_specs[k] = bool(v)
-        elif k in int_keys:
-            build_specs[k] = int(v)
-        elif k in build_specs:
-            build_specs[k] = v
-    save_state()
-    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power_from_parts()})
 
 def _resolve_location_from_nws(lat, lon):
     print(f'[GPS] resolving location for {lat:.4f},{lon:.4f}')
@@ -9373,75 +9336,10 @@ def location_update_route():
     return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
                     'name': location_data.get('location_name', '')})
 
-@display_app.route('/build/part/search')
-def build_part_search():
-    name    = request.args.get('name', '')
-    pn      = request.args.get('pn', '')
-    results = web_search_parts(name, pn)
-    return jsonify({'results': results, 'query_name': name, 'query_pn': pn})
 
-@display_app.route('/build/part/add', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def build_part_add():
-    data = request.get_json() or {}
-    part = {
-        'id':          str(uuid.uuid4())[:8],
-        'name':        data.get('name', 'Unknown Part'),
-        'part_number': data.get('part_number', ''),
-        'category':    data.get('category', 'other'),
-        'hp_gain':     float(data.get('hp_gain', 0)),
-        'tq_gain':     float(data.get('tq_gain', 0)),
-        'description': data.get('description', ''),
-        'status':      data.get('status', 'ordered'),
-        'cost':        float(data.get('cost', 0)),
-        'date_added':  datetime.now().strftime('%B %d %Y'),
-        'notes':       data.get('notes', ''),
-    }
-    build_tracker['parts'].append(part)
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-@display_app.route('/build/part/update', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def build_part_update():
-    data   = request.get_json() or {}
-    pid    = data.get('id')
-    part   = next((p for p in build_tracker['parts'] if p.get('id') == pid), None)
-    if not part:
-        return jsonify({'ok': False, 'error': 'Part not found'})
-    for k in ('status', 'hp_gain', 'tq_gain', 'cost', 'notes', 'name', 'part_number'):
-        if k in data:
-            part[k] = float(data[k]) if k in ('hp_gain','tq_gain','cost') else data[k]
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-@display_app.route('/build/part/remove', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def build_part_remove():
-    pid = (request.get_json() or {}).get('id')
-    build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-@display_app.route('/device_tier', methods=['POST'])
-@csrf_required
-def device_tier_endpoint():
-    from flask import request as flask_request
-    data        = flask_request.get_json()
-    fingerprint = data.get('fingerprint', '')
-    tier        = get_device_tier(fingerprint)
-    registered  = fingerprint in trusted_devices
-    name        = trusted_devices.get(fingerprint, {}).get('name', 'Unknown')
-    return jsonify({'tier': tier, 'registered': registered, 'name': name})
 
 
 # ── TIER ROUTES ON MAIN APP (for ngrok remote access) ───
@@ -9592,56 +9490,7 @@ def get_request_tier(request):
     fp = request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
-@display_app.route('/logout', methods=['POST'])
-@csrf_required
-def logout():
-    """Invalidate the current session cookie.
 
-    The token/jti is added to _revoked_tokens so it is rejected immediately even
-    if the client still holds the cookie. Safe to call without a valid session.
-    """
-    from flask import request as _lr, make_response as _mk
-    cookie_val = _lr.cookies.get('archer_auth', '')
-    if cookie_val:
-        try:
-            payload = decode_auth_jwt(cookie_val)
-            jti = payload.get('jti', '')
-            if jti:
-                _revoke_token(jti)
-            log_security('LOGOUT', name=payload.get('name', '?'))
-        except ValueError:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                _revoke_token(parts[2])
-                log_security('LOGOUT', name=parts[1])
-    resp = _mk(jsonify({'ok': True}))
-    resp.delete_cookie('archer_auth')
-    return resp
-
-@display_app.route('/set_vehicle', methods=['POST'])
-@csrf_required
-def set_vehicle():
-    """Record which truck was purchased (tier 1 only).
-
-    Body: {"make": "GMC"|"Chevrolet", "model": "Sierra 2500HD"|"Silverado 2500HD"}
-    Both trucks share the same GMT800 platform, LQ4 engine, 4L80E, and DTC database,
-    so this is purely for display and voice personality — no functional change.
-    """
-    from flask import request as _svr
-    if get_request_tier(_svr) != 1:
-        return jsonify({'error': 'Owner only'}), 403
-    body = _svr.get_json(silent=True) or {}
-    make  = body.get('make',  '').strip()
-    model = body.get('model', '').strip()
-    valid_makes  = {'GMC', 'Chevrolet'}
-    valid_models = {'Sierra 2500HD', 'Silverado 2500HD'}
-    if make not in valid_makes or model not in valid_models:
-        return jsonify({'error': f'make must be one of {valid_makes}; model one of {valid_models}'}), 400
-    vehicle_config['make']  = make
-    vehicle_config['model'] = model
-    save_state()
-    log_security('VEHICLE_SET', name=f'{make} {model}')
-    return jsonify({'ok': True, 'vehicle': get_vehicle_name()})
 
 
 def terminal_access_check(request):
@@ -10489,246 +10338,15 @@ async function submitCode() {{
 </script>
 </body></html>"""
 
-@display_app.route('/registered_devices')
-def registered_devices():
-    """List all registered devices (Tier 1 only)."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required', 'tier': tier}), 403
-    whitelist = load_mac_whitelist()
-    devices = [{'mac': mac, 'tier': info['tier'], 'name': info['name']}
-               for mac, info in whitelist.items()]
-    return jsonify({'devices': devices})
 
 
-@display_app.route('/devices')
-def devices_page():
-    """Tier 1 only — manage registered devices and generate codes."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return f'<html><body style="background:#000;color:#cc0000;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><div style="font-size:32px">🔒</div><div style="font-size:14px;letter-spacing:3px;margin-top:12px">ACCESS DENIED — TIER 1 ONLY</div></div></body></html>', 403
-    whitelist = load_mac_whitelist()
-    cleanup_expired_codes()
-    active_codes = [(c, e) for c, e in one_time_codes.items() if not e['used']]
-    
-    devices_html = ''.join(f"""
-        <div class="device-row">
-          <div>
-            <div class="d-name">{info['name']}</div>
-            <div class="d-meta">Tier {info['tier']} — {mac}</div>
-          </div>
-          <button onclick="removeDevice('{mac}')" class="d-remove">REMOVE</button>
-        </div>""" for mac, info in whitelist.items() if info['tier'] != 1)
 
-    codes_html = ''.join(f"""
-        <div class="code-row">
-          <div>
-            <div class="c-name">{entry['name']} — Tier {entry['tier']}</div>
-            <div class="c-code">{code}</div>
-            <div class="c-meta">Expires in {max(0,int((entry['expires']-__import__('time').time())/3600))}h</div>
-          </div>
-          <button onclick="revokeCode('{code}')" class="d-remove">REVOKE</button>
-        </div>""" for code, entry in active_codes)
 
-    return f"""<!DOCTYPE html>
-<html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Archer — Devices</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;padding:16px;max-width:420px;margin:0 auto}}
-h1{{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:5px;color:#cc0000;margin-bottom:4px}}
-.sub{{font-size:10px;color:#444;letter-spacing:2px;margin-bottom:20px}}
-.section{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:14px;margin-bottom:12px}}
-.section-title{{font-size:9px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px;margin-bottom:10px}}
-.device-row,.code-row{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #111}}
-.device-row:last-child,.code-row:last-child{{border-bottom:none}}
-.d-name,.c-name{{font-size:13px;color:#fff}}
-.d-meta,.c-meta{{font-size:10px;color:#444;margin-top:2px}}
-.c-code{{font-size:20px;color:#cc0000;letter-spacing:4px;margin:3px 0}}
-.d-remove{{background:#1a0000;border:1px solid #330000;color:#cc0000;border-radius:4px;padding:5px 10px;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px}}
-.new-form{{display:flex;flex-direction:column;gap:10px}}
-.input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:13px;outline:none;width:100%}}
-.input:focus{{border-color:#cc0000}}
-select.input{{cursor:pointer}}
-.gen-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%}}
-.result{{background:#001a00;border:1px solid #003300;border-radius:6px;padding:14px;text-align:center;display:none}}
-.result.on{{display:block}}
-.result-code{{font-size:36px;color:#00cc44;letter-spacing:8px;font-weight:bold;margin:6px 0}}
-.result-name{{font-size:11px;color:#00cc44;letter-spacing:2px}}
-.result-exp{{font-size:10px;color:#444;margin-top:4px}}
-.back{{color:#555;text-decoration:none;font-size:10px;letter-spacing:2px;display:inline-block;margin-bottom:16px}}
-.empty{{font-size:11px;color:#333;text-align:center;padding:8px}}
-</style>
-</head><body>
-<a href="/" class="back">← BACK TO ARCHER</a>
-<h1>DEVICES</h1>
-<div class="sub">MANAGE ACCESS — TIER 1 ONLY</div>
-
-<div class="section">
-  <div class="section-title">REGISTERED DEVICES</div>
-  {devices_html if devices_html else '<div class="empty">No devices registered yet</div>'}
-</div>
-
-<div class="section">
-  <div class="section-title">ACTIVE INVITE CODES</div>
-  {codes_html if codes_html else '<div class="empty">No active codes</div>'}
-</div>
-
-<div class="section">
-  <div class="section-title">GENERATE NEW INVITE CODE</div>
-  <div class="new-form">
-    <input class="input" id="new-name" placeholder="Person's name (e.g. Jake)" maxlength="30">
-    <select class="input" id="new-tier">
-      <option value="2">Tier 2 — Passenger</option>
-      <option value="3">Tier 3 — Family</option>
-      <option value="4">Tier 4 — Valet</option>
-    </select>
-    <button class="gen-btn" onclick="generateCode()">GENERATE CODE</button>
-    <div class="result" id="result">
-      <div class="result-name" id="result-name"></div>
-      <div class="result-code" id="result-code"></div>
-      <div class="result-exp">Valid for 24 hours — single use</div>
-      <div style="font-size:10px;color:#444;margin-top:6px">Share this code with them</div>
-    </div>
-  </div>
-</div>
-
-<script>
-async function generateCode() {{
-  const name = document.getElementById('new-name').value.trim();
-  const tier = document.getElementById('new-tier').value;
-  if (!name) {{ alert('Enter a name first'); return; }}
-  const r = await fetch('/generate_code', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{name, tier: parseInt(tier)}})
-  }});
-  const d = await r.json();
-  if (d.code) {{
-    document.getElementById('result-name').textContent = name + ' — Tier ' + tier;
-    document.getElementById('result-code').textContent = d.code;
-    document.getElementById('result').classList.add('on');
-    document.getElementById('new-name').value = '';
-  }}
-}}
-async function removeDevice(mac) {{
-  if (!confirm('Remove ' + mac + '?')) return;
-  await fetch('/deregister_mac', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{mac}})}});
-  location.reload();
-}}
-async function revokeCode(code) {{
-  await fetch('/revoke_code', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code}})}});
-  location.reload();
-}}
-</script>
-</body></html>"""
-
-@display_app.route('/generate_code', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def generate_code_route():
-    """Generate a one-time invite code (Tier 1 only)."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    data = freq.json or {}
-    name = data.get('name', '').strip()
-    inv_tier = data.get('tier', 2)
-    if not name:
-        return jsonify({'success': False, 'error': 'Name required'})
-    code = generate_one_time_code(name, inv_tier)
-    return jsonify({'success': True, 'code': code, 'name': name, 'tier': inv_tier})
-
-@display_app.route('/revoke_code', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def revoke_code():
-    """Revoke an unused invite code — Tier 1 only."""
-    from flask import request as freq
-    ok, _tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required'}), 403
-    data = freq.json or {}
-    code = data.get('code', '')
-    if code in one_time_codes:
-        del one_time_codes[code]
-    return jsonify({'success': True})
 
 
 # ── MASTER SIGN-IN CODE API ──────────────────────────────
-@display_app.route('/sign_in_code/status')
-def sign_in_code_status():
-    """Return master code status and registered devices — Tier 1 only."""
-    _check_master_auto_enable()
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    try:
-        wl = load_mac_whitelist()
-        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
-    except Exception:
-        wl = {}
-        has_tier1 = False
 
-    # Update last_seen for the requesting device's MAC (if known)
-    try:
-        req_mac = get_client_mac(request)
-        if req_mac and req_mac in wl:
-            wl[req_mac]['last_seen'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            save_mac_whitelist(wl)
-    except Exception:
-        pass
 
-    # Build per-tier device counts and devices list
-    tier_counts = {1: 0, 2: 0, 3: 0, 4: 0}
-    devices_list = []
-    for mac, info in wl.items():
-        t = info.get('tier', 0)
-        if t in tier_counts:
-            tier_counts[t] += 1
-        devices_list.append({
-            'mac':           mac,
-            'name':          info.get('name', 'Unknown'),
-            'tier':          t,
-            'registered_at': info.get('registered_at', 'Unknown'),
-            'last_seen':     info.get('last_seen', 'Never'),
-        })
-
-    return jsonify({
-        'success':     True,
-        'enabled':     _master_code_enabled,
-        'code':        _master_code if _master_code_enabled else None,
-        'auto_on':     not has_tier1,
-        'device_count': len(wl),
-        'tier_counts': tier_counts,
-        'devices':     devices_list,
-    })
-
-@display_app.route('/sign_in_code/toggle', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def sign_in_code_toggle():
-    """Toggle master sign-in code on or off — Tier 1 only."""
-    global _master_code_enabled
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    _master_code_enabled = not _master_code_enabled
-    return jsonify({'success': True, 'enabled': _master_code_enabled})
-
-@display_app.route('/sign_in_code/refresh', methods=['POST'])
-@_limiter.limit('5 per minute')
-@csrf_required
-def sign_in_code_refresh():
-    """Generate a new master sign-in code — Tier 1 only."""
-    global _master_code
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    _master_code = str(secrets.randbelow(900000) + 100000)
-    return jsonify({'success': True, 'code': _master_code})
 
 
 # ── TIER NOTIFICATION SYSTEM ────────────────────────────
@@ -10757,90 +10375,10 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
         print(f'[FCM] Tier request push failed: {str(_e)[:60]}')
     return nid
 
-@display_app.route('/notify_tier1', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def notify_tier1():
-    from flask import request as freq
-    # Require at least tier 2 (passenger) — reject unauthenticated/family/valet callers
-    ok, tier = require_tier1(freq)
-    if tier > 2:
-        return jsonify({'error': 'Not authorized'}), 403
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data     = freq.json or {}
-    from_name = data.get('from', 'Passenger')
-    message  = data.get('message', '')
-    speed    = data.get('speed', 0)
-    nid      = add_tier_notification(from_name, message, speed)
-    return jsonify({'ok': True, 'id': nid})
 
-@display_app.route('/tier_notifications')
-def get_tier_notifications():
-    return jsonify({'notifications': list(tier_notifications)})
 
-@display_app.route('/tier_cancel', methods=['POST'])
-@csrf_required
-def tier_cancel():
-    """Tier 2 cancels a pending request — removes it from queue."""
-    from flask import request as freq
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data = freq.json or {}
-    nid  = data.get('id')
-    if nid:
-        tier_responses[nid] = 'cancelled'
-        for n in tier_notifications:
-            if n['id'] == nid:
-                n['status'] = 'cancelled'
-                break
-        print(f'[TIER CANCEL] {nid} cancelled by passenger')
-    return jsonify({'ok': True})
 
-@display_app.route('/tier_respond', methods=['POST'])
-@csrf_required
-def tier_respond():
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required'}), 403
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data     = freq.json or {}
-    nid      = data.get('id')
-    response = data.get('response')  # 'approved' or 'denied'
-    action   = data.get('action', '')
-    if nid and response:
-        tier_responses[nid] = response
-        for n in tier_notifications:
-            if n['id'] == nid:
-                n['status'] = response
-                break
-        # If approved, execute the action
-        if response == 'approved' and action:
-            if 'sport' in action.lower():
-                truck_state['drive_mode'] = 'sport'
-            elif 'comfort' in action.lower():
-                truck_state['drive_mode'] = 'comfort'
-            elif 'eco' in action.lower():
-                truck_state['drive_mode'] = 'eco'
-            elif 'tow' in action.lower():
-                truck_state['drive_mode'] = 'tow'
-            print(f'[TIER RESPOND] {nid} -> {response} ({action})')
-    return jsonify({'ok': True})
 
-@display_app.route('/tier_response_status')
-def tier_response_status():
-    from flask import request as freq
-    nid = freq.args.get('id')
-    if not nid:
-        return jsonify({'status': 'unknown'})
-    status = tier_responses.get(nid, 'unknown')
-    # Find the notification for context
-    for n in tier_notifications:
-        if n['id'] == nid:
-            return jsonify({'status': status, 'message': n['message'], 'from': n['from']})
-    return jsonify({'status': status})
 
 
 # ── SPOTIFY INTEGRATION ─────────────────────────────────
@@ -12396,106 +11934,17 @@ def archer_os_status():
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── GEOFENCE ─────────────────────────────────────────────
-@display_app.route('/geofence/add', methods=['POST'])
-@csrf_required
-def geofence_add():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    data   = request.get_json() or {}
-    name   = data.get('name', '').strip()
-    lat    = data.get('lat')
-    lon    = data.get('lon')
-    radius = float(data.get('radius_miles', 0.5))
-    if not name or lat is None or lon is None:
-        return jsonify({'error': 'name, lat, and lon required'}), 400
-    msg = add_geofence(name, float(lat), float(lon), radius)
-    return jsonify({'ok': True, 'msg': msg, 'count': len(geofences)})
 
-@display_app.route('/geofence/list')
-def geofence_list():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({'geofences': geofences, 'count': len(geofences), 'inside': list(_geofence_inside)})
 
-@display_app.route('/geofence/remove', methods=['POST'])
-@csrf_required
-def geofence_remove():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    name = (request.get_json() or {}).get('name', '')
-    before = len(geofences)
-    geofences[:] = [f for f in geofences if f['name'] != name]
-    save_state()
-    removed = before - len(geofences)
-    return jsonify({'ok': True, 'removed': removed, 'count': len(geofences)})
 
 # ── REMOTE START / STOP ───────────────────────────────────
-@display_app.route('/remote/start', methods=['POST'])
-@csrf_required
-def remote_start_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = remote_start_engine()
-    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg or 'Starting.'})
 
-@display_app.route('/remote/stop', methods=['POST'])
-@csrf_required
-def remote_stop_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = remote_stop_engine()
-    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg})
 
-@display_app.route('/remote/status')
-def remote_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({
-        'status':        remote_start['status'],
-        'runtime_mins':  round(remote_start['runtime_mins'], 1),
-        'auto_off_mins': remote_start['auto_off_mins'],
-        'started_at':    remote_start['started_at'],
-        'warm_temp':     remote_start['warm_temp'],
-        'oil_temp':      truck_state.get('oil_temp'),
-    })
 
 # ── COMPUSTAR ─────────────────────────────────────────────
-@display_app.route('/compustar/arm', methods=['POST'])
-@csrf_required
-def compustar_arm_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({'ok': True, 'msg': arm_compustar(), 'armed': compustar['armed']})
 
-@display_app.route('/compustar/disarm', methods=['POST'])
-@csrf_required
-def compustar_disarm_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({'ok': True, 'msg': disarm_compustar(), 'armed': compustar['armed']})
 
-@display_app.route('/compustar/trigger', methods=['POST'])
-@csrf_required
-def compustar_trigger_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    ttype = (request.get_json() or {}).get('type', 'unknown')
-    compustar_trigger(ttype)
-    return jsonify({'ok': True, 'triggered': ttype, 'log_count': len(compustar['trigger_log'])})
 
-@display_app.route('/compustar/status')
-def compustar_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({
-        'armed':        compustar['armed'],
-        'disarmed':     compustar['disarmed'],
-        'shock_sens':   compustar['shock_sens'],
-        'tilt_sens':    compustar['tilt_sens'],
-        'panic_active': compustar['panic_active'],
-        'last_trigger': compustar['last_trigger'],
-        'trigger_count': len(compustar['trigger_log']),
-    })
 
 # ── PANIC MODE (lockdown) ROUTE ───────────────────────────
 def _is_tailscale_or_loopback(remote_addr: str) -> bool:
@@ -12549,204 +11998,33 @@ def panic_activate_route():
     return jsonify(result)
 
 # ── AMBIENT LIGHTING ──────────────────────────────────────
-@display_app.route('/ambient/set', methods=['POST'])
-@csrf_required
-def ambient_set_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data       = request.get_json() or {}
-    zone       = data.get('zone', 'all')
-    on         = bool(data.get('on', True))
-    color      = data.get('color')
-    brightness = data.get('brightness')
-    msg = set_ambient(zone, on, color, brightness)
-    return jsonify({'ok': True, 'msg': msg, 'state': ambient_lighting})
 
-@display_app.route('/ambient/mode', methods=['POST'])
-@csrf_required
-def ambient_mode_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    mode = (request.get_json() or {}).get('mode', 'off')
-    msg  = ambient_mode(mode)
-    return jsonify({'ok': True, 'msg': msg, 'mode': ambient_lighting['mode']})
 
-@display_app.route('/ambient/status')
-def ambient_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({'zones': ambient_lighting['zones'], 'mode': ambient_lighting['mode'], 'master': ambient_lighting['master']})
 
 # ── HELIX DSP ─────────────────────────────────────────────
-@display_app.route('/helix/preset', methods=['POST'])
-@csrf_required
-def helix_preset_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    preset = (request.get_json() or {}).get('preset', '')
-    msg    = set_helix_preset(preset)
-    return jsonify({'ok': True, 'msg': msg, 'preset': helix_dsp['preset']})
 
-@display_app.route('/helix/sub', methods=['POST'])
-@csrf_required
-def helix_sub_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    pct = (request.get_json() or {}).get('level', helix_dsp['sub_level'])
-    msg = set_sub_level(pct)
-    return jsonify({'ok': True, 'msg': msg, 'sub_level': helix_dsp['sub_level']})
 
-@display_app.route('/helix/status')
-def helix_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({**helix_dsp, 'presets': HELIX_PRESETS})
 
 # ── TRAILER ───────────────────────────────────────────────
-@display_app.route('/trailer/connect', methods=['POST'])
-@csrf_required
-def trailer_connect_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    data   = request.get_json() or {}
-    ttype  = data.get('type', '')
-    weight = data.get('weight', 0)
-    msg    = connect_trailer(ttype, weight)
-    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
 
-@display_app.route('/trailer/disconnect', methods=['POST'])
-@csrf_required
-def trailer_disconnect_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = disconnect_trailer()
-    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
 
-@display_app.route('/trailer/status')
-def trailer_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify(trailer)
 
 # ── PARKING MODE ──────────────────────────────────────────
-@display_app.route('/parking/activate', methods=['POST'])
-@csrf_required
-def parking_activate_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    location = (request.get_json() or {}).get('location', '')
-    msg      = activate_parking_mode(location)
-    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
 
-@display_app.route('/parking/deactivate', methods=['POST'])
-@csrf_required
-def parking_deactivate_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = deactivate_parking_mode()
-    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
 
-@display_app.route('/parking/status')
-def parking_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({**parking_mode, 'surveillance_armed': surveillance.get('armed', False)})
 
 # ── CRASH DETECTION ───────────────────────────────────────
-@display_app.route('/crash/events')
-def crash_events_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({
-        'enabled':    crash_detection['enabled'],
-        'threshold_g': crash_detection['threshold_g'],
-        'last_event': crash_detection['last_event'],
-        'events':     crash_detection['events'][-20:],
-        'count':      len(crash_detection['events']),
-    })
 
-@display_app.route('/crash/clear', methods=['POST'])
-@csrf_required
-def crash_clear_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    crash_detection['events']     = []
-    crash_detection['last_event'] = None
-    return jsonify({'ok': True})
 
 # ── RIVALRY ───────────────────────────────────────────────
-@display_app.route('/rival/set', methods=['POST'])
-@csrf_required
-def rival_set_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data = request.get_json() or {}
-    msg  = set_rival(data.get('name', ''), data.get('et'), data.get('mph'))
-    return jsonify({'ok': True, 'msg': msg, 'rivalry': rivalry})
 
-@display_app.route('/rival/status')
-def rival_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify(rivalry)
 
-@display_app.route('/rival/reset', methods=['POST'])
-@csrf_required
-def rival_reset_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    rivalry.update({'rival': '', 'rival_et': None, 'rival_mph': None, 'active': False, 'wins': 0, 'losses': 0, 'sessions': []})
-    save_state()
-    return jsonify({'ok': True, 'rivalry': rivalry})
 
 # ── VOICE NAVIGATION ──────────────────────────────────────
-@display_app.route('/navigate/start', methods=['POST'])
-@csrf_required
-def navigate_start_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data      = request.get_json() or {}
-    dest_name = data.get('dest_name', 'destination')
-    dest_lat  = data.get('dest_lat')
-    dest_lon  = data.get('dest_lon')
-    steps     = data.get('steps', [])
-    if dest_lat is None or dest_lon is None:
-        return jsonify({'error': 'dest_lat and dest_lon required'}), 400
-    msg = start_navigation(dest_name, dest_lat, dest_lon, steps)
-    return jsonify({'ok': True, 'msg': msg, 'steps': len(steps)})
 
-@display_app.route('/navigate/stop', methods=['POST'])
-@csrf_required
-def navigate_stop_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    msg = stop_navigation()
-    return jsonify({'ok': True, 'msg': msg})
 
-@display_app.route('/navigate/status')
-def navigate_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    idx   = nav_session['step_index']
-    steps = nav_session['steps']
-    return jsonify({
-        'active':       nav_session['active'],
-        'dest_name':    nav_session['dest_name'],
-        'dest_lat':     nav_session['dest_lat'],
-        'dest_lon':     nav_session['dest_lon'],
-        'step_index':   idx,
-        'total_steps':  len(steps),
-        'current_step': steps[idx] if idx < len(steps) else None,
-        'eta_mins':     nav_session['eta_mins'],
-        'started_at':   nav_session['started_at'],
-    })
 
 # ── HEAT SOAK ────────────────────────────────────────────
-@display_app.route('/heat_soak/status')
-def heat_soak_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({**heat_soak, 'boost_cap_active': heat_soak['heat_soak_risk'] == 'critical', 'boost_cap_psi': _HEAT_SOAK_BOOST_CAP})
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────
 def _obd_cmd(ser, cmd, timeout=2.0):

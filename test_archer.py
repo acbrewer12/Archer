@@ -1171,6 +1171,30 @@ class TestDeviceTierEndpoint:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 16b. No shadowed routes — regression coverage for a real, recurring bug:
+# archer.py accumulated 53 direct @display_app.route copies of routes that
+# were also registered by a blueprint (found via url_map inspection during
+# the Wear OS /remote/start fix, then audited and removed entirely). Every
+# one of the 53 was dead code — blueprints get registered early (line
+# ~280), so the blueprint's copy always won Werkzeug's dispatch — but a
+# couple had quietly drifted from their live counterpart (one was even
+# missing a tier check, harmless only because it was unreachable). This
+# guards against the pattern coming back, generically, not just for the
+# specific paths already found.
+# ═══════════════════════════════════════════════════════════════
+class TestNoShadowedRoutes:
+    def test_no_duplicate_path_method_pairs(self):
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for rule in archer.display_app.url_map.iter_rules():
+            methods = tuple(sorted(m for m in (rule.methods or [])
+                                    if m not in ('HEAD', 'OPTIONS')))
+            groups[(rule.rule, methods)].append(rule.endpoint)
+        duplicates = {k: v for k, v in groups.items() if len(v) > 1}
+        assert not duplicates, f"shadowed route(s) found: {duplicates}"
+
+
+# ═══════════════════════════════════════════════════════════════
 # 17. /specs endpoint
 # ═══════════════════════════════════════════════════════════════
 class TestSpecsEndpoint:
