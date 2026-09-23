@@ -349,11 +349,16 @@ class TestVoiceCommand:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4. /register_device — tier capping
+# 4. /register_device — Tier 1 only (blueprints/auth.py's actual gate:
+# _panic_lockdown_active() check, then require_tier1(), *then* the tier-cap
+# logic these tests exist to cover). The route 403s "Tier 1 required" for
+# anyone else, before ever looking at fingerprint/tier — the previous
+# version of these tests called it as the unauthenticated global `client`
+# and were actually exercising that 403 path by accident, not tier capping.
 # ═══════════════════════════════════════════════════════════════
 class TestRegisterDevice:
     def test_tier_capped_at_2(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-001',
             'name': 'TestDevice',
             'tier': 1,
@@ -363,7 +368,7 @@ class TestRegisterDevice:
         assert d['tier'] == 2
 
     def test_tier_4_accepted(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-002',
             'name': 'Valet',
             'tier': 4,
@@ -373,7 +378,7 @@ class TestRegisterDevice:
         assert d['tier'] == 4
 
     def test_tier_above_4_capped(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-003',
             'name': 'Hacker',
             'tier': 99,
@@ -382,7 +387,7 @@ class TestRegisterDevice:
         assert d['tier'] == 4
 
     def test_missing_fingerprint_rejected(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'name': 'NoFP',
             'tier': 2,
         })
@@ -390,7 +395,7 @@ class TestRegisterDevice:
         assert d['ok'] is False
 
     def test_tier_2_accepted(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-pass',
             'name': 'Passenger',
             'tier': 2,
@@ -400,13 +405,36 @@ class TestRegisterDevice:
         assert d['tier'] == 2
 
     def test_name_preserved(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-name',
             'name': 'Alice',
             'tier': 3,
         })
         d = json.loads(r.data)
         assert d['name'] == 'Alice'
+
+    def test_non_owner_rejected(self):
+        """The actual gate itself, tested directly rather than just worked
+        around — confirms this route really is Tier 1 only, not just that
+        the other tests happen to authenticate as Tier 1."""
+        r = _authed_client(2).post('/register_device', json={
+            'fingerprint': 'test-fp-tier2caller',
+            'name': 'ShouldFail',
+            'tier': 2,
+        })
+        assert r.status_code == 403
+        d = json.loads(r.data)
+        assert d['ok'] is False
+
+    def test_unauthenticated_rejected(self):
+        r = client.post('/register_device', json={
+            'fingerprint': 'test-fp-noauth',
+            'name': 'ShouldFail',
+            'tier': 2,
+        })
+        assert r.status_code == 403
+        d = json.loads(r.data)
+        assert d['ok'] is False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1132,7 +1160,11 @@ class TestDeviceTierEndpoint:
         assert 'name' in d
 
     def test_known_device_is_registered(self):
-        client.post('/register_device', json={'fingerprint': 'known-fp-99', 'name': 'Me', 'tier': 2})
+        # /register_device is Tier 1 only (see TestRegisterDevice) — the
+        # unauthenticated global `client` used here previously never
+        # actually registered anything, so this was really testing that an
+        # unregistered fingerprint reports unregistered, not the field name.
+        _authed_client(1).post('/register_device', json={'fingerprint': 'known-fp-99', 'name': 'Me', 'tier': 2})
         r = client.post('/device_tier', json={'fingerprint': 'known-fp-99'})
         d = json.loads(r.data)
         assert d['registered'] is True
