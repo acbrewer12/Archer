@@ -238,6 +238,22 @@ as Discord), then confirm `/vstatus` returns different content to a Tier 1
 vs. Tier 3 user, and that a crash alert's buttons actually work, end to
 end, in a real workspace.
 
+## Status dashboard
+
+`status_dashboard.py` (this folder) — a lightweight live terminal view of
+archer.service, the AI chain's actual last-used provider (parsed from
+archer.service's own journal, not from config — which provider really
+answered the last real request), caddy, disk space, and Restic's last
+real snapshot time. Run as the `archer` user, no sudo needed:
+
+```
+python3 self-host/status_dashboard.py            # live, refreshes every 5s
+python3 self-host/status_dashboard.py --once     # one frame, then exit
+```
+
+Needs the `rich` package (`pip install rich`) — not otherwise a
+dependency of archer.py itself, just this one standalone script.
+
 ## Real open questions — resolved against the actual source
 
 The original draft of this handoff flagged three things as unconfirmed. Checked directly against `archer.py`:
