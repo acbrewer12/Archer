@@ -277,10 +277,16 @@ def csrf_token_endpoint():
 @display_app.after_request
 def _refresh_auth_cookie(response):
     """Rolling session: re-stamp archer_auth cookie on every authenticated
-    request so active users never get logged out while idle users do (30 days)."""
+    request so active users never get logged out while idle users do (30 days).
+
+    Skipped when the view already set or deleted the cookie (login, logout):
+    re-stamping the request's old value would append a second Set-Cookie, and
+    the browser keeps the last one — undoing the logout or the new login."""
     from flask import request as _r
     cookie = _r.cookies.get('archer_auth', '')
-    if cookie and response.status_code < 400:
+    view_set_it = any(h.startswith('archer_auth=')
+                      for h in response.headers.getlist('Set-Cookie'))
+    if cookie and response.status_code < 400 and not view_set_it:
         response.set_cookie('archer_auth', cookie, max_age=86400 * 30,
                             httponly=True, samesite='Lax', secure=_USE_TLS)
     return response

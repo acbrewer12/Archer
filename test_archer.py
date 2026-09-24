@@ -1655,6 +1655,34 @@ class TestLogout:
         assert r.status_code == 200
 
 
+class TestAuthCookieRefresh:
+    """The rolling refresh in after_request must not undo a cookie change the
+    view itself made. Checked via the client's cookie jar, not the first
+    Set-Cookie header — the refresh appends a second header, and the browser
+    keeps the last one."""
+
+    def test_refresh_restamps_cookie(self):
+        c = _authed_client(2, 'Khloe')
+        r = c.get('/csrf_token')
+        assert any(h.startswith('archer_auth=') and 'Max-Age=2592000' in h
+                   for h in r.headers.getlist('Set-Cookie'))
+
+    def test_logout_leaves_no_cookie(self):
+        c = _authed_client(1, 'Ayden')
+        c.post('/logout')
+        assert c.get_cookie('archer_auth') is None
+
+    def test_login_replaces_stale_cookie(self):
+        stale = _make_cookie(1, 'Ayden')
+        base = archer.display_app.test_client()
+        base.set_cookie('archer_auth', stale)
+        with patch.object(archer, 'verify_owner_pin', return_value=(True, None)):
+            r = _CsrfClient(base).post('/login', json={'pin': '000000'})
+        assert r.status_code == 200
+        held = base.get_cookie('archer_auth')
+        assert held is not None and held.value != stale
+
+
 # ═══════════════════════════════════════════════════════════════
 # 34. Gatekeeper — handle_connection with timestamp replay protection
 # ═══════════════════════════════════════════════════════════════
