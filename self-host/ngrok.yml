@@ -1,0 +1,26 @@
+# ngrok agent config — reach the whole app from the internet without Tailscale.
+#
+# Install to /etc/ngrok.yml, owned by root, mode 600 (it holds the authtoken),
+# then: sudo ngrok service install --config /etc/ngrok.yml && sudo ngrok service start
+#
+# The upstream is archer.py directly, NOT Caddy, on purpose. ngrok appends
+# the real visitor address as the LAST X-Forwarded-For value, and archer.py's
+# ProxyFix(x_for=1) reads exactly that one value, so remote_addr is the real
+# visitor. A forged "127.0.0.1, ..." prefix is ignored. Routing through Caddy
+# instead would replace that last value with 127.0.0.1 (ngrok's own address),
+# and every internet visitor would pass the loopback exemptions.
+#
+# Nothing else gates this endpoint: the owner PIN and the master/invite codes
+# share one lockout (5 misses, 15 minutes, across every address). See
+# _LOGIN_MAX_FAILS in archer.py.
+#
+# Replace every placeholder below (marked with <>) with real values.
+version: 3
+agent:
+  authtoken: <your-ngrok-authtoken>
+endpoints:
+  - name: archer
+    # Free accounts get one fixed dev domain, shown on the ngrok dashboard.
+    url: https://<your-dev-domain>
+    upstream:
+      url: http://127.0.0.1:7860
