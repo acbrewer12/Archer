@@ -9,7 +9,6 @@ import urllib.request
 import functools
 from datetime import datetime
 import asyncio
-import edge_tts
 import tempfile
 import queue
 import platform as _platform
@@ -18,6 +17,13 @@ import collections
 import hmac
 import hashlib
 import secrets
+import shutil
+import ssl
+
+# One SSL context for every outbound HTTPS call. urlopen's default builds a new
+# context per connection, re-parsing the whole CA bundle each time (~25ms).
+urllib.request.install_opener(urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ssl.create_default_context())))
 
 _USE_TLS = os.environ.get('USE_TLS', 'false').lower() == 'true'
 
@@ -109,20 +115,26 @@ _FORGED_KW       = ('forged', 'forged internals', 'cp piston', 'eagle rod', 'h-b
 _TUNE_KW         = ('hp tuners', 'efilive', 'custom tune', 'e85 tune')
 _AIR_SUSP_KW     = ('air suspension', 'air ride', 'air bag', 'accuair', 'air lift', 'viair')
 
+def _installed_part_names():
+    return [p['name'].lower() for p in build_tracker['parts']
+            if p.get('status') == 'installed']
+
+def _names_have(names, keywords):
+    return any(kw in name for name in names for kw in keywords)
+
 def build_has(*keywords):
     """True if any installed part name contains any of the given keywords."""
-    installed = [p['name'].lower() for p in build_tracker['parts']
-                 if p.get('status') == 'installed']
-    return any(kw in name for name in installed for kw in keywords)
+    return _names_have(_installed_part_names(), keywords)
 
 def get_build_caps():
     """Current capability flags derived from installed parts."""
+    names = _installed_part_names()  # once for all five flags, not once per flag
     return {
-        'supercharged':   build_has(*_ENGINE_SWAP_KW),
-        'ethanol_sensor': build_has(*_ETHANOL_KW),
-        'forged':         build_has(*_FORGED_KW),
-        'custom_tune':    build_has(*_TUNE_KW),
-        'air_suspension': build_has(*_AIR_SUSP_KW),
+        'supercharged':   _names_have(names, _ENGINE_SWAP_KW),
+        'ethanol_sensor': _names_have(names, _ETHANOL_KW),
+        'forged':         _names_have(names, _FORGED_KW),
+        'custom_tune':    _names_have(names, _TUNE_KW),
+        'air_suspension': _names_have(names, _AIR_SUSP_KW),
     }
 
 def get_build_phase():
@@ -277,10 +289,16 @@ def csrf_token_endpoint():
 @display_app.after_request
 def _refresh_auth_cookie(response):
     """Rolling session: re-stamp archer_auth cookie on every authenticated
-    request so active users never get logged out while idle users do (30 days)."""
+    request so active users never get logged out while idle users do (30 days).
+
+    Skipped when the view already set or deleted the cookie (login, logout):
+    re-stamping the request's old value would append a second Set-Cookie, and
+    the browser keeps the last one — undoing the logout or the new login."""
     from flask import request as _r
     cookie = _r.cookies.get('archer_auth', '')
-    if cookie and response.status_code < 400:
+    view_set_it = any(h.startswith('archer_auth=')
+                      for h in response.headers.getlist('Set-Cookie'))
+    if cookie and response.status_code < 400 and not view_set_it:
         response.set_cookie('archer_auth', cookie, max_age=86400 * 30,
                             httponly=True, samesite='Lax', secure=_USE_TLS)
     return response
@@ -407,15 +425,16 @@ connected_clients = {}  # session_id -> {ip, agent, connected_at}
 client_lock       = threading.Lock()
 
 def log_client_connect(session_id, ip, agent):
-    already_seen = any(c['ip'] == ip for c in connected_clients.values())
     with client_lock:
+        # Scanned under the lock: other threads add and evict clients.
+        already_seen = any(c['ip'] == ip for c in connected_clients.values())
         connected_clients[session_id] = {
             'ip':           ip,
             'agent':        agent,
             'connected_at': datetime.now().strftime('%I:%M %p'),
             'last_seen':    time.time(),
         }
-    count = len(connected_clients)
+        count = len(connected_clients)
     if not already_seen:
         print(f"[DISPLAY] Device connected — {ip} — {count} total connected")
 
@@ -477,6 +496,9 @@ async def _speak_async(text, alert=False):
             )
             return
 
+        # Imported here, not at the top: it pulls in aiohttp (~40% of startup
+        # import time) and the Pi's Piper path above never needs it.
+        import edge_tts
         voice       = "en-US-ChristopherNeural"
         communicate = edge_tts.Communicate(text, voice, rate="-8%", pitch="-6Hz")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
@@ -484,8 +506,7 @@ async def _speak_async(text, alert=False):
         await communicate.save(tmp_path)
         broadcast_audio(tmp_path)
         if _platform.system() == 'Linux':
-            result = subprocess.run(['which', 'mpg123'], capture_output=True)
-            if result.returncode == 0:
+            if shutil.which('mpg123'):
                 subprocess.run(['mpg123', '-q', tmp_path], capture_output=True)
         else:
             import ctypes
@@ -713,6 +734,7 @@ def get_vehicle_name(style='full'):
     return 'SIERRA/SILVERADO 2500HD' if style == 'header' else 'Sierra/Silverado 2500HD'
 
 def save_state():
+    drive_score, drive_grade, _ = calculate_drive_score()
     data = {
         'personal_bests':    personal_bests,
         'music_memories':    music_state['song_memories'],
@@ -762,8 +784,8 @@ def save_state():
         'record_best_et':    record_wall['best_et'],
         'record_best_060':   record_wall['best_060'],
         'weather_alert':     any(v for k,v in weather_alerts.items() if k != 'last_check' and v),
-        'drive_score':       calculate_drive_score()[0],
-        'drive_grade':       calculate_drive_score()[1],
+        'drive_score':       drive_score,
+        'drive_grade':       drive_grade,
         'show_running':      show_sequence['running'],
         'openclaw_connected': openclaw['connected'],
         'openclaw_enabled':  openclaw['enabled'],
@@ -5361,15 +5383,13 @@ def weather_alert_monitor():
 # ══════════════════════════════════════════
 # BLUETOOTH PROFILE AUTO-DETECTION
 # ══════════════════════════════════════════
-bluetooth_profiles = {}   # mac -> profile_key
-
 def link_bluetooth(mac, profile_key):
-    bluetooth_profiles[mac.upper()] = profile_key
+    bluetooth_devices[mac.upper()] = profile_key
     save_state()
     return f'Bluetooth {mac} linked to {profile_key} profile.'
 
 def check_bluetooth_device(mac):
-    key = bluetooth_profiles.get(mac.upper())
+    key = bluetooth_devices.get(mac.upper())
     if key and key in driver_profiles:
         return key
     return None
@@ -9678,14 +9698,27 @@ _revoked_tokens: collections.OrderedDict = collections.OrderedDict()
 # Revoked name+tier combinations: {'Name:tier': revoked_at_unix_time}
 # JWT tokens issued BEFORE this time for that name/tier are rejected.
 _revoked_names: dict = {}
+# Serializes every mutation of _revoked_tokens. Membership checks don't need it.
+_revoked_lock = threading.Lock()
 
 def _revoke_token(token: str):
     """Mark a session token as revoked for 30 days."""
-    if token in _revoked_tokens:
-        _revoked_tokens.move_to_end(token)
-    _revoked_tokens[token] = time.time() + 86400 * 30
-    if len(_revoked_tokens) > _MAX_REVOKED:
-        _revoked_tokens.popitem(last=False)  # evict oldest
+    with _revoked_lock:
+        if token in _revoked_tokens:
+            _revoked_tokens.move_to_end(token)
+        _revoked_tokens[token] = time.time() + 86400 * 30
+        if len(_revoked_tokens) > _MAX_REVOKED:
+            _revoked_tokens.popitem(last=False)  # evict oldest
+
+def _prune_revoked_tokens(now):
+    """Drop expired entries. They are always at the front: every expiry is
+    revocation time + 30 days, and re-revoking moves the entry to the end."""
+    with _revoked_lock:
+        while _revoked_tokens:
+            t, exp = next(iter(_revoked_tokens.items()))
+            if exp >= now:
+                break
+            del _revoked_tokens[t]
 
 def _revoke_by_name(name: str, tier: int):
     """Revoke all sessions for a given name+tier combination."""
@@ -9758,9 +9791,7 @@ def get_request_tier(request):
             jti  = payload.get('jti', '')
             name = payload.get('name', '')
             now  = time.time()
-            for t in list(_revoked_tokens):
-                if _revoked_tokens[t] < now:
-                    del _revoked_tokens[t]
+            _prune_revoked_tokens(now)
             if jti and jti in _revoked_tokens:
                 return 5
             revoked_at = _revoked_names.get(f'{name}:{tier}', 0)
@@ -9976,6 +10007,18 @@ def system_health_api():
         'failures': system_health['failures'][-10:],
     })
 
+@functools.lru_cache(maxsize=None)
+def _git_short_hash():
+    """Commit of the running code — fixed for the life of the process, so the
+    git subprocess runs once rather than on every /health poll."""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            stderr=subprocess.DEVNULL, timeout=2
+        ).decode().strip()
+    except Exception:
+        return 'unknown'
+
 @display_app.route('/health')
 def health_endpoint():
     """Comprehensive system health snapshot consumed by archer_init.html fetchVersionInfo().
@@ -10020,16 +10063,7 @@ def health_endpoint():
 
     # Build metadata from env / git
     build_ts  = os.environ.get('ARCHER_BUILD_TS', '')
-    git_hash  = os.environ.get('ARCHER_GIT_HASH', '')
-    if not git_hash:
-        try:
-            import subprocess as _sp
-            git_hash = _sp.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                stderr=_sp.DEVNULL, timeout=2
-            ).decode().strip()
-        except Exception:
-            git_hash = 'unknown'
+    git_hash  = os.environ.get('ARCHER_GIT_HASH', '') or _git_short_hash()
 
     # Overall status determination
     issues = get_system_status()
@@ -11231,8 +11265,25 @@ def spotify_refresh():
         print(f'[SPOTIFY] Refresh failed: {e}')
         return False
 
+# me/player is polled by every client's /spotify/status (4s) and the DJ loop
+# (6s). Pollers within the TTL share one call; any control call drops the
+# shared result so the next poll reflects the change.
+_SPOTIFY_PLAYER_TTL   = 2.0
+_spotify_player_cache = {'ts': 0.0, 'data': None}
+
 def spotify_api(method, endpoint, data=None):
     """Make an authenticated Spotify API call."""
+    if method != 'GET':
+        _spotify_player_cache['ts'] = 0.0
+    elif endpoint == 'me/player':
+        if time.time() - _spotify_player_cache['ts'] < _SPOTIFY_PLAYER_TTL:
+            return _spotify_player_cache['data']
+        result = _spotify_request(method, endpoint)
+        _spotify_player_cache.update(ts=time.time(), data=result)
+        return result
+    return _spotify_request(method, endpoint, data)
+
+def _spotify_request(method, endpoint, data=None):
     if time.time() > spotify_tokens['expires_at']:
         if not spotify_refresh():
             return None
@@ -11341,10 +11392,13 @@ def display_data_endpoint():
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
     agent       = flask_request.headers.get('User-Agent', '')[:50]
-    if session_id not in connected_clients:
+    # One lookup: the timeout monitor can evict the entry between an
+    # `in` check and an index, which raised KeyError (HTTP 500).
+    client = connected_clients.get(session_id)
+    if client is None:
         log_client_connect(session_id, ip, agent)
     else:
-        connected_clients[session_id]['last_seen'] = time.time()
+        client['last_seen'] = time.time()
     d = get_display_data()
     d['spike_history']     = spike_history
     d['connected_clients'] = len(connected_clients)
@@ -11419,6 +11473,20 @@ def audio_stream():
     )
 
 # ── TIER-SPECIFIC HTML GENERATORS ───────────────────────
+_page_cache = {}  # path -> (mtime_ns, text)
+
+def _read_page(path):
+    """Page file contents, re-read only when the file changes on disk.
+    Decoding the 241 KB tier 1 page cost ~0.45 ms on every load."""
+    mtime = os.stat(path).st_mtime_ns
+    hit = _page_cache.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    _page_cache[path] = (mtime, text)
+    return text
+
 def get_tier_html(tier, name=None):
     """Returns tier HTML — loads from file or falls back to basic."""
     import os
@@ -11429,20 +11497,17 @@ def get_tier_html(tier, name=None):
     }
     if tier == 1:
         if os.path.exists('archer_tier1.html'):
-            with open('archer_tier1.html', 'r', encoding='utf-8') as f:
-                return f.read()
+            return _read_page('archer_tier1.html')
         return DISPLAY_HTML.replace("'profile-name'>AYDEN", "'profile-name' style='color:#cc0000'>AYDEN ★")
     
     html_file = tier_files.get(tier)
     if html_file and os.path.exists(html_file):
-        with open(html_file, 'r', encoding='utf-8') as f:
-            html = f.read()
+        html = _read_page(html_file)
         if name and tier == 2:
             html = html.replace("const passengerName = 'Khloe'", f"const passengerName = '{name}'")
-        # Inject resolved vehicle name (falls back to generic until purchase)
+        # Inject resolved vehicle name (falls back to generic until purchase).
+        # This also covers the 'ARCHER AI — 2006 GMC SIERRA 2500HD' title.
         html = html.replace('2006 GMC SIERRA 2500HD', get_vehicle_name('header'))
-        html = html.replace('ARCHER AI — 2006 GMC SIERRA 2500HD',
-                            f'ARCHER AI — {get_vehicle_name("header")}')
         return html
     
     # Fallback
@@ -11629,18 +11694,17 @@ def boot_status():
             v_status, v_detail = 'warn', 'web speech fallback'
     all_checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
 
-    # 8. Memory store
-    mem_ok = os.path.exists(SAVE_FILE)
+    # 8. Memory store — the SQLite DB save_state() writes, not the legacy
+    # archer_memory.json (which ships in the repo and so always "looked" fine).
     try:
-        if mem_ok:
-            with open(SAVE_FILE, 'r') as _f:
-                _json = json.load(_f)
-            mem_detail = f"{len(_json)} keys"
-            mem_status = 'ok'
+        from db import db_key_count
+        n_keys = db_key_count()
+        if n_keys:
+            mem_status, mem_detail = 'ok', f'{n_keys} keys'
         else:
             mem_status, mem_detail = 'warn', 'will create on first save'
     except Exception:
-        mem_status, mem_detail = 'fail', 'corrupt save file'
+        mem_status, mem_detail = 'fail', 'database unreadable'
     all_checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
 
     # 9. Spotify (optional)
@@ -11918,6 +11982,13 @@ def service_history_post():
     return jsonify({'error': 'Unknown action'}), 400
 
 
+# Third-party rows for /weather/compare/data. Each fetch fans out to ~10 APIs
+# (~750ms) on an unauthenticated endpoint, so views within the TTL at the same
+# spot (~1km) share one fetch. Archer's own row is always read live.
+_WX_COMPARE_TTL   = 120
+_wx_compare_cache = {'key': None, 'ts': 0.0, 'results': []}
+_wx_compare_lock  = threading.Lock()
+
 @display_app.route('/weather/compare/data')
 def weather_compare_data():
     """Fetch current conditions from multiple APIs in parallel and return comparison JSON."""
@@ -11926,9 +11997,12 @@ def weather_compare_data():
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
     hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+    key = (round(lat, 2), round(lon, 2))
+    cached = (_wx_compare_cache['key'] == key
+              and time.time() - _wx_compare_cache['ts'] < _WX_COMPARE_TTL)
 
     # Ensure NWS URLs are resolved (may be None if get_weather()'s init failed at startup)
-    if not _nws_forecast_url or not _nws_station_url:
+    if not cached and (not _nws_forecast_url or not _nws_station_url):
         try:
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
@@ -12200,18 +12274,24 @@ def weather_compare_data():
         ('7timer.info (aggregator)',   lambda: _fetch_7timer()),
     ]
 
-    other_results = []
-    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(fn): name for name, fn in sources}
-        for fut, name in futures.items():
-            try:
-                temp, cond = fut.result(timeout=10)
-                other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
-            except Exception as e:
-                other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+    with _wx_compare_lock:
+        if (_wx_compare_cache['key'] == key
+                and time.time() - _wx_compare_cache['ts'] < _WX_COMPARE_TTL):
+            other_results = _wx_compare_cache['results']
+        else:
+            other_results = []
+            with _cf.ThreadPoolExecutor(max_workers=10) as ex:
+                futures = {ex.submit(fn): name for name, fn in sources}
+                for fut, name in futures.items():
+                    try:
+                        temp, cond = fut.result(timeout=10)
+                        other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+                    except Exception as e:
+                        other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
 
-    order = [s[0] for s in sources]
-    other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+            order = [s[0] for s in sources]
+            other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+            _wx_compare_cache.update(key=key, ts=time.time(), results=other_results)
     results = [archer_result] + other_results
 
     return jsonify({'results': results, 'lat': lat, 'lon': lon,
@@ -13305,14 +13385,22 @@ def main():
 
     load_state()
 
-    # Export DTC database to JSON so external tools can reference it
+    # Export DTC database to JSON so external tools can reference it — only
+    # when it differs, so a normal boot doesn't rewrite the same file.
     try:
-        with open('dtc_codes.json', 'w') as _dtc_f:
-            json.dump(
-                [{'code': k, 'description': v[0], 'severity': v[1]}
-                 for k, v in sorted(DTC_DATABASE.items())],
-                _dtc_f, indent=2
-            )
+        _dtc_json = json.dumps(
+            [{'code': k, 'description': v[0], 'severity': v[1]}
+             for k, v in sorted(DTC_DATABASE.items())],
+            indent=2
+        )
+        try:
+            with open('dtc_codes.json') as _dtc_f:
+                _dtc_same = _dtc_f.read() == _dtc_json
+        except OSError:
+            _dtc_same = False
+        if not _dtc_same:
+            with open('dtc_codes.json', 'w') as _dtc_f:
+                _dtc_f.write(_dtc_json)
     except OSError:
         pass
 
