@@ -445,7 +445,8 @@ def terminal_exec():
             _os.environ['ARCHER_SECRET'] = new_secret
             _as._ARCHER_SECRET  = new_secret
             _as._csrf_secret    = new_secret.encode()
-            _a._revoked_tokens.clear()
+            with _a._revoked_lock:
+                _a._revoked_tokens.clear()
             _a._revoked_names.clear()
             return jsonify({'stdout': '[HSM] Master key rotated — all active sessions invalidated. Users must sign in again.', 'stderr': '', 'returncode': 0})
         except Exception as _e:

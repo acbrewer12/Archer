@@ -703,6 +703,20 @@ class TestSaveLoadState:
             archer.nav_places.pop('home', None)
             archer.SAVE_FILE = orig
 
+    def test_linked_bluetooth_listed_and_persisted(self):
+        """'link phone' must land in the dict that 'list devices' reads and
+        save_state() persists."""
+        before = dict(archer.bluetooth_devices)
+        saved = {}
+        try:
+            with patch('db.db_save', side_effect=saved.update):
+                archer.handle_command('link phone')
+            assert archer.handle_command('list devices') != 'No devices linked yet.'
+            assert len(saved['bluetooth_devices']) == len(before) + 1
+        finally:
+            archer.bluetooth_devices.clear()
+            archer.bluetooth_devices.update(before)
+
     def test_load_missing_file_doesnt_crash(self, tmp_path):
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'nonexistent.json')
@@ -1644,7 +1658,7 @@ class TestTripExport:
 # ═══════════════════════════════════════════════════════════════
 # 32. /system_health — degraded mode detection
 # ═══════════════════════════════════════════════════════════════
-class TestSystemHealth:
+class TestSystemHealthDegraded:
     def test_returns_200(self):
         r = client.get('/system_health')
         assert r.status_code == 200
@@ -1710,6 +1724,34 @@ class TestLogout:
     def test_no_session_logout_is_safe(self):
         r = client.post('/logout')
         assert r.status_code == 200
+
+
+class TestAuthCookieRefresh:
+    """The rolling refresh in after_request must not undo a cookie change the
+    view itself made. Checked via the client's cookie jar, not the first
+    Set-Cookie header — the refresh appends a second header, and the browser
+    keeps the last one."""
+
+    def test_refresh_restamps_cookie(self):
+        c = _authed_client(2, 'Khloe')
+        r = c.get('/csrf_token')
+        assert any(h.startswith('archer_auth=') and 'Max-Age=2592000' in h
+                   for h in r.headers.getlist('Set-Cookie'))
+
+    def test_logout_leaves_no_cookie(self):
+        c = _authed_client(1, 'Ayden')
+        c.post('/logout')
+        assert c.get_cookie('archer_auth') is None
+
+    def test_login_replaces_stale_cookie(self):
+        stale = _make_cookie(1, 'Ayden')
+        base = archer.display_app.test_client()
+        base.set_cookie('archer_auth', stale)
+        with patch.object(archer, 'verify_owner_pin', return_value=(True, None)):
+            r = _CsrfClient(base).post('/login', json={'pin': '000000'})
+        assert r.status_code == 200
+        held = base.get_cookie('archer_auth')
+        assert held is not None and held.value != stale
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -4657,6 +4699,345 @@ print(type(archer.display_app.wsgi_app).__name__)
         """Explicit 0.0.0.0 (the archer-os/HuggingFace default) must not
         trust a client-supplied X-Forwarded-For either."""
         assert self._import_archer_in_subprocess('0.0.0.0') != 'ProxyFix'
+
+
+class TestWeatherCompareCache:
+    """Third-party rows are shared within the TTL; Archer's own row stays live."""
+
+    def _get(self, calls):
+        def _fake_urlopen(*a, **k):
+            calls.append(1)
+            raise OSError('offline')
+        with patch('urllib.request.urlopen', side_effect=_fake_urlopen):
+            return json.loads(client.get('/weather/compare/data').data)
+
+    def test_repeat_view_makes_no_outbound_calls(self):
+        archer._wx_compare_cache.update(key=None, ts=0.0, results=[])
+        calls = []
+        self._get(calls)
+        first = len(calls)
+        archer.weather['temp'] = 71
+        d = self._get(calls)
+        assert first > 0 and len(calls) == first
+        assert d['results'][0]['temp'] == 71
+
+    def test_new_location_refetches(self):
+        archer._wx_compare_cache.update(key=None, ts=0.0, results=[])
+        calls = []
+        orig = dict(archer.location_data)
+        try:
+            archer.location_data.update(lat=37.60, lon=-91.50)
+            self._get(calls)
+            first = len(calls)
+            archer.location_data.update(lat=37.70, lon=-91.50)
+            self._get(calls)
+            assert len(calls) > first
+        finally:
+            archer.location_data.clear(); archer.location_data.update(orig)
+
+
+class TestHealthGitHash:
+    def test_git_runs_once(self):
+        archer._git_short_hash.cache_clear()
+        try:
+            with patch.dict(os.environ, {'ARCHER_GIT_HASH': ''}), \
+                 patch.object(archer.subprocess, 'check_output', return_value=b'abc1234\n') as co:
+                h1 = json.loads(client.get('/health').data)['git_hash']
+                h2 = json.loads(client.get('/health').data)['git_hash']
+            assert h1 == h2 == 'abc1234'
+            assert co.call_count == 1
+        finally:
+            archer._git_short_hash.cache_clear()
+
+
+class TestSpeakPlayback:
+    """Playback checks for mpg123 without spawning `which` per utterance."""
+
+    def _run(self, which_result):
+        import asyncio
+        class _Comm:
+            def __init__(self, *a, **k): pass
+            async def save(self, path):
+                with open(path, 'wb') as f: f.write(b'ID3')
+        with patch('edge_tts.Communicate', _Comm), \
+             patch.object(archer, '_IS_PI', False), \
+             patch.object(archer._platform, 'system', return_value='Linux'), \
+             patch.object(archer.shutil, 'which', return_value=which_result), \
+             patch.object(archer.subprocess, 'run') as run:
+            asyncio.run(archer._speak_async('hello'))
+        return [c.args[0][0] for c in run.call_args_list]
+
+    def test_plays_with_mpg123_when_installed(self):
+        assert self._run('/usr/bin/mpg123') == ['mpg123']
+
+    def test_no_subprocess_when_mpg123_missing(self):
+        assert self._run(None) == []
+
+
+class TestSpotifyPlayerShared:
+    """Pollers of me/player share one call within the TTL; controls drop it."""
+
+    def _setup(self):
+        archer._spotify_player_cache.update(ts=0.0, data=None)
+        archer.spotify_tokens.update(access_token='tok', expires_at=time.time() + 3600)
+
+    def _fake(self, calls, playing):
+        class _R:
+            def __init__(self, body): self._b = body
+            def read(self): return self._b
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        def _urlopen(req, timeout=None):
+            calls.append((req.get_method(), req.full_url))
+            return _R(json.dumps({'is_playing': playing[0], 'item': {'name': 'T', 'artists': [], 'album': {}}}).encode())
+        return _urlopen
+
+    def test_pollers_share_one_call_and_controls_refresh(self):
+        self._setup()
+        calls, playing = [], [True]
+        try:
+            with patch('urllib.request.urlopen', side_effect=self._fake(calls, playing)), \
+                 patch.object(archer, '_get_art_cached', return_value=None):
+                c = _authed_client(1)
+                for _ in range(3):
+                    assert json.loads(c.get('/spotify/status').data)['playing'] is True
+                assert sum(1 for m, u in calls if u.endswith('/me/player')) == 1
+                playing[0] = False
+                c.post('/spotify/pause')
+                assert json.loads(c.get('/spotify/status').data)['playing'] is False
+                assert sum(1 for m, u in calls if u.endswith('/me/player')) == 2
+        finally:
+            archer.spotify_tokens.update(access_token=None, expires_at=0)
+            archer._spotify_player_cache.update(ts=0.0, data=None)
+
+
+class TestDbSaveChangedOnly:
+    """db_save writes only keys whose value changed, and a reload still sees
+    every key with its latest value."""
+
+    @pytest.fixture
+    def fresh_db(self, tmp_path):
+        import db
+        saved = (db._DB_PATH, db._conn, dict(db._last_written))
+        db._DB_PATH = str(tmp_path / 'state.db')
+        db._conn = None
+        db._last_written.clear()
+        yield db
+        db._conn.close()
+        db._DB_PATH, db._conn = saved[0], saved[1]
+        db._last_written.clear(); db._last_written.update(saved[2])
+
+    def test_only_changed_rows_written_and_reload_is_complete(self, fresh_db):
+        db = fresh_db
+        conn = db._get_conn()
+        db.db_save({'a': 1, 'b': {'x': [1, 2]}, 'c': 'three'})
+        assert conn.total_changes == 3
+        db.db_save({'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'})
+        assert conn.total_changes == 4
+        db.db_save({'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'})
+        assert conn.total_changes == 4
+        assert db.db_load() == {'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'}
+
+    def test_concurrent_saves_share_one_connection(self, fresh_db):
+        db = fresh_db
+        errors = []
+        def worker(n):
+            try:
+                for i in range(50):
+                    db.db_save({f't{n}': i, 'shared': [n, i]})
+            except Exception as e:
+                errors.append(e)
+        ts = [threading.Thread(target=worker, args=(n,)) for n in range(16)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        assert errors == []
+        loaded = db.db_load()
+        assert all(loaded[f't{n}'] == 49 for n in range(16))
+
+
+class TestBuildCaps:
+    def test_caps_match_per_flag_build_has(self):
+        saved = list(archer.build_tracker['parts'])
+        try:
+            archer.build_tracker['parts'][:] = [
+                {'name': 'HP Tuners Custom Tune', 'status': 'installed'},
+                {'name': 'Flex Fuel Ethanol Sensor', 'status': 'installed'},
+                {'name': 'Forged Pistons', 'status': 'ordered'},   # not installed yet
+            ]
+            caps = archer.get_build_caps()
+            assert caps == {
+                'supercharged':   archer.build_has(*archer._ENGINE_SWAP_KW),
+                'ethanol_sensor': archer.build_has(*archer._ETHANOL_KW),
+                'forged':         archer.build_has(*archer._FORGED_KW),
+                'custom_tune':    archer.build_has(*archer._TUNE_KW),
+                'air_suspension': archer.build_has(*archer._AIR_SUSP_KW),
+            }
+            assert caps['custom_tune'] and caps['ethanol_sensor']
+            assert not caps['forged'] and not caps['supercharged']
+        finally:
+            archer.build_tracker['parts'][:] = saved
+
+
+class TestBootMemoryCheck:
+    """MEMORY CORE reflects the SQLite store, not the legacy JSON file."""
+
+    @pytest.fixture
+    def db_at(self, tmp_path):
+        import db
+        saved = (db._DB_PATH, db._conn, dict(db._last_written))
+        def _point(path):
+            if db._conn is not None and db._conn is not saved[1]:
+                db._conn.close()
+            db._DB_PATH, db._conn = str(path), None
+            db._last_written.clear()
+            return db
+        yield _point
+        if db._conn is not None and db._conn is not saved[1]:
+            db._conn.close()
+        db._DB_PATH, db._conn = saved[0], saved[1]
+        db._last_written.clear(); db._last_written.update(saved[2])
+
+    def _memory_check(self):
+        data = json.loads(client.get('/boot/status?reveal=99').data)
+        return next(c for c in data['checks'] if c['id'] == 'memory')
+
+    def test_ok_with_key_count_when_store_has_data(self, db_at, tmp_path):
+        db = db_at(tmp_path / 'a.db')
+        db.db_save({'x': 1, 'y': 2, 'z': 3})
+        assert self._memory_check() == {'id': 'memory', 'label': 'MEMORY CORE',
+                                        'status': 'ok', 'detail': '3 keys'}
+
+    def test_warn_when_store_empty(self, db_at, tmp_path):
+        db_at(tmp_path / 'empty.db')
+        assert self._memory_check()['status'] == 'warn'
+
+    def test_fail_when_store_unreadable(self, db_at, tmp_path):
+        db_at(tmp_path)  # a directory: sqlite cannot open it
+        check = self._memory_check()
+        assert check['status'] == 'fail' and check['detail'] == 'database unreadable'
+
+
+class TestPageCache:
+    def test_serves_cached_until_file_changes(self, tmp_path):
+        page = tmp_path / 'page.html'
+        page.write_text('v1', encoding='utf-8')
+        os.utime(page, ns=(1_000_000_000, 1_000_000_000))
+        assert archer._read_page(str(page)) == 'v1'
+        with patch('builtins.open', side_effect=AssertionError('re-read')):
+            assert archer._read_page(str(page)) == 'v1'   # served from memory
+        page.write_text('v2', encoding='utf-8')
+        os.utime(page, ns=(2_000_000_000, 2_000_000_000))
+        assert archer._read_page(str(page)) == 'v2'       # edit picked up
+        archer._page_cache.pop(str(page), None)
+
+
+class TestTier1ScriptOrder:
+    def test_060_state_declared_before_first_update(self):
+        """archer_tier1.html runs update() at top level, and update() reads
+        _060state. With the `let` declared after that call, the call threw
+        (temporal dead zone) and aborted the rest of the page script —
+        passenger requests, graph data and other polling never started."""
+        with open(os.path.join(os.path.dirname(__file__), 'archer_tier1.html'), encoding='utf-8') as f:
+            src = f.read()
+        assert src.index("let _060state") < src.index("\nupdate();\n")
+
+
+class TestClientTrackingRaces:
+    """Connects and /display_data polls must survive the timeout monitor
+    evicting clients concurrently."""
+
+    def test_connect_and_poll_while_evicting(self):
+        errors = []
+        stop = threading.Event()
+        saved = dict(archer.connected_clients)
+        def connector(n):
+            try:
+                for i in range(200):
+                    archer.log_client_connect(f'r{n}-{i}', f'10.9.{n}.{i % 250}', 'ua')
+            except Exception as e:
+                errors.append(e)
+        def reaper():
+            while not stop.is_set():
+                with archer.client_lock:
+                    dead = list(archer.connected_clients)[:50]
+                for sid in dead:
+                    archer.log_client_disconnect(sid)
+        def poller():
+            c = _authed_client(1)
+            for _ in range(100):
+                if c.get('/display_data?sid=race-sid').status_code >= 500:
+                    errors.append('HTTP 500')
+        old_interval = sys.getswitchinterval()
+        old_stdout, sys.stdout = sys.stdout, open(os.devnull, 'w')
+        old_prop = archer.display_app.config.get('PROPAGATE_EXCEPTIONS')
+        archer.display_app.config['PROPAGATE_EXCEPTIONS'] = False
+        sys.setswitchinterval(1e-6)
+        try:
+            rp = threading.Thread(target=reaper); rp.start()
+            ts = [threading.Thread(target=connector, args=(n,)) for n in range(4)]
+            ts += [threading.Thread(target=poller) for _ in range(2)]
+            for t in ts: t.start()
+            for t in ts: t.join()
+            stop.set(); rp.join()
+        finally:
+            sys.setswitchinterval(old_interval)
+            sys.stdout.close(); sys.stdout = old_stdout
+            archer.display_app.config['PROPAGATE_EXCEPTIONS'] = old_prop
+            archer.connected_clients.clear(); archer.connected_clients.update(saved)
+        assert errors == []
+
+
+class TestRevokedTokenPruning:
+    @pytest.fixture(autouse=True)
+    def _isolate(self):
+        saved = dict(archer._revoked_tokens)
+        archer._revoked_tokens.clear()
+        yield
+        archer._revoked_tokens.clear()
+        archer._revoked_tokens.update(saved)
+
+    def _tier(self, tok):
+        with archer.display_app.test_request_context(
+                '/', headers={'Cookie': f'archer_auth={tok}'}):
+            from flask import request
+            return archer.get_request_tier(request)
+
+    def test_expired_pruned_live_revocation_still_rejects(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        revoked = make_auth_jwt(2, 'Pruned')
+        jti = decode_auth_jwt(revoked)['jti']
+        past = time.time() - 1
+        for i in range(5):
+            archer._revoked_tokens[f'old-{i}'] = past
+        archer._revoke_token(jti)
+        assert self._tier(revoked) == 5
+        assert list(archer._revoked_tokens) == [jti]
+        assert self._tier(make_auth_jwt(2, 'Fine')) == 2
+
+    def test_concurrent_pruning_never_raises(self):
+        from archer_state import make_auth_jwt
+        tok = make_auth_jwt(2, 'Racer')
+        errors = []
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)  # force interleaving inside the prune loop
+        try:
+            for _ in range(5):
+                past = time.time() - 1
+                for i in range(2000):
+                    archer._revoked_tokens[f'expired-{i}'] = past
+                barrier = threading.Barrier(8)
+                def worker():
+                    barrier.wait()
+                    try:
+                        self._tier(tok)
+                    except Exception as e:
+                        errors.append(e)
+                ts = [threading.Thread(target=worker) for _ in range(8)]
+                for t in ts: t.start()
+                for t in ts: t.join()
+        finally:
+            sys.setswitchinterval(old_interval)
+        assert errors == []
 
 
 if __name__ == '__main__':
