@@ -9,7 +9,6 @@ import urllib.request
 import functools
 from datetime import datetime
 import asyncio
-import edge_tts
 import tempfile
 import queue
 import platform as _platform
@@ -490,6 +489,9 @@ async def _speak_async(text, alert=False):
             )
             return
 
+        # Imported here, not at the top: it pulls in aiohttp (~40% of startup
+        # import time) and the Pi's Piper path above never needs it.
+        import edge_tts
         voice       = "en-US-ChristopherNeural"
         communicate = edge_tts.Communicate(text, voice, rate="-8%", pitch="-6Hz")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as f:
