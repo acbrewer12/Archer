@@ -9969,7 +9969,7 @@ button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
 const e=document.getElementById("err"),b=document.getElementById("go");
 async function submit(){ b.disabled=true; e.textContent="";
   const r=await post("/setup",{pin:document.getElementById("p1").value,confirm:document.getElementById("p2").value});
-  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/"; return; }
   e.textContent=(r.d&&r.d.error)||"Setup failed"; b.disabled=false; }
 b.addEventListener("click",submit);
 document.getElementById("p2").addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
@@ -10004,10 +10004,10 @@ button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
   return {ok:r.ok, d};
 }
 const e=document.getElementById("err"),b=document.getElementById("go"),p=document.getElementById("pin");
-const nxt=new URLSearchParams(location.search).get("next")||"/dashboard";
+const nxt=new URLSearchParams(location.search).get("next")||"/";
 async function submit(){ b.disabled=true; e.textContent="";
   const r=await post("/login",{pin:p.value,next:nxt});
-  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/"; return; }
   e.textContent=(r.d&&r.d.error)||"Incorrect PIN"; p.value=""; b.disabled=false; p.focus(); }
 b.addEventListener("click",submit);
 p.addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
@@ -11074,7 +11074,7 @@ def setup_submit():
     ok, err = save_owner_pin(pin)
     if not ok:
         return _js({'ok': False, 'error': err}), 400
-    resp = _mk(_js({'ok': True, 'redirect': '/dashboard'}))
+    resp = _mk(_js({'ok': True, 'redirect': '/'}))
     resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
                     httponly=True, samesite='Lax', secure=_USE_TLS)
     print('[AUTH] Owner PIN configured — first-run setup complete')
@@ -11100,11 +11100,13 @@ def login_submit():
     ok, err = verify_owner_pin(data.get('pin', ''))
     if not ok:
         return _js({'ok': False, 'error': err}), 401
-    nxt = data.get('next') or '/dashboard'
+    # Default to / (the tier page for this session). /dashboard is the
+    # archer-os head-unit screen; the kiosk opens it directly.
+    nxt = data.get('next') or '/'
     # Only ever redirect to a local path — never let the client hand us an
     # absolute URL, which would turn the login into an open redirect.
     if not nxt.startswith('/') or nxt.startswith('//'):
-        nxt = '/dashboard'
+        nxt = '/'
     resp = _mk(_js({'ok': True, 'redirect': nxt}))
     resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
                     httponly=True, samesite='Lax', secure=_USE_TLS)
