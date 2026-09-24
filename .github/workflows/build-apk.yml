@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       archer_url:
-        description: 'Archer server URL (blank = home server over Tailscale)'
+        description: 'Archer server URL (blank = home server via ngrok)'
         required: false
         default: ''
 
@@ -104,11 +104,11 @@ jobs:
         run: |
           URL="$ARCHER_URL"
           if [ -z "$URL" ]; then
-            # Home server's private Caddy block, reachable only over Tailscale
-            # (the phone must be on the tailnet). Plain HTTP is allowed for
-            # this address in network_security_config.xml. For a build that
-            # works off-tailnet, dispatch with archer_url set to the HF Space.
-            URL="http://100.108.48.64:8080"
+            # Home server through ngrok (self-host/ngrok.yml): HTTPS, reachable
+            # without Tailscale. For a tailnet-only build, dispatch with
+            # archer_url=http://100.108.48.64:8080 (cleartext for that address
+            # is allowed in network_security_config.xml).
+            URL="https://darnell-unribbed-unmethodically.ngrok-free.dev"
           fi
           echo "Building APK for: $URL"
           find android-apk -name "*.java" \

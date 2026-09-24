@@ -2,7 +2,7 @@
 <!--
   Replaces the old blanket android:usesCleartextTraffic="true" in AndroidManifest.xml.
 
-  The app's default ARCHER_URL is the home server, http://100.108.48.64:8080
+  The app's default ARCHER_URL is the home server through ngrok, over HTTPS
   (see build-apk.yml). Everything not listed below is left to the platform
   default, which is HTTPS-only (cleartext disabled) because this app targets
   API 34.
