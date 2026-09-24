@@ -425,15 +425,16 @@ connected_clients = {}  # session_id -> {ip, agent, connected_at}
 client_lock       = threading.Lock()
 
 def log_client_connect(session_id, ip, agent):
-    already_seen = any(c['ip'] == ip for c in connected_clients.values())
     with client_lock:
+        # Scanned under the lock: other threads add and evict clients.
+        already_seen = any(c['ip'] == ip for c in connected_clients.values())
         connected_clients[session_id] = {
             'ip':           ip,
             'agent':        agent,
             'connected_at': datetime.now().strftime('%I:%M %p'),
             'last_seen':    time.time(),
         }
-    count = len(connected_clients)
+        count = len(connected_clients)
     if not already_seen:
         print(f"[DISPLAY] Device connected — {ip} — {count} total connected")
 
@@ -11391,10 +11392,13 @@ def display_data_endpoint():
     fingerprint = flask_request.args.get('fp', 'unknown')
     ip          = flask_request.remote_addr or 'unknown'
     agent       = flask_request.headers.get('User-Agent', '')[:50]
-    if session_id not in connected_clients:
+    # One lookup: the timeout monitor can evict the entry between an
+    # `in` check and an index, which raised KeyError (HTTP 500).
+    client = connected_clients.get(session_id)
+    if client is None:
         log_client_connect(session_id, ip, agent)
     else:
-        connected_clients[session_id]['last_seen'] = time.time()
+        client['last_seen'] = time.time()
     d = get_display_data()
     d['spike_history']     = spike_history
     d['connected_clients'] = len(connected_clients)

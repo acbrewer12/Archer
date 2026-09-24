@@ -4191,6 +4191,51 @@ class TestBuildCaps:
             archer.build_tracker['parts'][:] = saved
 
 
+class TestClientTrackingRaces:
+    """Connects and /display_data polls must survive the timeout monitor
+    evicting clients concurrently."""
+
+    def test_connect_and_poll_while_evicting(self):
+        errors = []
+        stop = threading.Event()
+        saved = dict(archer.connected_clients)
+        def connector(n):
+            try:
+                for i in range(200):
+                    archer.log_client_connect(f'r{n}-{i}', f'10.9.{n}.{i % 250}', 'ua')
+            except Exception as e:
+                errors.append(e)
+        def reaper():
+            while not stop.is_set():
+                with archer.client_lock:
+                    dead = list(archer.connected_clients)[:50]
+                for sid in dead:
+                    archer.log_client_disconnect(sid)
+        def poller():
+            c = _authed_client(1)
+            for _ in range(100):
+                if c.get('/display_data?sid=race-sid').status_code >= 500:
+                    errors.append('HTTP 500')
+        old_interval = sys.getswitchinterval()
+        old_stdout, sys.stdout = sys.stdout, open(os.devnull, 'w')
+        old_prop = archer.display_app.config.get('PROPAGATE_EXCEPTIONS')
+        archer.display_app.config['PROPAGATE_EXCEPTIONS'] = False
+        sys.setswitchinterval(1e-6)
+        try:
+            rp = threading.Thread(target=reaper); rp.start()
+            ts = [threading.Thread(target=connector, args=(n,)) for n in range(4)]
+            ts += [threading.Thread(target=poller) for _ in range(2)]
+            for t in ts: t.start()
+            for t in ts: t.join()
+            stop.set(); rp.join()
+        finally:
+            sys.setswitchinterval(old_interval)
+            sys.stdout.close(); sys.stdout = old_stdout
+            archer.display_app.config['PROPAGATE_EXCEPTIONS'] = old_prop
+            archer.connected_clients.clear(); archer.connected_clients.update(saved)
+        assert errors == []
+
+
 class TestRevokedTokenPruning:
     @pytest.fixture(autouse=True)
     def _isolate(self):
