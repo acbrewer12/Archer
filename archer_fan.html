@@ -27,7 +27,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);height:100vh
 /* ── HEADER ── */
 .hdr{background:var(--bg);border-bottom:1px solid var(--amber);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px}
 .hdr-left{display:flex;flex-direction:column}
-.hdr-title{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:5px;color:var(--text);line-height:1;text-transform:uppercase}
+.hdr-title{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:5px;color:var(--text);line-height:1;text-transform:uppercase;-webkit-user-select:none;user-select:none}
 .hdr-sub{font-size:8px;color:var(--muted);letter-spacing:3px;font-family:var(--mono);margin-top:2px}
 .hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
 .live-badge{background:var(--amber);color:#0c0c0e;border-radius:3px;padding:2px 7px;font-size:8px;font-family:var(--mono);font-weight:600;letter-spacing:2px;display:none;animation:live-pulse 1.5s ease-in-out infinite}
@@ -292,6 +292,21 @@ let staleTimer = null;
     link.innerHTML = 'SIGN IN<br>TO SAVE CHAT';
     el.appendChild(link);
   }
+})();
+
+// ── HIDDEN OWNER ENTRY ──
+// Five quick taps on the ARCHER title open the owner PIN screen. Nothing on
+// the page advertises it; the PIN itself is the credential, checked by /login.
+(function initOwnerEntry() {
+  const title = document.querySelector('.hdr-title');
+  if (!title) return;
+  let taps = 0, timer = null;
+  title.addEventListener('click', () => {
+    taps++;
+    clearTimeout(timer);
+    timer = setTimeout(() => { taps = 0; }, 1500);
+    if (taps >= 5) { taps = 0; location.href = '/login?next=/'; }
+  });
 })();
 
 // ── MUTE ──
