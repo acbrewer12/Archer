@@ -2957,6 +2957,13 @@ function setDicStyle(id, val, prop, css) {
   if (changed) flashDic(el);
 }
 
+// 0-60 timer state. Must be declared before the first update() below:
+// update() reads it, and a `let` touched before its declaration throws —
+// which aborted the rest of this script at that call.
+let _060state = 'idle'; // idle | armed | counting | complete
+let _060start = 0, _060best = null, _060raf = null;
+let _060prevSpeed = 0;
+
 pollLive();
 setInterval(pollLive, 1000);
 setInterval(update, 150);
@@ -2985,9 +2992,7 @@ function toggleFaultDetail() {
 }
 
 // ── 0-60 TIMER ─────────────────────────────────────────────────────────
-let _060state = 'idle'; // idle | armed | counting | complete
-let _060start = 0, _060best = null, _060raf = null;
-let _060prevSpeed = 0;
+// (state is declared above the first update() call — see there)
 
 function pf060Arm() {
   if (_060state === 'counting') return;

@@ -4230,6 +4230,17 @@ class TestBootMemoryCheck:
         assert check['status'] == 'fail' and check['detail'] == 'database unreadable'
 
 
+class TestTier1ScriptOrder:
+    def test_060_state_declared_before_first_update(self):
+        """archer_tier1.html runs update() at top level, and update() reads
+        _060state. With the `let` declared after that call, the call threw
+        (temporal dead zone) and aborted the rest of the page script —
+        passenger requests, graph data and other polling never started."""
+        with open(os.path.join(os.path.dirname(__file__), 'archer_tier1.html'), encoding='utf-8') as f:
+            src = f.read()
+        assert src.index("let _060state") < src.index("\nupdate();\n")
+
+
 class TestClientTrackingRaces:
     """Connects and /display_data polls must survive the timeout monitor
     evicting clients concurrently."""
