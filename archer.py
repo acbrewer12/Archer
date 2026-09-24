@@ -11928,6 +11928,13 @@ def service_history_post():
     return jsonify({'error': 'Unknown action'}), 400
 
 
+# Third-party rows for /weather/compare/data. Each fetch fans out to ~10 APIs
+# (~750ms) on an unauthenticated endpoint, so views within the TTL at the same
+# spot (~1km) share one fetch. Archer's own row is always read live.
+_WX_COMPARE_TTL   = 120
+_wx_compare_cache = {'key': None, 'ts': 0.0, 'results': []}
+_wx_compare_lock  = threading.Lock()
+
 @display_app.route('/weather/compare/data')
 def weather_compare_data():
     """Fetch current conditions from multiple APIs in parallel and return comparison JSON."""
@@ -11936,9 +11943,12 @@ def weather_compare_data():
     lat = location_data.get('lat') or 37.6456
     lon = location_data.get('lon') or -91.5362
     hdr = {'User-Agent': 'Archer/1.0 archer@ayden.dev'}
+    key = (round(lat, 2), round(lon, 2))
+    cached = (_wx_compare_cache['key'] == key
+              and time.time() - _wx_compare_cache['ts'] < _WX_COMPARE_TTL)
 
     # Ensure NWS URLs are resolved (may be None if get_weather()'s init failed at startup)
-    if not _nws_forecast_url or not _nws_station_url:
+    if not cached and (not _nws_forecast_url or not _nws_station_url):
         try:
             pts_url = f'https://api.weather.gov/points/{lat:.4f},{lon:.4f}'
             with urllib.request.urlopen(urllib.request.Request(pts_url, headers=hdr), timeout=8) as r:
@@ -12210,18 +12220,24 @@ def weather_compare_data():
         ('7timer.info (aggregator)',   lambda: _fetch_7timer()),
     ]
 
-    other_results = []
-    with _cf.ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(fn): name for name, fn in sources}
-        for fut, name in futures.items():
-            try:
-                temp, cond = fut.result(timeout=10)
-                other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
-            except Exception as e:
-                other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
+    with _wx_compare_lock:
+        if (_wx_compare_cache['key'] == key
+                and time.time() - _wx_compare_cache['ts'] < _WX_COMPARE_TTL):
+            other_results = _wx_compare_cache['results']
+        else:
+            other_results = []
+            with _cf.ThreadPoolExecutor(max_workers=10) as ex:
+                futures = {ex.submit(fn): name for name, fn in sources}
+                for fut, name in futures.items():
+                    try:
+                        temp, cond = fut.result(timeout=10)
+                        other_results.append({'name': name, 'temp': temp, 'condition': cond, 'error': None})
+                    except Exception as e:
+                        other_results.append({'name': name, 'temp': None, 'condition': None, 'error': str(e)[:60]})
 
-    order = [s[0] for s in sources]
-    other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+            order = [s[0] for s in sources]
+            other_results.sort(key=lambda r: order.index(r['name']) if r['name'] in order else 999)
+            _wx_compare_cache.update(key=key, ts=time.time(), results=other_results)
     results = [archer_result] + other_results
 
     return jsonify({'results': results, 'lat': lat, 'lon': lon,

@@ -4014,5 +4014,40 @@ class TestPanicActivateRoute:
         assert d['window_secs'] == 300
 
 
+class TestWeatherCompareCache:
+    """Third-party rows are shared within the TTL; Archer's own row stays live."""
+
+    def _get(self, calls):
+        def _fake_urlopen(*a, **k):
+            calls.append(1)
+            raise OSError('offline')
+        with patch('urllib.request.urlopen', side_effect=_fake_urlopen):
+            return json.loads(client.get('/weather/compare/data').data)
+
+    def test_repeat_view_makes_no_outbound_calls(self):
+        archer._wx_compare_cache.update(key=None, ts=0.0, results=[])
+        calls = []
+        self._get(calls)
+        first = len(calls)
+        archer.weather['temp'] = 71
+        d = self._get(calls)
+        assert first > 0 and len(calls) == first
+        assert d['results'][0]['temp'] == 71
+
+    def test_new_location_refetches(self):
+        archer._wx_compare_cache.update(key=None, ts=0.0, results=[])
+        calls = []
+        orig = dict(archer.location_data)
+        try:
+            archer.location_data.update(lat=37.60, lon=-91.50)
+            self._get(calls)
+            first = len(calls)
+            archer.location_data.update(lat=37.70, lon=-91.50)
+            self._get(calls)
+            assert len(calls) > first
+        finally:
+            archer.location_data.clear(); archer.location_data.update(orig)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
