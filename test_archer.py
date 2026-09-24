@@ -4168,5 +4168,58 @@ class TestDbSaveChangedOnly:
         assert all(loaded[f't{n}'] == 49 for n in range(16))
 
 
+class TestRevokedTokenPruning:
+    @pytest.fixture(autouse=True)
+    def _isolate(self):
+        saved = dict(archer._revoked_tokens)
+        archer._revoked_tokens.clear()
+        yield
+        archer._revoked_tokens.clear()
+        archer._revoked_tokens.update(saved)
+
+    def _tier(self, tok):
+        with archer.display_app.test_request_context(
+                '/', headers={'Cookie': f'archer_auth={tok}'}):
+            from flask import request
+            return archer.get_request_tier(request)
+
+    def test_expired_pruned_live_revocation_still_rejects(self):
+        from archer_state import make_auth_jwt, decode_auth_jwt
+        revoked = make_auth_jwt(2, 'Pruned')
+        jti = decode_auth_jwt(revoked)['jti']
+        past = time.time() - 1
+        for i in range(5):
+            archer._revoked_tokens[f'old-{i}'] = past
+        archer._revoke_token(jti)
+        assert self._tier(revoked) == 5
+        assert list(archer._revoked_tokens) == [jti]
+        assert self._tier(make_auth_jwt(2, 'Fine')) == 2
+
+    def test_concurrent_pruning_never_raises(self):
+        from archer_state import make_auth_jwt
+        tok = make_auth_jwt(2, 'Racer')
+        errors = []
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)  # force interleaving inside the prune loop
+        try:
+            for _ in range(5):
+                past = time.time() - 1
+                for i in range(2000):
+                    archer._revoked_tokens[f'expired-{i}'] = past
+                barrier = threading.Barrier(8)
+                def worker():
+                    barrier.wait()
+                    try:
+                        self._tier(tok)
+                    except Exception as e:
+                        errors.append(e)
+                ts = [threading.Thread(target=worker) for _ in range(8)]
+                for t in ts: t.start()
+                for t in ts: t.join()
+        finally:
+            sys.setswitchinterval(old_interval)
+        assert errors == []
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

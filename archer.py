@@ -9691,14 +9691,27 @@ _revoked_tokens: collections.OrderedDict = collections.OrderedDict()
 # Revoked name+tier combinations: {'Name:tier': revoked_at_unix_time}
 # JWT tokens issued BEFORE this time for that name/tier are rejected.
 _revoked_names: dict = {}
+# Serializes every mutation of _revoked_tokens. Membership checks don't need it.
+_revoked_lock = threading.Lock()
 
 def _revoke_token(token: str):
     """Mark a session token as revoked for 30 days."""
-    if token in _revoked_tokens:
-        _revoked_tokens.move_to_end(token)
-    _revoked_tokens[token] = time.time() + 86400 * 30
-    if len(_revoked_tokens) > _MAX_REVOKED:
-        _revoked_tokens.popitem(last=False)  # evict oldest
+    with _revoked_lock:
+        if token in _revoked_tokens:
+            _revoked_tokens.move_to_end(token)
+        _revoked_tokens[token] = time.time() + 86400 * 30
+        if len(_revoked_tokens) > _MAX_REVOKED:
+            _revoked_tokens.popitem(last=False)  # evict oldest
+
+def _prune_revoked_tokens(now):
+    """Drop expired entries. They are always at the front: every expiry is
+    revocation time + 30 days, and re-revoking moves the entry to the end."""
+    with _revoked_lock:
+        while _revoked_tokens:
+            t, exp = next(iter(_revoked_tokens.items()))
+            if exp >= now:
+                break
+            del _revoked_tokens[t]
 
 def _revoke_by_name(name: str, tier: int):
     """Revoke all sessions for a given name+tier combination."""
@@ -9771,9 +9784,7 @@ def get_request_tier(request):
             jti  = payload.get('jti', '')
             name = payload.get('name', '')
             now  = time.time()
-            for t in list(_revoked_tokens):
-                if _revoked_tokens[t] < now:
-                    del _revoked_tokens[t]
+            _prune_revoked_tokens(now)
             if jti and jti in _revoked_tokens:
                 return 5
             revoked_at = _revoked_names.get(f'{name}:{tier}', 0)
