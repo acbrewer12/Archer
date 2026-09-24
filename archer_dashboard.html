@@ -1154,6 +1154,7 @@ function push(id, val) {
   const g = G[id];
   g.data.push(+val);
   if (g.data.length > HIST) g.data.shift();
+  g.dirty = true;
 }
 
 function gcv(id, val, unit) {
@@ -1168,7 +1169,13 @@ function drawGraphs() {
     if (!c || g.data.length < 2) continue;
     const r = c.getBoundingClientRect();
     if (!r.width) continue;
-    c.width = r.width; c.height = r.height;
+    // Data arrives every 2s but this runs every 400ms, and there is no GPU:
+    // repaint only on new data or a size change, and only reallocate the
+    // canvas buffer (which assigning width/height does) when the size changed.
+    const w = Math.floor(r.width), h = Math.floor(r.height);
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; g.dirty = true; }
+    if (!g.dirty) continue;
+    g.dirty = false;
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
     const range = (g.max - g.min) || 1;
