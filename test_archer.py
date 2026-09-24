@@ -25,6 +25,7 @@ def _noop_start(self):
 threading.Thread.start = _noop_start
 
 import archer  # noqa: E402
+import config as archer_config  # noqa: E402
 
 threading.Thread.start = _real_thread_start
 
@@ -348,11 +349,16 @@ class TestVoiceCommand:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4. /register_device — tier capping
+# 4. /register_device — Tier 1 only (blueprints/auth.py's actual gate:
+# _panic_lockdown_active() check, then require_tier1(), *then* the tier-cap
+# logic these tests exist to cover). The route 403s "Tier 1 required" for
+# anyone else, before ever looking at fingerprint/tier — the previous
+# version of these tests called it as the unauthenticated global `client`
+# and were actually exercising that 403 path by accident, not tier capping.
 # ═══════════════════════════════════════════════════════════════
 class TestRegisterDevice:
     def test_tier_capped_at_2(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-001',
             'name': 'TestDevice',
             'tier': 1,
@@ -362,7 +368,7 @@ class TestRegisterDevice:
         assert d['tier'] == 2
 
     def test_tier_4_accepted(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-002',
             'name': 'Valet',
             'tier': 4,
@@ -372,7 +378,7 @@ class TestRegisterDevice:
         assert d['tier'] == 4
 
     def test_tier_above_4_capped(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-003',
             'name': 'Hacker',
             'tier': 99,
@@ -381,7 +387,7 @@ class TestRegisterDevice:
         assert d['tier'] == 4
 
     def test_missing_fingerprint_rejected(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'name': 'NoFP',
             'tier': 2,
         })
@@ -389,7 +395,7 @@ class TestRegisterDevice:
         assert d['ok'] is False
 
     def test_tier_2_accepted(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-pass',
             'name': 'Passenger',
             'tier': 2,
@@ -399,13 +405,36 @@ class TestRegisterDevice:
         assert d['tier'] == 2
 
     def test_name_preserved(self):
-        r = client.post('/register_device', json={
+        r = _authed_client(1).post('/register_device', json={
             'fingerprint': 'test-fp-name',
             'name': 'Alice',
             'tier': 3,
         })
         d = json.loads(r.data)
         assert d['name'] == 'Alice'
+
+    def test_non_owner_rejected(self):
+        """The actual gate itself, tested directly rather than just worked
+        around — confirms this route really is Tier 1 only, not just that
+        the other tests happen to authenticate as Tier 1."""
+        r = _authed_client(2).post('/register_device', json={
+            'fingerprint': 'test-fp-tier2caller',
+            'name': 'ShouldFail',
+            'tier': 2,
+        })
+        assert r.status_code == 403
+        d = json.loads(r.data)
+        assert d['ok'] is False
+
+    def test_unauthenticated_rejected(self):
+        r = client.post('/register_device', json={
+            'fingerprint': 'test-fp-noauth',
+            'name': 'ShouldFail',
+            'tier': 2,
+        })
+        assert r.status_code == 403
+        d = json.loads(r.data)
+        assert d['ok'] is False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1145,10 +1174,38 @@ class TestDeviceTierEndpoint:
         assert 'name' in d
 
     def test_known_device_is_registered(self):
-        client.post('/register_device', json={'fingerprint': 'known-fp-99', 'name': 'Me', 'tier': 2})
+        # /register_device is Tier 1 only (see TestRegisterDevice) — the
+        # unauthenticated global `client` used here previously never
+        # actually registered anything, so this was really testing that an
+        # unregistered fingerprint reports unregistered, not the field name.
+        _authed_client(1).post('/register_device', json={'fingerprint': 'known-fp-99', 'name': 'Me', 'tier': 2})
         r = client.post('/device_tier', json={'fingerprint': 'known-fp-99'})
         d = json.loads(r.data)
         assert d['registered'] is True
+
+
+# ═══════════════════════════════════════════════════════════════
+# 16b. No shadowed routes — regression coverage for a real, recurring bug:
+# archer.py accumulated 53 direct @display_app.route copies of routes that
+# were also registered by a blueprint (found via url_map inspection during
+# the Wear OS /remote/start fix, then audited and removed entirely). Every
+# one of the 53 was dead code — blueprints get registered early (line
+# ~280), so the blueprint's copy always won Werkzeug's dispatch — but a
+# couple had quietly drifted from their live counterpart (one was even
+# missing a tier check, harmless only because it was unreachable). This
+# guards against the pattern coming back, generically, not just for the
+# specific paths already found.
+# ═══════════════════════════════════════════════════════════════
+class TestNoShadowedRoutes:
+    def test_no_duplicate_path_method_pairs(self):
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for rule in archer.display_app.url_map.iter_rules():
+            methods = tuple(sorted(m for m in (rule.methods or [])
+                                    if m not in ('HEAD', 'OPTIONS')))
+            groups[(rule.rule, methods)].append(rule.endpoint)
+        duplicates = {k: v for k, v in groups.items() if len(v) > 1}
+        assert not duplicates, f"shadowed route(s) found: {duplicates}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1891,6 +1948,260 @@ class TestGatekeeperHandshake:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 30b. Server-to-Pi config sanity handshake
+# (blueprints/terminal.py: POST /terminal/pi_config_check;
+#  pi/config_sanity_check.py: check_config()).
+#
+# Real, motivating case (Self Hosting vault note): the server's own
+# Tailscale IP is hardcoded across several of its own config files: if it
+# ever drifts from what the Pi independently expects, this is the
+# mechanism meant to catch that loudly on the next Pi boot, rather than
+# the Pi silently continuing with a stale value. Covered below as its own
+# explicit test, not folded into the generic mismatch cases.
+# ═══════════════════════════════════════════════════════════════
+class TestPiConfigCheckRoute:
+    """Server side: POST /terminal/pi_config_check."""
+
+    def setup_method(self):
+        import blueprints.terminal as _terminal
+        self._terminal = _terminal
+        self._token_backup = _terminal._ARCHER_PI_TOKEN
+        _terminal._ARCHER_PI_TOKEN = 'test-pi-token'
+        self._cfg_backup = (
+            archer_config.SERVER_TAILSCALE_IP,
+            archer_config.GATEKEEPER_KEY_FINGERPRINT,
+            archer_config.OBDLINK_SERIAL,
+        )
+        archer_config.SERVER_TAILSCALE_IP       = '100.111.157.35'
+        archer_config.GATEKEEPER_KEY_FINGERPRINT = 'a' * 64
+        archer_config.OBDLINK_SERIAL             = 'OBDLINK-MX-12345'
+
+    def teardown_method(self):
+        self._terminal._ARCHER_PI_TOKEN = self._token_backup
+        (archer_config.SERVER_TAILSCALE_IP,
+         archer_config.GATEKEEPER_KEY_FINGERPRINT,
+         archer_config.OBDLINK_SERIAL) = self._cfg_backup
+
+    def test_valid_token_and_timestamp_returns_ground_truth(self):
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'test-pi-token', 'timestamp': time.time()})
+        assert r.status_code == 200
+        d = json.loads(r.data)
+        assert d['server_tailscale_ip'] == '100.111.157.35'
+        assert d['gatekeeper_key_fingerprint'] == 'a' * 64
+        assert d['obdlink_serial'] == 'OBDLINK-MX-12345'
+        assert d['tier_permissions']['OWNER'] == ['read_all', 'write_all', 'admin']
+
+    def test_wrong_token_rejected(self):
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'wrong-token', 'timestamp': time.time()})
+        assert r.status_code == 403
+
+    def test_missing_token_rejected(self):
+        r = client.post('/terminal/pi_config_check', json={'timestamp': time.time()})
+        assert r.status_code == 403
+
+    def test_stale_timestamp_rejected(self):
+        """Same 30s replay-protection window as obd_gatekeeper.py's own
+        handshake (TIMESTAMP_WINDOW)."""
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': 'test-pi-token', 'timestamp': time.time() - 60})
+        assert r.status_code == 403
+
+    def test_disabled_when_no_pi_token_configured(self):
+        self._terminal._ARCHER_PI_TOKEN = ''
+        r = client.post('/terminal/pi_config_check',
+                         json={'token': '', 'timestamp': time.time()})
+        assert r.status_code == 403
+
+
+class TestPiConfigSanityCheck:
+    """Pi side: pi/config_sanity_check.check_config() — the fail-closed
+    gate obd_gatekeeper.py's main() calls before setup_relay()/load_keys().
+    Tested standalone (mocked HTTP + a real temp key file) since the real
+    obd_gatekeeper.py main() is an infinite loop doing hardware I/O, not
+    something to instantiate directly in a unit test."""
+
+    @staticmethod
+    def _module():
+        import pi.config_sanity_check as m
+        return m
+
+    @staticmethod
+    def _fake_response(body_dict):
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(body_dict).encode()
+        cm.__exit__.return_value = False
+        return cm
+
+    def _matching_server_cfg(self, key_fingerprint):
+        m = self._module()
+        return {
+            'server_tailscale_ip':        '100.111.157.35',
+            'gatekeeper_key_fingerprint': key_fingerprint,
+            'obdlink_serial':             'OBDLINK-MX-12345',
+            'tier_permissions':           dict(m.EXPECTED_TIER_PERMISSIONS),
+        }
+
+    def test_all_matching_starts_cleanly(self, tmp_path):
+        """The baseline case every mismatch test below is contrasted
+        against — must report ok with zero problems when everything
+        genuinely agrees."""
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(
+                 self._matching_server_cfg(real_fp))):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is True
+        assert problems == []
+
+    def test_mismatched_server_ip_refuses(self, tmp_path):
+        """The original motivating case: a server Tailscale IP that has
+        drifted from what the Pi expects must refuse to start cleanly,
+        not silently continue."""
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['server_tailscale_ip'] = '100.111.157.99'  # drifted
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35',  # Pi still expects the old address
+                'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('Tailscale IP' in p for p in problems)
+
+    def test_mismatched_key_fingerprint_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        server_cfg = self._matching_server_cfg('f' * 64)  # doesn't match the real file
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('fingerprint' in p for p in problems)
+
+    def test_mismatched_obdlink_serial_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['obdlink_serial'] = 'OBDLINK-MX-99999'
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('serial' in p for p in problems)
+
+    def test_mismatched_tier_permissions_refuses(self, tmp_path):
+        m = self._module()
+        key_file = tmp_path / 'obd_auth.key'
+        key_file.write_bytes(b'deadbeef' * 4)
+        real_fp = hashlib.sha256(key_file.read_bytes()).hexdigest()
+        server_cfg = self._matching_server_cfg(real_fp)
+        server_cfg['tier_permissions'] = {'OWNER': ['read_all']}  # weakened
+
+        with patch.object(m, 'KEY_FILE', str(key_file)), \
+             patch('urllib.request.urlopen', return_value=self._fake_response(server_cfg)):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert any('permission' in p for p in problems)
+
+    def test_unreachable_server_refuses_not_fails_open(self):
+        """A network/auth failure must itself count as a refusal — fail
+        closed on doubt, never fail open just because the check couldn't
+        run."""
+        m = self._module()
+        with patch('urllib.request.urlopen', side_effect=OSError('unreachable')):
+            ok, problems = m.check_config(
+                'http://server.example', 'test-pi-token',
+                '100.111.157.35', 'OBDLINK-MX-12345',
+            )
+        assert ok is False
+        assert len(problems) == 1
+
+
+class TestObdGatekeeperConfigSanityWiring:
+    """obd_gatekeeper.py's own _run_config_sanity_check() — the glue that
+    calls check_config() and decides whether main() may proceed."""
+
+    def _gatekeeper(self):
+        import importlib, sys
+        sys.modules.setdefault('RPi', MagicMock())
+        sys.modules.setdefault('RPi.GPIO', MagicMock())
+        _serial_mock = MagicMock()
+        _serial_mock.SerialException = IOError
+        sys.modules['serial'] = _serial_mock
+        if 'pi.obd_gatekeeper' in sys.modules:
+            importlib.reload(sys.modules['pi.obd_gatekeeper'])
+        import pi.obd_gatekeeper as gk
+        return gk
+
+    def test_skip_env_var_bypasses_check_entirely(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': '1'}), \
+             patch.object(gk.config_sanity_check, 'check_config') as mock_check:
+            gk._run_config_sanity_check()  # must not raise/exit
+        mock_check.assert_not_called()
+
+    def test_missing_archer_url_or_token_refuses_before_calling_check(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', ''), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', ''), \
+             patch.object(gk.config_sanity_check, 'check_config') as mock_check:
+            with pytest.raises(SystemExit):
+                gk._run_config_sanity_check()
+        mock_check.assert_not_called()
+
+    def test_matching_config_does_not_exit(self):
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', 'http://server.example'), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', 'test-pi-token'), \
+             patch.object(gk.config_sanity_check, 'check_config', return_value=(True, [])):
+            gk._run_config_sanity_check()  # must not raise/exit
+
+    def test_mismatched_config_exits_before_relay_setup(self):
+        """The concrete end-to-end wiring proof: a real mismatch must
+        reach sys.exit(1) via this exact call path, matching the
+        motivating case (a mismatched server IP)."""
+        gk = self._gatekeeper()
+        with patch.dict(os.environ, {'SKIP_CONFIG_SANITY_CHECK': ''}), \
+             patch.object(gk, 'ARCHER_URL', 'http://server.example'), \
+             patch.object(gk, 'ARCHER_PI_TOKEN', 'test-pi-token'), \
+             patch.object(gk.config_sanity_check, 'check_config',
+                          return_value=(False, ["server Tailscale IP mismatch: ..."])):
+            with pytest.raises(SystemExit):
+                gk._run_config_sanity_check()
+
+
+# ═══════════════════════════════════════════════════════════════
 # 31. OBD-II PID parser math
 # These mirror the inner functions defined in the obd polling thread.
 # Testing them by exercising the same formula the real code uses.
@@ -2263,6 +2574,215 @@ class TestJWT:
         from archer_state import decode_auth_jwt
         with pytest.raises(ValueError):
             decode_auth_jwt('notajwt')
+
+
+# ═══════════════════════════════════════════════════════════════
+# blueprints/vehicle.py's /remote/start — a real, live-relevant bug (the
+# Wear OS app has no WebView session to share a cookie with, so it
+# authenticates with only a Bearer JWT). csrf_required() already accepts a
+# Bearer JWT to satisfy CSRF, but get_request_tier() only ever read the
+# cookie, so a Bearer-only caller always 403'd as "Owner only" regardless
+# of its real tier. _owner_auth fixes this the same way blueprints/roku.py's
+# _roku_auth already does, tightened to tier == 1.
+# ═══════════════════════════════════════════════════════════════
+class TestRemoteStartOwnerAuth:
+    def setup_method(self):
+        self._patch = patch.object(archer, 'remote_start_engine', return_value=None)
+        self._patch.start()
+
+    def teardown_method(self):
+        self._patch.stop()
+
+    def test_tier1_bearer_succeeds_with_no_cookie_at_all(self):
+        """The actual Wear OS shape: no cookie, no CSRF token — Bearer only."""
+        from archer_state import make_auth_jwt
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': f'Bearer {make_auth_jwt(1, "Ayden")}'})
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+
+    def test_tier2_bearer_rejected_as_owner_only(self):
+        from archer_state import make_auth_jwt
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': f'Bearer {make_auth_jwt(2, "Khloe")}'})
+        assert r.status_code == 403
+        assert json.loads(r.data)['error'] == 'Owner only'
+
+    def test_invalid_bearer_with_no_session_hits_csrf_first(self):
+        """csrf_required() is the outer decorator and also tries to decode
+        any Bearer header to satisfy CSRF; when that fails too (garbage
+        token) and there's no session cookie either, its own CSRF-failure
+        403 fires before _owner_auth's more specific 401 ever gets a
+        chance to. Still fails closed — just via the outer decorator."""
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start', headers={'Authorization': 'Bearer not.a.valid.jwt'})
+        assert r.status_code == 403
+        assert json.loads(r.data)['error'] == 'CSRF validation failed'
+
+    def test_no_auth_falls_back_to_csrf_rejection(self):
+        c = archer.display_app.test_client()
+        r = c.post('/remote/start')
+        assert r.status_code == 403
+
+    def test_owner_cookie_flow_still_works_unaffected(self):
+        """Confirms the fix didn't touch the existing browser/cookie path —
+        uses the same _authed_client() helper (fresh client + matching
+        session/CSRF token) other cookie-based route tests use."""
+        c = _authed_client(1, 'Ayden')
+        r = c.post('/remote/start')
+        assert r.status_code == 200
+        assert json.loads(r.data)['ok'] is True
+
+
+# ═══════════════════════════════════════════════════════════════
+# 40b. Per-tier OBDLink Bluetooth auth (archer.py: make_obd_token via
+# archer_state, _resolve_obd_connection_tier(), obd2_display['tier'],
+# _filter_display_data_for_tier()'s OBD-field gate). No physical Pi exists
+# yet — see the class docstrings below for exactly what that does and
+# doesn't cover, rather than claiming hardware-level proof this can't give.
+# ═══════════════════════════════════════════════════════════════
+class TestMakeObdToken:
+    def test_round_trips_through_decode_auth_jwt(self):
+        """make_obd_token() must produce something decode_auth_jwt() (the
+        same verifier archer_auth sessions use) accepts — not a parallel
+        token format."""
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(2)
+        payload = decode_auth_jwt(token)
+        assert payload['tier'] == 2
+        assert payload['name'] == 'OBDLink'
+
+    def test_custom_name_preserved(self):
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(1, name='Owner Bluetooth Link')
+        assert decode_auth_jwt(token)['name'] == 'Owner Bluetooth Link'
+
+    def test_default_expiry_is_long_lived(self):
+        """Default expiry should suit a hardware connection's lifetime
+        (365 days), not a web session's (30) — confirms the two callers of
+        make_auth_jwt() aren't accidentally sharing the wrong default."""
+        from archer_state import make_obd_token, decode_auth_jwt
+        token = make_obd_token(1)
+        payload = decode_auth_jwt(token)
+        assert payload['exp'] - payload['iat'] == pytest.approx(86400 * 365, abs=5)
+
+
+class TestResolveObdConnectionTier:
+    """_resolve_obd_connection_tier() is the fail-closed gate obd_autodetect()
+    checks before ever opening a real serial connection — tested standalone
+    since the surrounding function is an infinite loop doing real hardware
+    I/O, not something to instantiate in a unit test."""
+
+    def test_valid_token_returns_its_tier(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(3)
+        assert archer._resolve_obd_connection_tier(token) == 3
+
+    def test_missing_token_returns_none(self):
+        assert archer._resolve_obd_connection_tier('') is None
+
+    def test_malformed_token_returns_none(self):
+        assert archer._resolve_obd_connection_tier('not-a-real-token') is None
+
+    def test_tampered_signature_returns_none(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(1)
+        parts = token.split('.')
+        parts[2] = parts[2][:-4] + 'XXXX'
+        assert archer._resolve_obd_connection_tier('.'.join(parts)) is None
+
+    def test_expired_token_returns_none(self):
+        from archer_state import make_obd_token
+        token = make_obd_token(1, days=-1)
+        assert archer._resolve_obd_connection_tier(token) is None
+
+    def test_out_of_range_tier_is_clamped_not_rejected(self):
+        """Matches get_request_tier()'s own existing max(1, min(4, tier))
+        clamp — a valid, correctly-signed token with a nonsensical tier
+        number is normalized, not treated as equivalent to no token at all."""
+        from archer_state import make_obd_token
+        token_low  = make_obd_token(0)
+        token_high = make_obd_token(99)
+        assert archer._resolve_obd_connection_tier(token_low)  == 1
+        assert archer._resolve_obd_connection_tier(token_high) == 4
+
+    def test_non_numeric_tier_in_payload_returns_none(self):
+        """A well-signed token whose tier claim isn't int-convertible at all
+        (not just out of range) must fail closed, not raise uncaught."""
+        from archer_state import _b64url_enc, _JWT_HEADER, _csrf_secret
+        import json, hmac, hashlib
+        body_dict = {'tier': 'not-a-number', 'name': 'OBDLink', 'iat': 0, 'exp': 9999999999}
+        body = _b64url_enc(json.dumps(body_dict).encode())
+        msg  = f'{_JWT_HEADER}.{body}'
+        sig  = _b64url_enc(hmac.new(_csrf_secret, msg.encode(), hashlib.sha256).digest())
+        token = f'{msg}.{sig}'
+        assert archer._resolve_obd_connection_tier(token) is None
+
+
+class TestObdTierFiltering:
+    """_filter_display_data_for_tier()'s OBD-field gate — enforced on every
+    call, not just once at connect time (requirement #2)."""
+
+    def setup_method(self):
+        self._backup = dict(archer.obd2_display)
+
+    def teardown_method(self):
+        archer.obd2_display.clear()
+        archer.obd2_display.update(self._backup)
+
+    def _sample_dict(self):
+        return {f: 'x' for f in archer._OBD2_LIVE_FIELDS}
+
+    def test_caller_below_ceiling_loses_obd_fields(self):
+        """Tier 3 caller, connection granted tier 1 (owner-only) -> stripped."""
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 1
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 3)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f not in d
+
+    def test_caller_at_ceiling_keeps_obd_fields(self):
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 3
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 3)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_caller_more_privileged_than_ceiling_keeps_obd_fields(self):
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = 3
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 1)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_sim_mode_never_gates_obd_fields(self):
+        """No real, tier-tokened connection exists in sim mode — nothing to
+        enforce, regardless of caller tier."""
+        archer.obd2_display['mode'] = 'default'
+        archer.obd2_display['tier'] = None
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 4)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_live_mode_with_no_ceiling_does_not_gate(self):
+        """Defensive case: mode says live but tier is somehow None (should
+        not happen given obd_autodetect()'s own gating, but the filter
+        itself must not crash or silently over-restrict if it does)."""
+        archer.obd2_display['mode'] = 'live'
+        archer.obd2_display['tier'] = None
+        d = archer._filter_display_data_for_tier(self._sample_dict(), 4)
+        for f in archer._OBD2_LIVE_FIELDS:
+            assert f in d
+
+    def test_sensitive_gps_fields_still_gated_independently(self):
+        """Regression check: the pre-existing GPS/surveillance gate must
+        keep working unchanged alongside the new OBD gate."""
+        archer.obd2_display['mode'] = 'default'
+        archer.obd2_display['tier'] = None
+        d = {f: 'x' for f in archer._DISPLAY_DATA_SENSITIVE_FIELDS}
+        d = archer._filter_display_data_for_tier(d, 3)
+        for f in archer._DISPLAY_DATA_SENSITIVE_FIELDS:
+            assert f not in d
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3503,8 +4023,15 @@ class TestSlackDigest:
 class TestObdPortOverride:
     def test_obd_port_set_skips_scan_and_connects_there(self):
         """When OBD_PORT is set, it must be used directly, every loop
-        iteration — not just consulted once alongside the scan."""
-        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0'}), \
+        iteration — not just consulted once alongside the scan.
+
+        Needs a valid OBD_ACCESS_TOKEN too now — the per-tier auth gate
+        (checked before the port is even opened) would otherwise block this
+        before serial.Serial() is ever reached, which isn't what this test
+        is about (see TestResolveObdConnectionTier/TestObdTierFiltering for
+        that)."""
+        from archer_state import make_obd_token
+        with patch.dict(os.environ, {'OBD_PORT': '/dev/rfcomm0', 'OBD_ACCESS_TOKEN': make_obd_token(1)}), \
              patch('serial.tools.list_ports.comports') as mock_comports, \
              patch('serial.Serial', side_effect=RuntimeError('boom')) as mock_serial_cls, \
              patch('time.sleep', side_effect=RuntimeError('stop-loop')):
@@ -4012,6 +4539,166 @@ class TestPanicActivateRoute:
         r = c.post('/panic/activate', json={'window_minutes': 5})
         d = json.loads(r.data)
         assert d['window_secs'] == 300
+
+
+# ═══════════════════════════════════════════════════════════════
+# AI provider calls must carry a real User-Agent, and the listener's bind
+# address must be overridable. Both found by re-verifying the security audit
+# on the physical server: Groq/Cerebras returned HTTP 403 (Cloudflare error
+# 1010) for Python-urllib's default UA, so every request silently fell
+# through to "[AI] Fallback"; and archer.py's port was reachable directly,
+# bypassing Caddy's path allowlist, because host was hard-coded to 0.0.0.0.
+# ═══════════════════════════════════════════════════════════════
+class TestAiProviderUserAgent:
+    def test_every_ask_archer_provider_request_sends_user_agent(self):
+        keys = {'GROQ_API_KEY': 'k1', 'CLOUDFLARE_ACCOUNT_ID': 'acct1', 'CLOUDFLARE_API_TOKEN': 'k2',
+                'GEMINI_API_KEY': 'k3', 'OPENROUTER_API_KEY': 'k4'}
+        with patch.dict(os.environ, keys), \
+             patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+            archer.ask_archer('what is the capital of France?')
+        reqs = [c.args[0] for c in mock_urlopen.call_args_list
+                if hasattr(c.args[0], 'get_header')]
+        hosts = {r.host for r in reqs}
+        assert {'api.groq.com', 'api.cloudflare.com',
+                'generativelanguage.googleapis.com', 'openrouter.ai'} <= hosts
+        for r in reqs:
+            if r.host in ('api.groq.com', 'api.cloudflare.com',
+                          'generativelanguage.googleapis.com', 'openrouter.ai'):
+                assert r.get_header('User-agent') == archer._DISCORD_USER_AGENT, r.host
+
+    def test_casual_monitor_provider_calls_send_user_agent(self):
+        """The duplicate provider chain inside casual_monitor() swallows every
+        exception, so a missing header there would be completely silent —
+        check the source directly."""
+        import inspect, re
+        src = inspect.getsource(archer.casual_monitor)
+        calls = re.findall(r"urllib\.request\.Request\(\s*f?'https://(?:api\.groq|api\.cloudflare|generativelanguage|openrouter)[^)]*\)", src, re.S)
+        assert len(calls) == 4
+        for c in calls:
+            assert "'User-Agent': _DISCORD_USER_AGENT" in c
+
+# ═══════════════════════════════════════════════════════════════
+# Cloudflare Workers AI replaces Cerebras in the fallback chain's second slot
+# — a genuinely separate account/provider (confirmed live before wiring in:
+# real answer, ~2.9 Neurons/request against Cloudflare's 10,000/day free
+# allocation), not another model on an existing key. Cerebras' 402 Payment
+# Required was a real account-balance issue that a same-account model swap
+# could never have fixed.
+# ═══════════════════════════════════════════════════════════════
+class TestCloudflareWorkersAiProvider:
+    def _keys(self, **over):
+        k = {'GROQ_API_KEY': '', 'CLOUDFLARE_ACCOUNT_ID': 'acct123', 'CLOUDFLARE_API_TOKEN': 'tok456',
+             'GEMINI_API_KEY': '', 'OPENROUTER_API_KEY': ''}
+        k.update(over)
+        return k
+
+    def test_request_url_embeds_account_id_and_has_bearer_and_user_agent(self):
+        with patch.dict(os.environ, self._keys(), clear=False),              patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+            archer.ask_archer('what is the capital of France?')
+        cf = [c.args[0] for c in mock_urlopen.call_args_list
+              if hasattr(c.args[0], 'get_header') and c.args[0].host == 'api.cloudflare.com']
+        assert len(cf) == 1
+        req = cf[0]
+        assert req.full_url == ('https://api.cloudflare.com/client/v4/accounts/'
+                                 'acct123/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast')
+        assert req.get_header('Authorization') == 'Bearer tok456'
+        assert req.get_header('User-agent') == archer._DISCORD_USER_AGENT
+
+    def test_skipped_when_either_credential_missing(self):
+        for missing in ('CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'):
+            with patch.dict(os.environ, self._keys(**{missing: ''}), clear=False),                  patch('urllib.request.urlopen', side_effect=OSError('offline')) as mock_urlopen:
+                archer.ask_archer('what is the capital of France?')
+            assert not any(hasattr(c.args[0], 'host') and c.args[0].host == 'api.cloudflare.com'
+                            for c in mock_urlopen.call_args_list), missing
+
+    def test_parses_result_response_shape_not_choices_shape(self):
+        """Workers AI wraps its answer in {"result": {"response": ...}} —
+        the OpenAI-style {"choices": [{"message": ...}]} shape the other
+        four providers use does not apply here."""
+        cm = MagicMock()
+        cm.__enter__.return_value.read.return_value = json.dumps(
+            {'result': {'response': 'Paris is the capital of France.'}}).encode()
+        cm.__exit__.return_value = False
+        with patch.dict(os.environ, self._keys(), clear=False),              patch('urllib.request.urlopen', return_value=cm):
+            r = archer.ask_archer('what is the capital of France?')
+        assert r == 'Paris is the capital of France.'
+
+    def test_casual_monitor_has_no_cerebras_left(self):
+        import inspect
+        src = inspect.getsource(archer.casual_monitor)
+        assert 'cerebras' not in src.lower()
+        assert 'CLOUDFLARE_ACCOUNT_ID' in src and 'CLOUDFLARE_API_TOKEN' in src
+
+
+class TestBindHostOverride:
+    def _run(self, env):
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(archer, '_get_tls_context', return_value=None), \
+             patch.object(archer.display_app, 'run') as mock_run:
+            os.environ.pop('ARCHER_BIND_HOST', None) if 'ARCHER_BIND_HOST' not in env else None
+            archer.run_display_server()
+        return mock_run.call_args.kwargs
+
+    def test_default_bind_unchanged(self):
+        assert self._run({})['host'] == '0.0.0.0'
+
+    def test_env_override_binds_loopback(self):
+        assert self._run({'ARCHER_BIND_HOST': '127.0.0.1'})['host'] == '127.0.0.1'
+
+
+# ═══════════════════════════════════════════════════════════════
+# Real, live-confirmed bug: Caddy proxies to loopback, so request.remote_addr
+# was always 127.0.0.1 for every request through it, real caller or not —
+# not "spoofable", unconditionally true — for every loopback check
+# (_is_tailscale_or_loopback(), the console-kiosk login bypass). ProxyFix
+# restores the real client IP, but only when ARCHER_BIND_HOST signals a
+# local proxy is actually in front (archer-os/HuggingFace have neither a
+# proxy nor this env var set, and must NOT trust a client-supplied
+# X-Forwarded-For, or they'd become newly spoofable). The gate is decided
+# at import time (module-level code next to display_app's creation), so it
+# needs a subprocess to test both branches — the already-imported archer
+# module in this test process reflects whatever ARCHER_BIND_HOST happened
+# to be unset at collection time.
+# ═══════════════════════════════════════════════════════════════
+class TestProxyFixGatedOnBindHost:
+    def test_not_applied_in_this_process_without_bind_host_set(self):
+        """Documents the default (this test process never set
+        ARCHER_BIND_HOST before importing archer): unwrapped wsgi_app,
+        remote_addr is the raw WSGI peer, matching archer-os/HuggingFace."""
+        assert type(archer.display_app.wsgi_app).__name__ != 'ProxyFix'
+
+    def _import_archer_in_subprocess(self, bind_host):
+        script = f'''
+import os, sys
+os.environ["ARCHER_SECRET"] = "test_secret_xyz"
+os.environ["HF_TOKEN"] = ""
+os.environ["GROQ_API_KEY"] = ""
+os.environ["GEOCODE_API_KEY"] = ""
+os.environ["PORT"] = "17861"
+if {bind_host!r} is not None:
+    os.environ["ARCHER_BIND_HOST"] = {bind_host!r}
+from unittest.mock import MagicMock
+import threading
+for mod in ["serial", "vosk", "sounddevice", "piper_tts"]:
+    sys.modules.setdefault(mod, MagicMock())
+threading.Thread.start = lambda self: None
+import archer
+print(type(archer.display_app.wsgi_app).__name__)
+'''
+        r = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr[-2000:]
+        return r.stdout.strip().splitlines()[-1]
+
+    def test_applied_when_bind_host_is_loopback(self):
+        assert self._import_archer_in_subprocess('127.0.0.1') == 'ProxyFix'
+
+    def test_not_applied_when_bind_host_is_default(self):
+        assert self._import_archer_in_subprocess(None) != 'ProxyFix'
+
+    def test_not_applied_when_bind_host_is_0000(self):
+        """Explicit 0.0.0.0 (the archer-os/HuggingFace default) must not
+        trust a client-supplied X-Forwarded-For either."""
+        assert self._import_archer_in_subprocess('0.0.0.0') != 'ProxyFix'
 
 
 class TestWeatherCompareCache:

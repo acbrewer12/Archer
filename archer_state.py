@@ -117,6 +117,14 @@ def make_auth_jwt(tier: int, name: str, days: int = 30) -> str:
     sig  = _b64url_enc(_hmac.new(_csrf_secret, msg.encode(), _hashlib.sha256).digest())
     return f'{msg}.{sig}'
 
+def make_obd_token(tier: int, name: str = 'OBDLink', days: int = 365) -> str:
+    """Signed tier-ceiling token binding an OBDLink connection to a tier —
+    same HS256 JWT primitives as make_auth_jwt() (same secret, same
+    verification path via decode_auth_jwt()), reused rather than
+    re-implemented. Just minted for a hardware connection's lifetime
+    instead of a web session's, hence the longer default expiry."""
+    return make_auth_jwt(tier, name, days=days)
+
 def decode_auth_jwt(token: str) -> dict:
     """Verify and decode an HS256 archer_auth JWT. Raises ValueError on any failure."""
     parts = token.split('.')

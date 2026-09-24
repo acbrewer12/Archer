@@ -43,7 +43,23 @@
     # and matches the Dockerfile's `PORT=7860 python3 archer.py`. Override with
     # self-host/archer.service's PORT env var if you ever change it — keep
     # this port number in sync with that file if you do.
-    reverse_proxy 127.0.0.1:7860
+    # The Pi (tag:pi) may only make its own four calls. A Tailscale ACL can
+    # only filter by port, so once the Pi is allowed to reach :8080 at all it
+    # could otherwise reach this whole block (login, display_data, ...) — this
+    # closes that at the path level, for that one source IP only. Exact paths,
+    # not a `/terminal/pi_*` prefix: /terminal/pi_status is a Tier-1 read the
+    # Pi never calls. Every other source is unaffected. Set the placeholder to
+    # the Pi's own Tailscale IP (`tailscale ip -4` on the Pi); with no Pi in
+    # the deployment, delete the @pi_denied matcher and its respond line.
+    # `route` is required for the same ordering reason as the public block.
+    @pi_denied {
+        remote_ip <your-pi-tailscale-ip>
+        not path /csrf_token /terminal/pi_register /terminal/pi_disconnect /terminal/pi_config_check
+    }
+    route {
+        respond @pi_denied 403
+        reverse_proxy 127.0.0.1:7860
+    }
 }
 
 # --- PUBLIC: fan page, genuinely internet-facing ---

@@ -587,3 +587,60 @@ def pi_disconnect():
     pi_tunnel_url['url']    = None
     print('[PI] Disconnected')
     return jsonify({'status': 'ok'})
+
+
+# Must be kept in sync with pi/key_manager.py's generate_owner_key() /
+# generate_mechanic_key() / generate_readonly_key() ("permissions" metadata)
+# and pi/obd_gatekeeper.py's own OWNER_PERMISSIONS fallback — this is a
+# third, explicit copy of that same information, not a fix for the existing
+# duplication across those two Pi-side files. The whole point of the config
+# sanity check this feeds is to catch copies disagreeing, so an extra named
+# copy with an alarm attached is the intended shape here, not an oversight —
+# consolidating all three into one real source of truth is a separate,
+# larger follow-up (same class of issue as the tier-ID duplication already
+# tracked for Slack/Discord).
+_EXPECTED_TIER_PERMISSIONS = {
+    'OWNER':    ['read_all', 'write_all', 'admin'],
+    'MECHANIC': ['read_all', 'write_non_security'],
+    'READONLY': ['read_all'],
+}
+
+# 30s window, matching obd_gatekeeper.py's own TIMESTAMP_WINDOW — same
+# replay-protection idea (a captured request can't be replayed once the
+# window closes), sized for a config check's single-request round trip
+# rather than re-implementing that handshake's full nonce exchange for
+# something that isn't the actual OBD2 port security perimeter (that
+# remains obd_gatekeeper.py's own HMAC handshake, unchanged by this).
+_PI_CONFIG_CHECK_WINDOW_SECS = 30
+
+
+@bp.route('/terminal/pi_config_check', methods=['POST'])
+@_limiter.limit('20 per hour')
+def pi_config_check():
+    """Server-to-Pi config sanity handshake — see pi/config_sanity_check.py
+    for the full design rationale (called before every Pi boot's real
+    obd_gatekeeper.py handshake). Not @csrf_required: that decorator exists
+    to protect browser-session-authenticated actions from cross-site
+    requests, which doesn't fit a boot-time script with no browser session
+    — this is a plain pre-shared-secret + timestamp-bound machine
+    credential instead, reusing ARCHER_PI_TOKEN rather than minting a
+    second, redundant secret for the same "is this really the Pi" question
+    pi_register() already answers."""
+    import config as _config
+    data      = request.get_json() or {}
+    token     = data.get('token', '')
+    timestamp = data.get('timestamp')
+    if not _ARCHER_PI_TOKEN or not _hmac.compare_digest(token, _ARCHER_PI_TOKEN):
+        return jsonify({'error': 'Invalid token'}), 403
+    try:
+        age = abs(time.time() - float(timestamp))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid timestamp'}), 403
+    if age > _PI_CONFIG_CHECK_WINDOW_SECS:
+        return jsonify({'error': 'Timestamp out of window'}), 403
+    return jsonify({
+        'server_tailscale_ip':       _config.SERVER_TAILSCALE_IP,
+        'gatekeeper_key_fingerprint': _config.GATEKEEPER_KEY_FINGERPRINT,
+        'obdlink_serial':            _config.OBDLINK_SERIAL,
+        'tier_permissions':          _EXPECTED_TIER_PERMISSIONS,
+    })

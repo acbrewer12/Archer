@@ -23,7 +23,7 @@ android {
         // Centralized backend URL - change this one line (or override
         // per build variant below) rather than hunting through source
         // files when switching from HuggingFace to a home server
-        buildConfigField("String", "ARCHER_BASE_URL", "\"https://aydencatman-archer.hf.space\"")
+        buildConfigField("String", "ARCHER_BASE_URL", "\"http://100.108.48.64:8080\"")
     }
 
     buildFeatures {

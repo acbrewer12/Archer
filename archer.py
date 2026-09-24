@@ -240,6 +240,32 @@ import logging as _logging
 
 display_app            = Flask(__name__)
 display_app.secret_key = _ARCHER_SECRET
+
+# On the self-hosted deployment, Caddy reverse-proxies every request to this
+# app (both the public :80 and private :8080 blocks bind Caddy, not
+# archer.py, per self-host/Caddyfile), so request.remote_addr is Caddy's own
+# loopback connection, not the real client, unless something restores it.
+# Confirmed live: without this, every request through Caddy showed
+# remote_addr == 127.0.0.1 regardless of the real caller or any
+# X-Forwarded-For header, which makes every loopback check
+# (_is_tailscale_or_loopback(), the console-kiosk login bypass at
+# require_boot()) unconditionally true for ALL traffic — not "spoofable",
+# unconditionally bypassed. x_for=1 trusts exactly one hop, matching Caddy
+# being the only proxy in front — confirmed live that Caddy's default
+# reverse_proxy overwrites X-Forwarded-For with the real observed peer IP
+# rather than forwarding a client-supplied value, so this one hop is safe
+# to trust there.
+#
+# Gated on ARCHER_BIND_HOST==127.0.0.1 (the same signal run_display_server()
+# uses to mean "only a local reverse proxy can reach this directly") rather
+# than applied unconditionally: the in-truck archer-os build and the
+# HuggingFace Space have no local proxy sanitizing headers, so trusting
+# X-Forwarded-For there would let any direct LAN/console client spoof its
+# own IP — the opposite of this fix's purpose. Neither sets this env var,
+# so they are unaffected.
+if os.environ.get('ARCHER_BIND_HOST', '0.0.0.0') in ('127.0.0.1', 'localhost'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    display_app.wsgi_app = ProxyFix(display_app.wsgi_app, x_for=1)
 last_archer_msg = {'text': 'Online. Everything looks good.'}
 audio_clients   = []
 audio_lock      = threading.Lock()
@@ -347,6 +373,15 @@ def rate_limit_handler(e):
 obd2_display = {
     'connected': False,
     'mode':      'default',
+    # Tier ceiling granted by the current live connection's OBD_ACCESS_TOKEN
+    # (see _resolve_obd_connection_tier() / obd_autodetect()) — None means no
+    # authorized real connection exists (sim mode, or a real adapter found
+    # but with no valid token, which is treated the same as not connected).
+    # _filter_display_data_for_tier() checks this on every call, not just at
+    # connect time — a caller whose own tier is numerically greater (less
+    # privileged) than this ceiling never sees live OBD fields, regardless
+    # of how long the connection has been open.
+    'tier':      None,
 }
 
 arduino_state = {'connected': False, 'port': None, 'conn': None, 'reader_thread': None,
@@ -787,8 +822,6 @@ def save_state():
         'drive_score':       drive_score,
         'drive_grade':       drive_grade,
         'show_running':      show_sequence['running'],
-        'openclaw_connected': openclaw['connected'],
-        'openclaw_enabled':  openclaw['enabled'],
         'discord_enabled':   discord_config['enabled'],
         'crash_events':      len(crash_detection['events']),
         'auto_lights':       auto_features['auto_lights'],
@@ -2064,20 +2097,26 @@ Truck data right now:
 
     response = None
 
-    # Try 1 — Groq llama-3.3-70b-versatile (PRIMARY: ~0.27s TTFT, 92.1 IFEval, no thinking mode)
+    # Try 1 — Groq openai/gpt-oss-120b (PRIMARY: llama-3.3-70b-versatile was
+    # retired from this account — confirmed live, HTTP 404 model_not_found —
+    # gpt-oss-120b is what's actually available and answers correctly at
+    # this max_tokens budget; gpt-oss-20b was tested too but its reasoning
+    # eats the whole budget before it emits any content)
     if not response:
         GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
         if GROQ_KEY:
             try:
                 payload = json.dumps({
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "openai/gpt-oss-120b",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
                 req = urllib.request.Request(
                     "https://api.groq.com/openai/v1/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+                    # User-Agent required: Cloudflare (error 1010) 403s Python-urllib's default
+                    # UA on Groq/Cerebras — same root cause as _DISCORD_USER_AGENT.
+                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read())
@@ -2088,29 +2127,35 @@ Truck data right now:
             except Exception as e:
                 print(f"[AI] Groq failed: {e}")
 
-    # Try 2 — Cerebras gpt-oss-120b (FALLBACK: 1M tokens/day, different provider for true redundancy)
+    # Try 2 — Cloudflare Workers AI llama-3.3-70b (FALLBACK: replaces
+    # Cerebras in this slot — Cerebras' 402 Payment Required was a real
+    # account-balance issue, not a model problem, and a genuinely separate
+    # account/provider was wanted here rather than another model on an
+    # existing key. Confirmed live before wiring in: real answer, ~2.9
+    # Neurons/request against a 10,000 Neurons/day free allocation —
+    # thousands of requests/day before any billing applies.)
     if not response:
-        CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
-        if CEREBRAS_KEY:
+        CF_ACCOUNT = os.environ.get('CLOUDFLARE_ACCOUNT_ID', '')
+        CF_TOKEN   = os.environ.get('CLOUDFLARE_API_TOKEN', '')
+        if CF_ACCOUNT and CF_TOKEN:
             try:
                 payload = json.dumps({
-                    "model": "gpt-oss-120b",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
                 req = urllib.request.Request(
-                    "https://api.cerebras.ai/v1/chat/completions",
+                    f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
                     data=payload,
-                    headers={"Authorization": f"Bearer {CEREBRAS_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
-                    r = data['choices'][0]['message']['content'].strip()
+                    r = data['result']['response'].strip()
                     if r and len(r) > 2:
                         response = r
-                        print("[AI] Cerebras gpt-oss-120b")
+                        print("[AI] Cloudflare llama-3.3-70b")
             except Exception as e:
-                print(f"[AI] Cerebras failed: {e}")
+                print(f"[AI] Cloudflare failed: {e}")
 
     # Try 3 — Gemini 2.5 Flash-Lite (TERTIARY: thinking off by default, 1K RPD; 2.0 shuts down Sept 24 2026)
     if not response:
@@ -2125,7 +2170,7 @@ Truck data right now:
                 req = urllib.request.Request(
                     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {GEMINI_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
@@ -2142,22 +2187,27 @@ Truck data right now:
     # provider for true redundancy" reasoning already on the Cerebras step
     # above; collapsing them into one OpenRouter key would trade that
     # redundancy for a single upstream account/billing point of failure.
-    # Model choice (meta-llama/llama-3.3-70b-instruct) is a reasonable
-    # default, not a requirement — swap it for whatever OpenRouter model/
-    # routing preference is actually wanted.
+    # Model choice: nvidia/nemotron-3-ultra-550b-a55b:free — the previous
+    # choice, meta-llama/llama-3.3-70b-instruct (no :free suffix), is a paid
+    # model on OpenRouter ($0.0000001/$0.00000032 per token, confirmed live
+    # against /api/v1/models) and was the actual, direct cause of the 402
+    # Payment Required seen in the audit, separate from any account-balance
+    # issue. This :free variant is confirmed $0/$0 pricing and a real
+    # response, live. Not a requirement — swap it for whatever OpenRouter
+    # model/routing preference is actually wanted.
     if not response:
         OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
         if OPENROUTER_KEY:
             try:
                 payload = json.dumps({
-                    "model": "meta-llama/llama-3.3-70b-instruct",
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
                 req = urllib.request.Request(
                     "https://openrouter.ai/api/v1/chat/completions",
                     data=payload,
-                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"}
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json", "User-Agent": _DISCORD_USER_AGENT}
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read())
@@ -5484,128 +5534,6 @@ def smart_fallback(text):
 
 
 # ══════════════════════════════════════════
-# OPENCLAW INTEGRATION
-# ══════════════════════════════════════════
-openclaw = {
-    'enabled':    False,
-    'url':        'http://localhost:18789',   # default OpenClaw gateway port
-    'api_key':    '',
-    'connected':  False,
-    'last_task':  None,
-    'task_log':   [],
-    'tier_access': [1, 2],   # Tiers that can use OpenClaw
-    'model':      'ollama/llama3.2',  # runs local — no API key needed
-}
-
-# Tasks Tier 2 is allowed to use
-OPENCLAW_TIER2_ALLOWED = [
-    'weather', 'news', 'search', 'remind', 'message',
-    'text', 'whatsapp', 'find', 'what is', 'look up',
-]
-
-def openclaw_check_connection():
-    try:
-        with urllib.request.urlopen(f'{openclaw["url"]}/health', timeout=3) as r:
-            if r.status == 200:
-                openclaw['connected'] = True
-                return True
-    except:
-        pass
-    openclaw['connected'] = False
-    return False
-
-def openclaw_task(task, tier=1):
-    """Send a task to OpenClaw and return the result."""
-    if not openclaw['enabled']:
-        return None
-    if tier not in openclaw['tier_access']:
-        return 'OpenClaw access not available for your tier.'
-
-    # Tier 2 filter — only allowed task types
-    if tier == 2:
-        allowed = any(kw in task.lower() for kw in OPENCLAW_TIER2_ALLOWED)
-        if not allowed:
-            return 'That task is not available in passenger mode.'
-
-    if not openclaw_check_connection():
-        return 'OpenClaw is not running. Start it with: npx clawdbot@latest'
-
-    try:
-        import json as _json
-        payload = _json.dumps({
-            'message': task,
-            'model':   openclaw['model'],
-        }).encode()
-
-        req = urllib.request.Request(
-            f'{openclaw["url"]}/api/message',
-            data    = payload,
-            headers = {
-                'Content-Type':  'application/json',
-                'Authorization': f'Bearer {openclaw["api_key"]}' if openclaw['api_key'] else '',
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            result = _json.loads(r.read())
-            text   = result.get('text') or result.get('content') or result.get('message') or str(result)
-
-            # Log the task
-            entry = {
-                'task':   task,
-                'result': text[:200],
-                'time':   datetime.now().strftime('%I:%M %p'),
-                'tier':   tier,
-            }
-            openclaw['task_log'].append(entry)
-            if len(openclaw['task_log']) > 50:
-                openclaw['task_log'].pop(0)
-            openclaw['last_task'] = entry
-
-            print(f'[OPENCLAW] Task: {task[:60]}')
-            print(f'[OPENCLAW] Result: {text[:120]}')
-            return text
-
-    except urllib.error.URLError as e:
-        return f'OpenClaw connection failed: {str(e)[:60]}'
-    except Exception as e:
-        return f'OpenClaw error: {str(e)[:60]}'
-
-def openclaw_monitor():
-    """Background thread — checks OpenClaw connection every 60s."""
-    while True:
-        if openclaw['enabled']:
-            was_connected = openclaw['connected']
-            now_connected = openclaw_check_connection()
-            if now_connected and not was_connected:
-                print('[OPENCLAW] Connected.')
-            elif not now_connected and was_connected:
-                print('[OPENCLAW] Disconnected.')
-        time.sleep(60)
-
-def is_openclaw_task(text):
-    """Detect if a command should be routed to OpenClaw instead of Archer."""
-    keywords = [
-        'check my email', 'read my email', 'send email', 'email',
-        'check my messages', 'send a message', 'text', 'whatsapp',
-        'search the web', 'look up', 'google', 'find online',
-        'browse', 'open website', 'go to website',
-        'remind me', 'set reminder', 'schedule',
-        'download', 'post to', 'tweet', 'instagram',
-        'order', 'buy', 'price check',
-        'news', 'latest news', 'what is happening',
-        'play music', 'pause music', 'next song',
-        'control', 'automate', 'run script',
-        'track my package', 'shipping',
-        'check price', 'how much is',
-        'calendar', 'what do i have today',
-        'notification', 'alert me when',
-    ]
-    t = text.lower()
-    return any(kw in t for kw in keywords)
-
-
-# ══════════════════════════════════════════
 # DISCORD NOTIFICATIONS
 # ══════════════════════════════════════════
 discord_config = {
@@ -6816,28 +6744,28 @@ Archer says:"""
             GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
             if GROQ_KEY:
                 try:
-                    payload = json.dumps({'model': 'llama-3.3-70b-versatile',
+                    payload = json.dumps({'model': 'openai/gpt-oss-120b',
                                           'messages': [{'role': 'user', 'content': prompt}],
                                           'max_tokens': 80, 'temperature': 0.8}).encode()
                     req = urllib.request.Request(
                         'https://api.groq.com/openai/v1/chat/completions',
-                        data=payload, headers={'Authorization': f'Bearer {GROQ_KEY}', 'Content-Type': 'application/json'})
+                        data=payload, headers={'Authorization': f'Bearer {GROQ_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                     with urllib.request.urlopen(req, timeout=8) as r:
                         response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                 except Exception:
                     pass
             if not response:
-                CEREBRAS_KEY = os.environ.get('CEREBRAS_API_KEY', '')
-                if CEREBRAS_KEY:
+                CF_ACCOUNT = os.environ.get('CLOUDFLARE_ACCOUNT_ID', '')
+                CF_TOKEN   = os.environ.get('CLOUDFLARE_API_TOKEN', '')
+                if CF_ACCOUNT and CF_TOKEN:
                     try:
-                        payload = json.dumps({'model': 'gpt-oss-120b',
-                                              'messages': [{'role': 'user', 'content': prompt}],
+                        payload = json.dumps({'messages': [{'role': 'user', 'content': prompt}],
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
-                            'https://api.cerebras.ai/v1/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {CEREBRAS_KEY}', 'Content-Type': 'application/json'})
+                            f'https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+                            data=payload, headers={'Authorization': f'Bearer {CF_TOKEN}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
-                            response = json.loads(r.read())['choices'][0]['message']['content'].strip()
+                            response = json.loads(r.read())['result']['response'].strip()
                     except Exception:
                         pass
             if not response:
@@ -6849,7 +6777,7 @@ Archer says:"""
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
                             'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json'})
+                            data=payload, headers={'Authorization': f'Bearer {GEMINI_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -6858,12 +6786,12 @@ Archer says:"""
                 OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '')
                 if OPENROUTER_KEY:
                     try:
-                        payload = json.dumps({'model': 'meta-llama/llama-3.3-70b-instruct',
+                        payload = json.dumps({'model': 'nvidia/nemotron-3-ultra-550b-a55b:free',
                                               'messages': [{'role': 'user', 'content': prompt}],
                                               'max_tokens': 80, 'temperature': 0.8}).encode()
                         req = urllib.request.Request(
                             'https://openrouter.ai/api/v1/chat/completions',
-                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json'})
+                            data=payload, headers={'Authorization': f'Bearer {OPENROUTER_KEY}', 'Content-Type': 'application/json', 'User-Agent': _DISCORD_USER_AGENT})
                         with urllib.request.urlopen(req, timeout=10) as r:
                             response = json.loads(r.read())['choices'][0]['message']['content'].strip()
                     except Exception:
@@ -7858,7 +7786,6 @@ canvas.graph { width:100%; border-radius:2px; }
   <div class="tab" onclick="setMode('build')">BUILD</div>
   <div class="tab" onclick="setMode('live')">LIVE</div>
   <div class="tab" onclick="setMode('cams')">CAMS</div>
-  <div class="tab" id="claw-tab" onclick="setMode('claw')" style="display:none">CLAW</div>
   <div class="tab" onclick="setMode('music')">MUSIC</div>
 </div>
 
@@ -8328,36 +8255,6 @@ canvas.graph { width:100%; border-radius:2px; }
     </div>
   </div>
 
-  <!-- OPENCLAW MODE — Tier 1 and 2 only -->
-  <div id="mode-claw" class="mode-screen">
-    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #00cc44;margin-bottom:6px">
-      <div style="font-size:9px;color:#00cc44;letter-spacing:3px">OPENCLAW AGENT</div>
-      <div id="claw-status-dot" style="width:6px;height:6px;border-radius:50%;background:#333"></div>
-      <div id="claw-status-text" style="font-size:8px;color:#333;letter-spacing:1px">OFFLINE</div>
-    </div>
-
-    <!-- Chat history -->
-    <div id="claw-history" style="flex:1;overflow-y:auto;font-size:10px;line-height:1.7;min-height:120px;max-height:220px;padding:2px 0;margin-bottom:6px">
-      <div style="color:#333;font-size:9px">OpenClaw can browse the web, check email, send messages, search for parts prices and more. Only you and your passenger can use this.</div>
-    </div>
-
-    <!-- Quick actions -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
-      <button class="vc-btn" onclick="clawQuick('check my email')"><span style="font-size:14px">📧</span><span>EMAIL</span></button>
-      <button class="vc-btn" onclick="clawQuick('latest news')"><span style="font-size:14px">📰</span><span>NEWS</span></button>
-      <button class="vc-btn" onclick="clawQuick('search RockAuto for LSA parts prices')"><span style="font-size:14px">🔍</span><span>PARTS</span></button>
-      <button class="vc-btn" onclick="clawQuick('what is the weather forecast for Salem MO this week')"><span style="font-size:14px">🌦</span><span>FORECAST</span></button>
-      <button class="vc-btn" onclick="clawQuick('check if I have any reminders today')"><span style="font-size:14px">🔔</span><span>REMINDERS</span></button>
-      <button class="vc-btn" onclick="clawQuick('track my latest package')"><span style="font-size:14px">📦</span><span>TRACKING</span></button>
-    </div>
-
-    <!-- Input -->
-    <div style="display:flex;gap:5px">
-      <input id="claw-input" placeholder="Tell OpenClaw to do something..." style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:8px;color:#fff;font-family:monospace;font-size:10px;outline:none;min-width:0"/>
-      <button onclick="clawSend()" style="background:#001a00;border:1px solid #00cc44;color:#00cc44;font-family:monospace;font-size:9px;padding:8px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;letter-spacing:1px">GO</button>
-    </div>
-  </div>
-
   <!-- MUSIC (Spotify) -->
   <div id="mode-music" class="mode-screen">
     <div id="t1-spotify-disconnected" style="text-align:center;padding:24px 8px">
@@ -8718,8 +8615,6 @@ function updateDisplay(d) {
     updateCamsTab(d);
     updateRadar(d);
     updateStatusExtras(d);
-    showClawTab(d.device_tier !== undefined ? d.device_tier : (d.tier || 4));
-    updateClawStatus(d.openclaw_connected || false);
 
     // Health
     const items = [
@@ -9154,65 +9049,6 @@ function updateStatusExtras(d) {
     }
 }
 
-// ── OPENCLAW DISPLAY ─────────────────────
-function showClawTab(tier) {
-    const tab = document.getElementById('claw-tab');
-    if (tab) tab.style.display = (tier <= 2) ? 'block' : 'none';
-}
-
-function updateClawStatus(connected) {
-    const dot  = document.getElementById('claw-status-dot');
-    const text = document.getElementById('claw-status-text');
-    if (dot)  dot.style.background = connected ? '#00cc44' : '#333';
-    if (text) { text.textContent = connected ? 'ONLINE' : 'OFFLINE'; text.style.color = connected ? '#00cc44' : '#333'; }
-}
-
-function clawAppend(msg, who) {
-    const hist = document.getElementById('claw-history');
-    if (!hist) return;
-    const div = document.createElement('div');
-    div.style.cssText = 'margin-bottom:5px;padding:4px 0;border-bottom:1px solid #0d0d0d';
-    const label = who === 'you' ? '<span style="color:#cc0000;font-size:8px">YOU</span>' : '<span style="color:#00cc44;font-size:8px">CLAW</span>';
-    const textNode = document.createElement('span');
-    textNode.style.color = '#aaa';
-    textNode.textContent = msg;
-    div.innerHTML = label + '<br>';
-    div.appendChild(textNode);
-    hist.appendChild(div);
-    hist.scrollTop = hist.scrollHeight;
-}
-
-function clawSend() {
-    const inp  = document.getElementById('claw-input');
-    const task = inp ? inp.value.trim() : '';
-    if (!task) return;
-    clawAppend(task, 'you');
-    if (inp) inp.value = '';
-    clawAppend('Working...', 'claw');
-    fetch('/voice_command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:task})})
-    .then(r=>r.json())
-    .then(d=>{
-        const hist = document.getElementById('claw-history');
-        if (hist && hist.lastChild) hist.removeChild(hist.lastChild);
-        clawAppend(d.response || 'Done.', 'claw');
-        if (audioReady && d.response) {
-            const u = new SpeechSynthesisUtterance(d.response);
-            u.rate = 0.95; u.pitch = 0.8;
-            window.speechSynthesis.speak(u);
-        }
-    })
-    .catch(()=>clawAppend('Error.','claw'));
-}
-
-function clawQuick(task) {
-    const inp = document.getElementById('claw-input');
-    if (inp) { inp.value = task; clawSend(); }
-}
-
-document.addEventListener('keydown', e=>{
-    if (document.activeElement && document.activeElement.id === 'claw-input' && e.key === 'Enter') clawSend();
-});
-
 // ── PWA ───────────────────────────────────
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 </script>
@@ -9221,26 +9057,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').cat
 
 # ── FLASK ROUTES ─────────────────────────
 
-@display_app.route('/nav/save_place', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def nav_save_place():
-    from flask import request as _req
-    data    = _req.get_json()
-    name    = data.get('name', '').strip().lower()
-    lat     = data.get('lat')
-    lon     = data.get('lon')
-    address = data.get('address', '')
-    if not name or lat is None or lon is None:
-        return jsonify({'error': 'Need name, lat, lon'}), 400
-    nav_places[name] = {'lat': float(lat), 'lon': float(lon), 'address': address}
-    save_state()
-    print(f'[NAV] Saved place "{name}" → {lat},{lon}')
-    return jsonify({'ok': True, 'name': name})
 
-@display_app.route('/nav/places')
-def nav_list_places():
-    return jsonify({k: v for k, v in nav_places.items()})
 
 @display_app.route('/navigate')
 def navigate_endpoint():
@@ -9476,24 +9293,6 @@ def drag_launch_route():
     return jsonify({'ok': msg is None, 'stage': drag_timer['stage'], 'msg': msg or 'Launched.'})
 
 
-@display_app.route('/build/update', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def build_update_route():
-    data = request.get_json() or {}
-    bool_keys = {'cold_air_intake','long_tube_headers','full_exhaust','intake_manifold',
-                 'throttle_body_upgrade','cam_swap','heads_upgrade','wideband_o2',
-                 'electric_fan','underdrive_pulley','custom_tune'}
-    int_keys  = {'cam_level','heads_level'}
-    for k, v in data.items():
-        if k in bool_keys:
-            build_specs[k] = bool(v)
-        elif k in int_keys:
-            build_specs[k] = int(v)
-        elif k in build_specs:
-            build_specs[k] = v
-    save_state()
-    return jsonify({'ok': True, 'build_specs': dict(build_specs), 'power': estimate_power_from_parts()})
 
 def _resolve_location_from_nws(lat, lon):
     print(f'[GPS] resolving location for {lat:.4f},{lon:.4f}')
@@ -9557,93 +9356,10 @@ def location_update_route():
     return jsonify({'ok': True, 'lat': location_data.get('lat'), 'lon': location_data.get('lon'),
                     'name': location_data.get('location_name', '')})
 
-@display_app.route('/build/part/search')
-def build_part_search():
-    name    = request.args.get('name', '')
-    pn      = request.args.get('pn', '')
-    results = web_search_parts(name, pn)
-    return jsonify({'results': results, 'query_name': name, 'query_pn': pn})
 
-@display_app.route('/build/part/add', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def build_part_add():
-    data = request.get_json() or {}
-    part = {
-        'id':          str(uuid.uuid4())[:8],
-        'name':        data.get('name', 'Unknown Part'),
-        'part_number': data.get('part_number', ''),
-        'category':    data.get('category', 'other'),
-        'hp_gain':     float(data.get('hp_gain', 0)),
-        'tq_gain':     float(data.get('tq_gain', 0)),
-        'description': data.get('description', ''),
-        'status':      data.get('status', 'ordered'),
-        'cost':        float(data.get('cost', 0)),
-        'date_added':  datetime.now().strftime('%B %d %Y'),
-        'notes':       data.get('notes', ''),
-    }
-    build_tracker['parts'].append(part)
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-@display_app.route('/build/part/update', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def build_part_update():
-    data   = request.get_json() or {}
-    pid    = data.get('id')
-    part   = next((p for p in build_tracker['parts'] if p.get('id') == pid), None)
-    if not part:
-        return jsonify({'ok': False, 'error': 'Part not found'})
-    for k in ('status', 'hp_gain', 'tq_gain', 'cost', 'notes', 'name', 'part_number'):
-        if k in data:
-            part[k] = float(data[k]) if k in ('hp_gain','tq_gain','cost') else data[k]
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'part': part, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-@display_app.route('/build/part/remove', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def build_part_remove():
-    pid = (request.get_json() or {}).get('id')
-    build_tracker['parts'] = [p for p in build_tracker['parts'] if p.get('id') != pid]
-    _recalc_build_spent()
-    save_state()
-    return jsonify({'ok': True, 'power': estimate_power_from_parts(),
-                    'parts': list(build_tracker['parts'])})
 
-# NOTE (found while wiring panic mode's registration lock, not fixed here —
-# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
-# own /register_device, which Werkzeug's url_map dispatches to instead
-# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
-# The panic-mode lockdown check lives on the blueprint's version, not here.
-@display_app.route('/register_device', methods=['POST'])
-@csrf_required
-def register_device_endpoint():
-    from flask import request as flask_request
-    data        = flask_request.get_json()
-    fingerprint = data.get('fingerprint', '')
-    name        = data.get('name', 'Unknown')
-    tier        = max(2, min(4, int(data.get('tier', 2))))  # self-register max Tier 2
-    if not fingerprint:
-        return jsonify({'ok': False, 'error': 'No fingerprint'})
-    register_device(fingerprint, name, tier)
-    return jsonify({'ok': True, 'name': name, 'tier': tier})
-
-@display_app.route('/device_tier', methods=['POST'])
-@csrf_required
-def device_tier_endpoint():
-    from flask import request as flask_request
-    data        = flask_request.get_json()
-    fingerprint = data.get('fingerprint', '')
-    tier        = get_device_tier(fingerprint)
-    registered  = fingerprint in trusted_devices
-    name        = trusted_devices.get(fingerprint, {}).get('name', 'Unknown')
-    return jsonify({'tier': tier, 'registered': registered, 'name': name})
 
 
 # ── TIER ROUTES ON MAIN APP (for ngrok remote access) ───
@@ -9805,56 +9521,7 @@ def get_request_tier(request):
     fp = request.cookies.get('archer_fp', 'unknown')
     return get_device_tier(fp)
 
-@display_app.route('/logout', methods=['POST'])
-@csrf_required
-def logout():
-    """Invalidate the current session cookie.
 
-    The token/jti is added to _revoked_tokens so it is rejected immediately even
-    if the client still holds the cookie. Safe to call without a valid session.
-    """
-    from flask import request as _lr, make_response as _mk
-    cookie_val = _lr.cookies.get('archer_auth', '')
-    if cookie_val:
-        try:
-            payload = decode_auth_jwt(cookie_val)
-            jti = payload.get('jti', '')
-            if jti:
-                _revoke_token(jti)
-            log_security('LOGOUT', name=payload.get('name', '?'))
-        except ValueError:
-            parts = cookie_val.split(':')
-            if len(parts) == 3:
-                _revoke_token(parts[2])
-                log_security('LOGOUT', name=parts[1])
-    resp = _mk(jsonify({'ok': True}))
-    resp.delete_cookie('archer_auth')
-    return resp
-
-@display_app.route('/set_vehicle', methods=['POST'])
-@csrf_required
-def set_vehicle():
-    """Record which truck was purchased (tier 1 only).
-
-    Body: {"make": "GMC"|"Chevrolet", "model": "Sierra 2500HD"|"Silverado 2500HD"}
-    Both trucks share the same GMT800 platform, LQ4 engine, 4L80E, and DTC database,
-    so this is purely for display and voice personality — no functional change.
-    """
-    from flask import request as _svr
-    if get_request_tier(_svr) != 1:
-        return jsonify({'error': 'Owner only'}), 403
-    body = _svr.get_json(silent=True) or {}
-    make  = body.get('make',  '').strip()
-    model = body.get('model', '').strip()
-    valid_makes  = {'GMC', 'Chevrolet'}
-    valid_models = {'Sierra 2500HD', 'Silverado 2500HD'}
-    if make not in valid_makes or model not in valid_models:
-        return jsonify({'error': f'make must be one of {valid_makes}; model one of {valid_models}'}), 400
-    vehicle_config['make']  = make
-    vehicle_config['model'] = model
-    save_state()
-    log_security('VEHICLE_SET', name=f'{make} {model}')
-    return jsonify({'ok': True, 'vehicle': get_vehicle_name()})
 
 
 def terminal_access_check(request):
@@ -10705,319 +10372,15 @@ async function submitCode() {{
 </script>
 </body></html>"""
 
-# NOTE (found while wiring panic mode's registration lock, not fixed here —
-# separate pre-existing issue): this route is shadowed by blueprints/auth.py's
-# own /register_mac, which Werkzeug's url_map dispatches to instead
-# (confirmed empirically) — this copy is dead code, unreachable over HTTP.
-# The panic-mode lockdown check lives on the blueprint's version, not here.
-@display_app.route('/register_mac', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def register_mac():
-    """Register a new device using a one-time code."""
-    from flask import request as freq, make_response
-    data = freq.json or {}
-    code = data.get('code', '').strip()
-    mac  = data.get('mac', '').upper()
-
-    if not code:
-        return jsonify({'success': False, 'error': 'Missing code'})
-
-    # Check master Tier 1 code first
-    entry = None
-    if _master_code_enabled and _master_code and code == _master_code:
-        entry = {'name': 'Ayden', 'tier': 1}
-
-    # Fall back to one-time code
-    if not entry:
-        entry = validate_one_time_code(code)
-    if not entry:
-        return jsonify({'success': False, 'error': 'Invalid or expired code'})
-
-    tier = entry['tier']
-    name = entry['name']
-
-    # Save MAC if we have one
-    if mac and mac != 'UNKNOWN':
-        whitelist = load_mac_whitelist()
-        whitelist[mac] = {
-            'tier':          tier,
-            'name':          name,
-            'registered_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'last_seen':     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        }
-        save_mac_whitelist(whitelist)
-        print(f'[AUTH] Registered MAC {mac} as {name} (Tier {tier})')
-
-    # Set auth cookie (HS256 JWT)
-    redirects = {1: '/', 2: '/passenger', 3: '/family', 4: '/valet'}
-    resp = make_response(jsonify({'success': True, 'redirect': redirects.get(tier, '/'), 'name': name, 'tier': tier}))
-    resp.set_cookie('archer_auth', make_auth_jwt(tier, name), max_age=86400*30, httponly=True, samesite='Lax', secure=_USE_TLS)
-    return resp
-
-@display_app.route('/deregister_mac', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def deregister_mac():
-    """Remove a MAC from the whitelist (Tier 1 only).
-
-    Also revokes the session token for the removed device so their browser
-    session is invalidated immediately without waiting for cookie expiry.
-    """
-    from flask import request as freq
-    data = freq.json or {}
-    mac  = data.get('mac', '').upper()
-    whitelist = load_mac_whitelist()
-    if mac in whitelist and whitelist[mac]['tier'] != 1:
-        entry = whitelist[mac]
-        del whitelist[mac]
-        save_mac_whitelist(whitelist)
-        # Revoke any active session cookie for this device
-        _revoke_by_name(entry['name'], entry['tier'])
-        log_security('MAC_DEREGISTERED', mac=mac, name=entry['name'], tier=entry['tier'])
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'error': 'Not found or protected'})
-
-@display_app.route('/registered_devices')
-def registered_devices():
-    """List all registered devices (Tier 1 only)."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required', 'tier': tier}), 403
-    whitelist = load_mac_whitelist()
-    devices = [{'mac': mac, 'tier': info['tier'], 'name': info['name']}
-               for mac, info in whitelist.items()]
-    return jsonify({'devices': devices})
 
 
-@display_app.route('/devices')
-def devices_page():
-    """Tier 1 only — manage registered devices and generate codes."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return f'<html><body style="background:#000;color:#cc0000;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><div style="font-size:32px">🔒</div><div style="font-size:14px;letter-spacing:3px;margin-top:12px">ACCESS DENIED — TIER 1 ONLY</div></div></body></html>', 403
-    whitelist = load_mac_whitelist()
-    cleanup_expired_codes()
-    active_codes = [(c, e) for c, e in one_time_codes.items() if not e['used']]
-    
-    devices_html = ''.join(f"""
-        <div class="device-row">
-          <div>
-            <div class="d-name">{info['name']}</div>
-            <div class="d-meta">Tier {info['tier']} — {mac}</div>
-          </div>
-          <button onclick="removeDevice('{mac}')" class="d-remove">REMOVE</button>
-        </div>""" for mac, info in whitelist.items() if info['tier'] != 1)
 
-    codes_html = ''.join(f"""
-        <div class="code-row">
-          <div>
-            <div class="c-name">{entry['name']} — Tier {entry['tier']}</div>
-            <div class="c-code">{code}</div>
-            <div class="c-meta">Expires in {max(0,int((entry['expires']-__import__('time').time())/3600))}h</div>
-          </div>
-          <button onclick="revokeCode('{code}')" class="d-remove">REVOKE</button>
-        </div>""" for code, entry in active_codes)
 
-    return f"""<!DOCTYPE html>
-<html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Archer — Devices</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#000;color:#fff;font-family:'Share Tech Mono',monospace;padding:16px;max-width:420px;margin:0 auto}}
-h1{{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:5px;color:#cc0000;margin-bottom:4px}}
-.sub{{font-size:10px;color:#444;letter-spacing:2px;margin-bottom:20px}}
-.section{{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:14px;margin-bottom:12px}}
-.section-title{{font-size:9px;color:#555;letter-spacing:3px;border-bottom:1px solid #1a1a1a;padding-bottom:8px;margin-bottom:10px}}
-.device-row,.code-row{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #111}}
-.device-row:last-child,.code-row:last-child{{border-bottom:none}}
-.d-name,.c-name{{font-size:13px;color:#fff}}
-.d-meta,.c-meta{{font-size:10px;color:#444;margin-top:2px}}
-.c-code{{font-size:20px;color:#cc0000;letter-spacing:4px;margin:3px 0}}
-.d-remove{{background:#1a0000;border:1px solid #330000;color:#cc0000;border-radius:4px;padding:5px 10px;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:1px}}
-.new-form{{display:flex;flex-direction:column;gap:10px}}
-.input{{background:#0d0d0d;border:1px solid #333;border-radius:6px;padding:10px;color:#fff;font-family:'Share Tech Mono',monospace;font-size:13px;outline:none;width:100%}}
-.input:focus{{border-color:#cc0000}}
-select.input{{cursor:pointer}}
-.gen-btn{{background:#cc0000;border:none;border-radius:6px;padding:12px;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:4px;cursor:pointer;width:100%}}
-.result{{background:#001a00;border:1px solid #003300;border-radius:6px;padding:14px;text-align:center;display:none}}
-.result.on{{display:block}}
-.result-code{{font-size:36px;color:#00cc44;letter-spacing:8px;font-weight:bold;margin:6px 0}}
-.result-name{{font-size:11px;color:#00cc44;letter-spacing:2px}}
-.result-exp{{font-size:10px;color:#444;margin-top:4px}}
-.back{{color:#555;text-decoration:none;font-size:10px;letter-spacing:2px;display:inline-block;margin-bottom:16px}}
-.empty{{font-size:11px;color:#333;text-align:center;padding:8px}}
-</style>
-</head><body>
-<a href="/" class="back">← BACK TO ARCHER</a>
-<h1>DEVICES</h1>
-<div class="sub">MANAGE ACCESS — TIER 1 ONLY</div>
-
-<div class="section">
-  <div class="section-title">REGISTERED DEVICES</div>
-  {devices_html if devices_html else '<div class="empty">No devices registered yet</div>'}
-</div>
-
-<div class="section">
-  <div class="section-title">ACTIVE INVITE CODES</div>
-  {codes_html if codes_html else '<div class="empty">No active codes</div>'}
-</div>
-
-<div class="section">
-  <div class="section-title">GENERATE NEW INVITE CODE</div>
-  <div class="new-form">
-    <input class="input" id="new-name" placeholder="Person's name (e.g. Jake)" maxlength="30">
-    <select class="input" id="new-tier">
-      <option value="2">Tier 2 — Passenger</option>
-      <option value="3">Tier 3 — Family</option>
-      <option value="4">Tier 4 — Valet</option>
-    </select>
-    <button class="gen-btn" onclick="generateCode()">GENERATE CODE</button>
-    <div class="result" id="result">
-      <div class="result-name" id="result-name"></div>
-      <div class="result-code" id="result-code"></div>
-      <div class="result-exp">Valid for 24 hours — single use</div>
-      <div style="font-size:10px;color:#444;margin-top:6px">Share this code with them</div>
-    </div>
-  </div>
-</div>
-
-<script>
-async function generateCode() {{
-  const name = document.getElementById('new-name').value.trim();
-  const tier = document.getElementById('new-tier').value;
-  if (!name) {{ alert('Enter a name first'); return; }}
-  const r = await fetch('/generate_code', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{name, tier: parseInt(tier)}})
-  }});
-  const d = await r.json();
-  if (d.code) {{
-    document.getElementById('result-name').textContent = name + ' — Tier ' + tier;
-    document.getElementById('result-code').textContent = d.code;
-    document.getElementById('result').classList.add('on');
-    document.getElementById('new-name').value = '';
-  }}
-}}
-async function removeDevice(mac) {{
-  if (!confirm('Remove ' + mac + '?')) return;
-  await fetch('/deregister_mac', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{mac}})}});
-  location.reload();
-}}
-async function revokeCode(code) {{
-  await fetch('/revoke_code', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code}})}});
-  location.reload();
-}}
-</script>
-</body></html>"""
-
-@display_app.route('/generate_code', methods=['POST'])
-@_limiter.limit('5 per minute; 20 per hour')
-@csrf_required
-def generate_code_route():
-    """Generate a one-time invite code (Tier 1 only)."""
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    data = freq.json or {}
-    name = data.get('name', '').strip()
-    inv_tier = data.get('tier', 2)
-    if not name:
-        return jsonify({'success': False, 'error': 'Name required'})
-    code = generate_one_time_code(name, inv_tier)
-    return jsonify({'success': True, 'code': code, 'name': name, 'tier': inv_tier})
-
-@display_app.route('/revoke_code', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def revoke_code():
-    """Revoke an unused invite code — Tier 1 only."""
-    from flask import request as freq
-    ok, _tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required'}), 403
-    data = freq.json or {}
-    code = data.get('code', '')
-    if code in one_time_codes:
-        del one_time_codes[code]
-    return jsonify({'success': True})
 
 
 # ── MASTER SIGN-IN CODE API ──────────────────────────────
-@display_app.route('/sign_in_code/status')
-def sign_in_code_status():
-    """Return master code status and registered devices — Tier 1 only."""
-    _check_master_auto_enable()
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    try:
-        wl = load_mac_whitelist()
-        has_tier1 = any(v.get('tier') == 1 for v in wl.values())
-    except Exception:
-        wl = {}
-        has_tier1 = False
 
-    # Update last_seen for the requesting device's MAC (if known)
-    try:
-        req_mac = get_client_mac(request)
-        if req_mac and req_mac in wl:
-            wl[req_mac]['last_seen'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            save_mac_whitelist(wl)
-    except Exception:
-        pass
 
-    # Build per-tier device counts and devices list
-    tier_counts = {1: 0, 2: 0, 3: 0, 4: 0}
-    devices_list = []
-    for mac, info in wl.items():
-        t = info.get('tier', 0)
-        if t in tier_counts:
-            tier_counts[t] += 1
-        devices_list.append({
-            'mac':           mac,
-            'name':          info.get('name', 'Unknown'),
-            'tier':          t,
-            'registered_at': info.get('registered_at', 'Unknown'),
-            'last_seen':     info.get('last_seen', 'Never'),
-        })
-
-    return jsonify({
-        'success':     True,
-        'enabled':     _master_code_enabled,
-        'code':        _master_code if _master_code_enabled else None,
-        'auto_on':     not has_tier1,
-        'device_count': len(wl),
-        'tier_counts': tier_counts,
-        'devices':     devices_list,
-    })
-
-@display_app.route('/sign_in_code/toggle', methods=['POST'])
-@_limiter.limit('10 per minute')
-@csrf_required
-def sign_in_code_toggle():
-    """Toggle master sign-in code on or off — Tier 1 only."""
-    global _master_code_enabled
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    _master_code_enabled = not _master_code_enabled
-    return jsonify({'success': True, 'enabled': _master_code_enabled})
-
-@display_app.route('/sign_in_code/refresh', methods=['POST'])
-@_limiter.limit('5 per minute')
-@csrf_required
-def sign_in_code_refresh():
-    """Generate a new master sign-in code — Tier 1 only."""
-    global _master_code
-    if get_request_tier(request) != 1:
-        return jsonify({'success': False, 'error': 'Tier 1 required'}), 403
-    _master_code = str(secrets.randbelow(900000) + 100000)
-    return jsonify({'success': True, 'code': _master_code})
 
 
 # ── TIER NOTIFICATION SYSTEM ────────────────────────────
@@ -11046,90 +10409,10 @@ def add_tier_notification(from_name, message, speed=0, ntype='request'):
         print(f'[FCM] Tier request push failed: {str(_e)[:60]}')
     return nid
 
-@display_app.route('/notify_tier1', methods=['POST'])
-@_limiter.limit('20 per minute')
-@csrf_required
-def notify_tier1():
-    from flask import request as freq
-    # Require at least tier 2 (passenger) — reject unauthenticated/family/valet callers
-    ok, tier = require_tier1(freq)
-    if tier > 2:
-        return jsonify({'error': 'Not authorized'}), 403
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data     = freq.json or {}
-    from_name = data.get('from', 'Passenger')
-    message  = data.get('message', '')
-    speed    = data.get('speed', 0)
-    nid      = add_tier_notification(from_name, message, speed)
-    return jsonify({'ok': True, 'id': nid})
 
-@display_app.route('/tier_notifications')
-def get_tier_notifications():
-    return jsonify({'notifications': list(tier_notifications)})
 
-@display_app.route('/tier_cancel', methods=['POST'])
-@csrf_required
-def tier_cancel():
-    """Tier 2 cancels a pending request — removes it from queue."""
-    from flask import request as freq
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data = freq.json or {}
-    nid  = data.get('id')
-    if nid:
-        tier_responses[nid] = 'cancelled'
-        for n in tier_notifications:
-            if n['id'] == nid:
-                n['status'] = 'cancelled'
-                break
-        print(f'[TIER CANCEL] {nid} cancelled by passenger')
-    return jsonify({'ok': True})
 
-@display_app.route('/tier_respond', methods=['POST'])
-@csrf_required
-def tier_respond():
-    from flask import request as freq
-    ok, tier = require_tier1(freq)
-    if not ok:
-        return jsonify({'error': 'Tier 1 required'}), 403
-    if not _validate_csrf(freq):
-        return jsonify({'error': 'CSRF validation failed'}), 403
-    data     = freq.json or {}
-    nid      = data.get('id')
-    response = data.get('response')  # 'approved' or 'denied'
-    action   = data.get('action', '')
-    if nid and response:
-        tier_responses[nid] = response
-        for n in tier_notifications:
-            if n['id'] == nid:
-                n['status'] = response
-                break
-        # If approved, execute the action
-        if response == 'approved' and action:
-            if 'sport' in action.lower():
-                truck_state['drive_mode'] = 'sport'
-            elif 'comfort' in action.lower():
-                truck_state['drive_mode'] = 'comfort'
-            elif 'eco' in action.lower():
-                truck_state['drive_mode'] = 'eco'
-            elif 'tow' in action.lower():
-                truck_state['drive_mode'] = 'tow'
-            print(f'[TIER RESPOND] {nid} -> {response} ({action})')
-    return jsonify({'ok': True})
 
-@display_app.route('/tier_response_status')
-def tier_response_status():
-    from flask import request as freq
-    nid = freq.args.get('id')
-    if not nid:
-        return jsonify({'status': 'unknown'})
-    status = tier_responses.get(nid, 'unknown')
-    # Find the notification for context
-    for n in tier_notifications:
-        if n['id'] == nid:
-            return jsonify({'status': status, 'message': n['message'], 'from': n['from']})
-    return jsonify({'status': status})
 
 
 # ── SPOTIFY INTEGRATION ─────────────────────────────────
@@ -11374,9 +10657,26 @@ _DISPLAY_DATA_SENSITIVE_FIELDS = (
     'surveillance', 'cameras', 'valet_events', 'parking_active', 'parking_loc',
 )
 
+# The exact get_display_data() keys sourced from real OBD2 PID reads in
+# obd_autodetect() (oil_temp/rpm/speed/boost/battery/coolant map 1:1 to its
+# PID_TABLE + battery voltage read; 'sensor_data' is the nested mirror of the
+# same live readings) — not every truck_state field, just the ones that are
+# actually OBD2 telemetry rather than accessory/customization state.
+_OBD2_LIVE_FIELDS = ('oil_temp', 'rpm', 'speed', 'boost', 'battery', 'coolant', 'sensor_data')
+
 def _filter_display_data_for_tier(d, tier):
     if tier >= 3:
         for f in _DISPLAY_DATA_SENSITIVE_FIELDS:
+            d.pop(f, None)
+    # Per-tier OBDLink auth (archer.py:_resolve_obd_connection_tier): a real
+    # connection's granted tier ceiling caps who sees live OBD fields on
+    # *every* call here, not just once at connect time. Sim/emulated data
+    # (obd2_display['mode'] != 'live') and a real connection's own tier
+    # itself both bypass this — there's nothing to gate when the ceiling is
+    # None (no authorized real connection exists to have granted one).
+    obd_tier_ceiling = obd2_display.get('tier')
+    if obd2_display.get('mode') == 'live' and obd_tier_ceiling is not None and tier > obd_tier_ceiling:
+        for f in _OBD2_LIVE_FIELDS:
             d.pop(f, None)
     return d
 
@@ -11558,9 +10858,12 @@ def require_boot():
         # after a correct PIN and lives in /run (tmpfs), so it is per-boot, not
         # persistent. The loopback test keeps it local: a phone, the Roku, or
         # anything else over the network is a different remote_addr and still
-        # meets /login. Nothing rewrites remote_addr here — there is no
-        # ProxyFix and no reverse proxy in front of this app — so it is the
-        # real peer address rather than a spoofable header.
+        # meets /login. This marker/flow only exists on the in-truck archer-os
+        # build, which has no reverse proxy in front of archer.py — remote_addr
+        # there is the real peer, not a spoofable header. On the self-hosted
+        # deployment (Caddy in front), the ProxyFix block near display_app's
+        # creation restores the real client IP the same way — see its comment
+        # for why that one is conditional and confirmed safe live.
         if (not _signed_in
                 and _req.remote_addr in ('127.0.0.1', '::1')
                 and os.path.exists('/run/archer-console-unlock')):
@@ -12711,120 +12014,33 @@ def archer_os_status():
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── GEOFENCE ─────────────────────────────────────────────
-@display_app.route('/geofence/add', methods=['POST'])
-@csrf_required
-def geofence_add():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    data   = request.get_json() or {}
-    name   = data.get('name', '').strip()
-    lat    = data.get('lat')
-    lon    = data.get('lon')
-    radius = float(data.get('radius_miles', 0.5))
-    if not name or lat is None or lon is None:
-        return jsonify({'error': 'name, lat, and lon required'}), 400
-    msg = add_geofence(name, float(lat), float(lon), radius)
-    return jsonify({'ok': True, 'msg': msg, 'count': len(geofences)})
 
-@display_app.route('/geofence/list')
-def geofence_list():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({'geofences': geofences, 'count': len(geofences), 'inside': list(_geofence_inside)})
 
-@display_app.route('/geofence/remove', methods=['POST'])
-@csrf_required
-def geofence_remove():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    name = (request.get_json() or {}).get('name', '')
-    before = len(geofences)
-    geofences[:] = [f for f in geofences if f['name'] != name]
-    save_state()
-    removed = before - len(geofences)
-    return jsonify({'ok': True, 'removed': removed, 'count': len(geofences)})
 
 # ── REMOTE START / STOP ───────────────────────────────────
-@display_app.route('/remote/start', methods=['POST'])
-@csrf_required
-def remote_start_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = remote_start_engine()
-    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg or 'Starting.'})
 
-@display_app.route('/remote/stop', methods=['POST'])
-@csrf_required
-def remote_stop_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = remote_stop_engine()
-    return jsonify({'ok': True, 'status': remote_start['status'], 'msg': msg})
 
-@display_app.route('/remote/status')
-def remote_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({
-        'status':        remote_start['status'],
-        'runtime_mins':  round(remote_start['runtime_mins'], 1),
-        'auto_off_mins': remote_start['auto_off_mins'],
-        'started_at':    remote_start['started_at'],
-        'warm_temp':     remote_start['warm_temp'],
-        'oil_temp':      truck_state.get('oil_temp'),
-    })
 
 # ── COMPUSTAR ─────────────────────────────────────────────
-@display_app.route('/compustar/arm', methods=['POST'])
-@csrf_required
-def compustar_arm_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({'ok': True, 'msg': arm_compustar(), 'armed': compustar['armed']})
 
-@display_app.route('/compustar/disarm', methods=['POST'])
-@csrf_required
-def compustar_disarm_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({'ok': True, 'msg': disarm_compustar(), 'armed': compustar['armed']})
 
-@display_app.route('/compustar/trigger', methods=['POST'])
-@csrf_required
-def compustar_trigger_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    ttype = (request.get_json() or {}).get('type', 'unknown')
-    compustar_trigger(ttype)
-    return jsonify({'ok': True, 'triggered': ttype, 'log_count': len(compustar['trigger_log'])})
 
-@display_app.route('/compustar/status')
-def compustar_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({
-        'armed':        compustar['armed'],
-        'disarmed':     compustar['disarmed'],
-        'shock_sens':   compustar['shock_sens'],
-        'tilt_sens':    compustar['tilt_sens'],
-        'panic_active': compustar['panic_active'],
-        'last_trigger': compustar['last_trigger'],
-        'trigger_count': len(compustar['trigger_log']),
-    })
 
 # ── PANIC MODE (lockdown) ROUTE ───────────────────────────
 def _is_tailscale_or_loopback(remote_addr: str) -> bool:
     """Network-level guard for the panic endpoint, independent of tier auth.
 
-    Caddy is bound to the tailnet IP for the self-hosted deployment, which
-    already keeps outside traffic off the dashboard — but archer.py's own
-    listener is still bound to 0.0.0.0 (a separately tracked, still-open
-    gap: archer.py's run_display_server() passes host='0.0.0.0'), so relying
-    on Caddy's bind alone would not actually stop something reaching this
-    endpoint directly on archer.py's own port. This is the app-level
-    backstop for that gap, scoped to exactly this one sensitive endpoint
-    rather than a blanket fix — loopback stays allowed for local testing,
-    same as the rest of the dashboard's existing loopback exemptions.
+    Two things had to both be true for this to mean anything, and for a
+    while neither was: archer.py's own listener defaulted to host='0.0.0.0'
+    (fixed — see ARCHER_BIND_HOST in run_display_server()), and even with
+    that fixed, Caddy proxying to loopback made remote_addr always read
+    127.0.0.1 for every caller, real or not, since nothing was restoring the
+    real client IP (fixed — see the ProxyFix block near display_app's
+    creation, confirmed live that this function was unconditionally True for
+    all Caddy-proxied traffic before that). Loopback stays allowed for local
+    testing, same as the rest of the dashboard's existing loopback
+    exemptions — this is the app-level backstop for one sensitive endpoint,
+    not a blanket fix.
     """
     import ipaddress
     if remote_addr in ('127.0.0.1', '::1'):
@@ -12862,204 +12078,33 @@ def panic_activate_route():
     return jsonify(result)
 
 # ── AMBIENT LIGHTING ──────────────────────────────────────
-@display_app.route('/ambient/set', methods=['POST'])
-@csrf_required
-def ambient_set_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data       = request.get_json() or {}
-    zone       = data.get('zone', 'all')
-    on         = bool(data.get('on', True))
-    color      = data.get('color')
-    brightness = data.get('brightness')
-    msg = set_ambient(zone, on, color, brightness)
-    return jsonify({'ok': True, 'msg': msg, 'state': ambient_lighting})
 
-@display_app.route('/ambient/mode', methods=['POST'])
-@csrf_required
-def ambient_mode_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    mode = (request.get_json() or {}).get('mode', 'off')
-    msg  = ambient_mode(mode)
-    return jsonify({'ok': True, 'msg': msg, 'mode': ambient_lighting['mode']})
 
-@display_app.route('/ambient/status')
-def ambient_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({'zones': ambient_lighting['zones'], 'mode': ambient_lighting['mode'], 'master': ambient_lighting['master']})
 
 # ── HELIX DSP ─────────────────────────────────────────────
-@display_app.route('/helix/preset', methods=['POST'])
-@csrf_required
-def helix_preset_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    preset = (request.get_json() or {}).get('preset', '')
-    msg    = set_helix_preset(preset)
-    return jsonify({'ok': True, 'msg': msg, 'preset': helix_dsp['preset']})
 
-@display_app.route('/helix/sub', methods=['POST'])
-@csrf_required
-def helix_sub_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    pct = (request.get_json() or {}).get('level', helix_dsp['sub_level'])
-    msg = set_sub_level(pct)
-    return jsonify({'ok': True, 'msg': msg, 'sub_level': helix_dsp['sub_level']})
 
-@display_app.route('/helix/status')
-def helix_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({**helix_dsp, 'presets': HELIX_PRESETS})
 
 # ── TRAILER ───────────────────────────────────────────────
-@display_app.route('/trailer/connect', methods=['POST'])
-@csrf_required
-def trailer_connect_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    data   = request.get_json() or {}
-    ttype  = data.get('type', '')
-    weight = data.get('weight', 0)
-    msg    = connect_trailer(ttype, weight)
-    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
 
-@display_app.route('/trailer/disconnect', methods=['POST'])
-@csrf_required
-def trailer_disconnect_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = disconnect_trailer()
-    return jsonify({'ok': True, 'msg': msg, 'trailer': trailer})
 
-@display_app.route('/trailer/status')
-def trailer_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify(trailer)
 
 # ── PARKING MODE ──────────────────────────────────────────
-@display_app.route('/parking/activate', methods=['POST'])
-@csrf_required
-def parking_activate_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    location = (request.get_json() or {}).get('location', '')
-    msg      = activate_parking_mode(location)
-    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
 
-@display_app.route('/parking/deactivate', methods=['POST'])
-@csrf_required
-def parking_deactivate_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    msg = deactivate_parking_mode()
-    return jsonify({'ok': True, 'msg': msg, 'parking_mode': parking_mode})
 
-@display_app.route('/parking/status')
-def parking_status_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    return jsonify({**parking_mode, 'surveillance_armed': surveillance.get('armed', False)})
 
 # ── CRASH DETECTION ───────────────────────────────────────
-@display_app.route('/crash/events')
-def crash_events_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    return jsonify({
-        'enabled':    crash_detection['enabled'],
-        'threshold_g': crash_detection['threshold_g'],
-        'last_event': crash_detection['last_event'],
-        'events':     crash_detection['events'][-20:],
-        'count':      len(crash_detection['events']),
-    })
 
-@display_app.route('/crash/clear', methods=['POST'])
-@csrf_required
-def crash_clear_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    crash_detection['events']     = []
-    crash_detection['last_event'] = None
-    return jsonify({'ok': True})
 
 # ── RIVALRY ───────────────────────────────────────────────
-@display_app.route('/rival/set', methods=['POST'])
-@csrf_required
-def rival_set_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data = request.get_json() or {}
-    msg  = set_rival(data.get('name', ''), data.get('et'), data.get('mph'))
-    return jsonify({'ok': True, 'msg': msg, 'rivalry': rivalry})
 
-@display_app.route('/rival/status')
-def rival_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify(rivalry)
 
-@display_app.route('/rival/reset', methods=['POST'])
-@csrf_required
-def rival_reset_route():
-    if get_request_tier(request) > 1:
-        return jsonify({'error': 'Owner only'}), 403
-    rivalry.update({'rival': '', 'rival_et': None, 'rival_mph': None, 'active': False, 'wins': 0, 'losses': 0, 'sessions': []})
-    save_state()
-    return jsonify({'ok': True, 'rivalry': rivalry})
 
 # ── VOICE NAVIGATION ──────────────────────────────────────
-@display_app.route('/navigate/start', methods=['POST'])
-@csrf_required
-def navigate_start_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    data      = request.get_json() or {}
-    dest_name = data.get('dest_name', 'destination')
-    dest_lat  = data.get('dest_lat')
-    dest_lon  = data.get('dest_lon')
-    steps     = data.get('steps', [])
-    if dest_lat is None or dest_lon is None:
-        return jsonify({'error': 'dest_lat and dest_lon required'}), 400
-    msg = start_navigation(dest_name, dest_lat, dest_lon, steps)
-    return jsonify({'ok': True, 'msg': msg, 'steps': len(steps)})
 
-@display_app.route('/navigate/stop', methods=['POST'])
-@csrf_required
-def navigate_stop_route():
-    if get_request_tier(request) > 2:
-        return jsonify({'error': 'Tier 1-2 only'}), 403
-    msg = stop_navigation()
-    return jsonify({'ok': True, 'msg': msg})
 
-@display_app.route('/navigate/status')
-def navigate_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    idx   = nav_session['step_index']
-    steps = nav_session['steps']
-    return jsonify({
-        'active':       nav_session['active'],
-        'dest_name':    nav_session['dest_name'],
-        'dest_lat':     nav_session['dest_lat'],
-        'dest_lon':     nav_session['dest_lon'],
-        'step_index':   idx,
-        'total_steps':  len(steps),
-        'current_step': steps[idx] if idx < len(steps) else None,
-        'eta_mins':     nav_session['eta_mins'],
-        'started_at':   nav_session['started_at'],
-    })
 
 # ── HEAT SOAK ────────────────────────────────────────────
-@display_app.route('/heat_soak/status')
-def heat_soak_status_route():
-    if get_request_tier(request) > 3:
-        return jsonify({'error': 'Auth required'}), 403
-    return jsonify({**heat_soak, 'boost_cap_active': heat_soak['heat_soak_risk'] == 'critical', 'boost_cap_psi': _HEAT_SOAK_BOOST_CAP})
 
 # ── OBD AUTO-DETECT ──────────────────────────────────────
 def _obd_cmd(ser, cmd, timeout=2.0):
@@ -13089,9 +12134,38 @@ def _obd_bytes(raw):
             continue
     return []
 
+def _resolve_obd_connection_tier(token: str):
+    """Verify a signed OBD-access token and return its granted tier ceiling
+    (1-4), or None if missing/malformed/expired/unparseable — the fail-closed
+    default. Reuses decode_auth_jwt() (the exact same HS256 JWT already used
+    to verify archer_auth web sessions — same secret, same code path) rather
+    than a second, parallel verification scheme.
+
+    Deliberately does not distinguish *why* a token failed (missing vs.
+    forged vs. expired vs. garbage) in its return value — obd_autodetect()
+    treats all of them identically: no real connection opens. See
+    TestObdConnectionTier for each failure mode covered individually."""
+    if not token:
+        return None
+    try:
+        payload = decode_auth_jwt(token)
+        return max(1, min(4, int(payload['tier'])))
+    except (ValueError, KeyError, TypeError):
+        return None
+
 def obd_autodetect():
     """Detect an ELM327/OBDLink adapter, initialize it, and poll live PIDs.
-    Updates truck_state and sensor_data directly; falls back to sim on disconnect."""
+    Updates truck_state and sensor_data directly; falls back to sim on disconnect.
+
+    Per-tier Bluetooth/OBDLink auth: a real connection only opens with a
+    valid OBD_ACCESS_TOKEN (see _resolve_obd_connection_tier()) — missing or
+    invalid means this behaves exactly as if no adapter were found at all
+    (mirrors pi/obd_gatekeeper.py's own "wrong key -> port stays locked"
+    philosophy for its separate, wired connection — see that file's module
+    docstring; the two are unrelated hardware paths, not integrated here).
+    The token's tier then continues to cap who can see the resulting data on
+    every /display_data-family call via _filter_display_data_for_tier(), not
+    just once at connect time."""
     OBD_KEYWORDS = ('obdlink', 'obd', 'elm327', 'stm32', 'stn', 'scantool')
     # Manual override (documented in config.py/archer.env.example) for adapters
     # the scan below can't find — a Bluetooth OBDLink MX+ bound to /dev/rfcommN
@@ -13126,6 +12200,16 @@ def obd_autodetect():
             time.sleep(5)
             continue
 
+        # ── Per-tier auth gate — checked before the port is even opened ──
+        # Re-resolved every attempt (not just once outside the loop) so a
+        # freshly-rotated OBD_ACCESS_TOKEN takes effect on the next retry
+        # without requiring a process restart.
+        granted_tier = _resolve_obd_connection_tier(os.environ.get('OBD_ACCESS_TOKEN', ''))
+        if granted_tier is None:
+            print('[OBD] SECURITY: missing/invalid OBD_ACCESS_TOKEN — refusing live connection, staying in simulation')
+            time.sleep(5)
+            continue
+
         # ── Connect and initialize ─────────────────────────────
         ser = None
         try:
@@ -13139,8 +12223,9 @@ def obd_autodetect():
 
             obd2_display['connected'] = True
             obd2_display['mode']      = 'live'
+            obd2_display['tier']      = granted_tier
             sim_flags["random_enabled"] = False
-            print(f'[OBD] Connected on {port_device} — live data active')
+            print(f'[OBD] Connected on {port_device} — live data active (tier ceiling {granted_tier})')
 
             # ── OBD sensor bounds validation ───────────────────
             def _validate_obd(value, lo, hi, name):
@@ -13287,6 +12372,7 @@ def obd_autodetect():
                 pass
             obd2_display['connected'] = False
             obd2_display['mode']      = 'default'
+            obd2_display['tier']      = None
             sim_flags["random_enabled"] = True
             print('[OBD] Disconnected — simulation resumed')
 
@@ -13325,8 +12411,12 @@ def run_display_server():
     import logging as _log
     _log.getLogger('werkzeug').setLevel(_log.ERROR)
     port    = int(os.environ.get('PORT', 7860))
+    # ARCHER_BIND_HOST=127.0.0.1 for deployments where a reverse proxy (Caddy)
+    # is the only intended way in. Default stays 0.0.0.0 so the HF Space,
+    # Docker, and in-truck LAN deployments behave exactly as before.
+    bind_host = os.environ.get('ARCHER_BIND_HOST', '0.0.0.0')
     ssl_ctx = _get_tls_context()
-    display_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False,
+    display_app.run(host=bind_host, port=port, debug=False, use_reloader=False,
                     threaded=True, ssl_context=ssl_ctx)
 
 def run_tier_server(tier, port):
@@ -13371,7 +12461,6 @@ def main():
     threading.Thread(target=discord_monitor,     daemon=True).start()
     threading.Thread(target=discord_digest_monitor, daemon=True).start()
     threading.Thread(target=slack_digest_monitor,   daemon=True).start()
-    threading.Thread(target=openclaw_monitor,    daemon=True).start()
     if _IS_PI:
         threading.Thread(target=fetch_ngrok_url, daemon=True).start()
     threading.Thread(target=obd_autodetect,      daemon=True).start()
