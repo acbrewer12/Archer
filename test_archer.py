@@ -4131,12 +4131,13 @@ class TestDbSaveChangedOnly:
     @pytest.fixture
     def fresh_db(self, tmp_path):
         import db
-        saved = (db._DB_PATH, getattr(db._local, 'conn', None), dict(db._last_written))
+        saved = (db._DB_PATH, db._conn, dict(db._last_written))
         db._DB_PATH = str(tmp_path / 'state.db')
-        db._local.conn = None
+        db._conn = None
         db._last_written.clear()
         yield db
-        db._DB_PATH, db._local.conn = saved[0], saved[1]
+        db._conn.close()
+        db._DB_PATH, db._conn = saved[0], saved[1]
         db._last_written.clear(); db._last_written.update(saved[2])
 
     def test_only_changed_rows_written_and_reload_is_complete(self, fresh_db):
@@ -4149,6 +4150,22 @@ class TestDbSaveChangedOnly:
         db.db_save({'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'})
         assert conn.total_changes == 4
         assert db.db_load() == {'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'}
+
+    def test_concurrent_saves_share_one_connection(self, fresh_db):
+        db = fresh_db
+        errors = []
+        def worker(n):
+            try:
+                for i in range(50):
+                    db.db_save({f't{n}': i, 'shared': [n, i]})
+            except Exception as e:
+                errors.append(e)
+        ts = [threading.Thread(target=worker, args=(n,)) for n in range(16)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        assert errors == []
+        loaded = db.db_load()
+        assert all(loaded[f't{n}'] == 49 for n in range(16))
 
 
 if __name__ == '__main__':

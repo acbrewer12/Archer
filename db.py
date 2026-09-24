@@ -12,10 +12,16 @@ import threading
 
 # Default to a path under the app directory; override via ARCHER_DB env var
 _DB_PATH = os.environ.get('ARCHER_DB', os.path.join(os.path.dirname(__file__), 'archer_data.db'))
-_local = threading.local()
+# One connection for the process, serialized by _lock. Per-thread connections
+# meant every request thread (Werkzeug spawns one per request) reconnected and
+# re-ran the setup below on each save.
+_conn = None
+_lock = threading.Lock()  # guards _conn and _last_written
 
 def _get_conn() -> sqlite3.Connection:
-    if not hasattr(_local, 'conn') or _local.conn is None:
+    """Caller must hold _lock."""
+    global _conn
+    if _conn is None:
         conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA synchronous=NORMAL')
@@ -31,20 +37,19 @@ def _get_conn() -> sqlite3.Connection:
             os.chmod(_DB_PATH, 0o600)
         except OSError:
             pass
-        _local.conn = conn
-    return _local.conn
+        _conn = conn
+    return _conn
 
 # JSON text this process last wrote per key. save_state() hands over every key
 # on every call, but most are unchanged; rewriting them all is wasted I/O on
 # the head unit's SD card.
 _last_written: dict = {}
-_write_lock = threading.Lock()
 
 def db_save(data: dict) -> None:
     """Upsert the key-value pairs whose value changed since the last save, atomically."""
     import time
     rows = [(k, json.dumps(v, default=str)) for k, v in data.items()]
-    with _write_lock:
+    with _lock:
         changed = [(k, s) for k, s in rows if _last_written.get(k) != s]
         if not changed:
             return
@@ -59,15 +64,16 @@ def db_save(data: dict) -> None:
 
 def db_load() -> dict:
     """Return all state as a flat dict of {key: python_value}."""
-    conn = _get_conn()
-    try:
-        rows = conn.execute('SELECT key, value FROM state').fetchall()
-        return {k: json.loads(v) for k, v in rows}
-    except Exception:
-        return {}
+    with _lock:
+        conn = _get_conn()
+        try:
+            rows = conn.execute('SELECT key, value FROM state').fetchall()
+            return {k: json.loads(v) for k, v in rows}
+        except Exception:
+            return {}
 
 def db_has_data() -> bool:
     """True if the DB has any saved state rows."""
-    conn = _get_conn()
-    row = conn.execute('SELECT COUNT(*) FROM state').fetchone()
+    with _lock:
+        row = _get_conn().execute('SELECT COUNT(*) FROM state').fetchone()
     return bool(row and row[0] > 0)
