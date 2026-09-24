@@ -18,6 +18,7 @@ import collections
 import hmac
 import hashlib
 import secrets
+import shutil
 import ssl
 
 # One SSL context for every outbound HTTPS call. urlopen's default builds a new
@@ -496,8 +497,7 @@ async def _speak_async(text, alert=False):
         await communicate.save(tmp_path)
         broadcast_audio(tmp_path)
         if _platform.system() == 'Linux':
-            result = subprocess.run(['which', 'mpg123'], capture_output=True)
-            if result.returncode == 0:
+            if shutil.which('mpg123'):
                 subprocess.run(['mpg123', '-q', tmp_path], capture_output=True)
         else:
             import ctypes

@@ -4063,5 +4063,29 @@ class TestHealthGitHash:
             archer._git_short_hash.cache_clear()
 
 
+class TestSpeakPlayback:
+    """Playback checks for mpg123 without spawning `which` per utterance."""
+
+    def _run(self, which_result):
+        import asyncio
+        class _Comm:
+            def __init__(self, *a, **k): pass
+            async def save(self, path):
+                with open(path, 'wb') as f: f.write(b'ID3')
+        with patch('edge_tts.Communicate', _Comm), \
+             patch.object(archer, '_IS_PI', False), \
+             patch.object(archer._platform, 'system', return_value='Linux'), \
+             patch.object(archer.shutil, 'which', return_value=which_result), \
+             patch.object(archer.subprocess, 'run') as run:
+            asyncio.run(archer._speak_async('hello'))
+        return [c.args[0][0] for c in run.call_args_list]
+
+    def test_plays_with_mpg123_when_installed(self):
+        assert self._run('/usr/bin/mpg123') == ['mpg123']
+
+    def test_no_subprocess_when_mpg123_missing(self):
+        assert self._run(None) == []
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
