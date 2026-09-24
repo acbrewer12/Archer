@@ -57,6 +57,39 @@ while IFS= read -r file; do
     done
 done < <(git diff --cached --name-only)
 
+# ── 3. Lint staged Python for redefined names (ruff F811) ──────────────────────
+# A second `def` with the same name silently replaces the first, and Python
+# never warns. Checks the staged content, not the working tree, so a partly
+# staged file is judged on what is actually being committed.
+PY_FILES=()
+while IFS= read -r file; do
+    PY_FILES+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+
+if [ "${#PY_FILES[@]}" -gt 0 ]; then
+    RUFF=()
+    if command -v ruff >/dev/null 2>&1; then
+        RUFF=(ruff)
+    elif python3 -m ruff --version >/dev/null 2>&1; then
+        RUFF=(python3 -m ruff)
+    elif python -m ruff --version >/dev/null 2>&1; then
+        RUFF=(python -m ruff)
+    fi
+    if [ "${#RUFF[@]}" -eq 0 ]; then
+        echo "[PRE-COMMIT] BLOCKED: ruff is not installed, so staged Python can't be checked."
+        echo "             Install it with: pip install ruff"
+        FAIL=1
+    else
+        for file in "${PY_FILES[@]}"; do
+            if ! git show ":$file" | "${RUFF[@]}" check --select F811 --no-cache \
+                    --output-format concise --stdin-filename "$file" - ; then
+                echo "[PRE-COMMIT] BLOCKED: '$file' redefines a name (see above)."
+                FAIL=1
+            fi
+        done
+    fi
+fi
+
 if [ "$FAIL" -eq 1 ]; then
     echo ""
     echo "[PRE-COMMIT] Commit blocked. Fix the issues above or use --no-verify if intentional."

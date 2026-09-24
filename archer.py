@@ -1025,11 +1025,6 @@ def save_profile_pref(key, value):
         driver_profiles[current_profile][key] = value
         save_state()
 
-def link_bluetooth(mac_address, profile_key):
-    bluetooth_devices[mac_address] = profile_key
-    save_state()
-    return f"Device linked to {driver_profiles[profile_key]['name']} profile."
-
 def get_tier_label():
     t = tier_state['current']
     if t == 1:   return "Tier 1"
@@ -2554,9 +2549,6 @@ def _extract_gains(text):
     g = re.search(r'[+](\d+)\s*(?:ft.?lb|lb.?ft|tq|torque)', t)
     if g: tq = int(g.group(1)); tq = tq if tq <= 150 else 0
     return hp, tq
-
-def search_parts_db(name, pn):
-    return web_search_parts(name, pn)
 
 PARTS_DB = {
     # ── CAMS ─────────────────────────────────────────────────────────────────
