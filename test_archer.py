@@ -4191,6 +4191,45 @@ class TestBuildCaps:
             archer.build_tracker['parts'][:] = saved
 
 
+class TestBootMemoryCheck:
+    """MEMORY CORE reflects the SQLite store, not the legacy JSON file."""
+
+    @pytest.fixture
+    def db_at(self, tmp_path):
+        import db
+        saved = (db._DB_PATH, db._conn, dict(db._last_written))
+        def _point(path):
+            if db._conn is not None and db._conn is not saved[1]:
+                db._conn.close()
+            db._DB_PATH, db._conn = str(path), None
+            db._last_written.clear()
+            return db
+        yield _point
+        if db._conn is not None and db._conn is not saved[1]:
+            db._conn.close()
+        db._DB_PATH, db._conn = saved[0], saved[1]
+        db._last_written.clear(); db._last_written.update(saved[2])
+
+    def _memory_check(self):
+        data = json.loads(client.get('/boot/status?reveal=99').data)
+        return next(c for c in data['checks'] if c['id'] == 'memory')
+
+    def test_ok_with_key_count_when_store_has_data(self, db_at, tmp_path):
+        db = db_at(tmp_path / 'a.db')
+        db.db_save({'x': 1, 'y': 2, 'z': 3})
+        assert self._memory_check() == {'id': 'memory', 'label': 'MEMORY CORE',
+                                        'status': 'ok', 'detail': '3 keys'}
+
+    def test_warn_when_store_empty(self, db_at, tmp_path):
+        db_at(tmp_path / 'empty.db')
+        assert self._memory_check()['status'] == 'warn'
+
+    def test_fail_when_store_unreadable(self, db_at, tmp_path):
+        db_at(tmp_path)  # a directory: sqlite cannot open it
+        check = self._memory_check()
+        assert check['status'] == 'fail' and check['detail'] == 'database unreadable'
+
+
 class TestClientTrackingRaces:
     """Connects and /display_data polls must survive the timeout monitor
     evicting clients concurrently."""

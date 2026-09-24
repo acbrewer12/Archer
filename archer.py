@@ -11682,18 +11682,17 @@ def boot_status():
             v_status, v_detail = 'warn', 'web speech fallback'
     all_checks.append({'id': 'voice', 'label': 'VOICE SYSTEM', 'status': v_status, 'detail': v_detail})
 
-    # 8. Memory store
-    mem_ok = os.path.exists(SAVE_FILE)
+    # 8. Memory store — the SQLite DB save_state() writes, not the legacy
+    # archer_memory.json (which ships in the repo and so always "looked" fine).
     try:
-        if mem_ok:
-            with open(SAVE_FILE, 'r') as _f:
-                _json = json.load(_f)
-            mem_detail = f"{len(_json)} keys"
-            mem_status = 'ok'
+        from db import db_key_count
+        n_keys = db_key_count()
+        if n_keys:
+            mem_status, mem_detail = 'ok', f'{n_keys} keys'
         else:
             mem_status, mem_detail = 'warn', 'will create on first save'
     except Exception:
-        mem_status, mem_detail = 'fail', 'corrupt save file'
+        mem_status, mem_detail = 'fail', 'database unreadable'
     all_checks.append({'id': 'memory', 'label': 'MEMORY CORE', 'status': mem_status, 'detail': mem_detail})
 
     # 9. Spotify (optional)

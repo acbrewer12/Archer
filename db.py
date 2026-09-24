@@ -72,8 +72,12 @@ def db_load() -> dict:
         except Exception:
             return {}
 
-def db_has_data() -> bool:
-    """True if the DB has any saved state rows."""
+def db_key_count() -> int:
+    """Number of saved state rows."""
     with _lock:
         row = _get_conn().execute('SELECT COUNT(*) FROM state').fetchone()
-    return bool(row and row[0] > 0)
+    return row[0] if row else 0
+
+def db_has_data() -> bool:
+    """True if the DB has any saved state rows."""
+    return db_key_count() > 0
