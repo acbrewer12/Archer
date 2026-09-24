@@ -11246,8 +11246,25 @@ def spotify_refresh():
         print(f'[SPOTIFY] Refresh failed: {e}')
         return False
 
+# me/player is polled by every client's /spotify/status (4s) and the DJ loop
+# (6s). Pollers within the TTL share one call; any control call drops the
+# shared result so the next poll reflects the change.
+_SPOTIFY_PLAYER_TTL   = 2.0
+_spotify_player_cache = {'ts': 0.0, 'data': None}
+
 def spotify_api(method, endpoint, data=None):
     """Make an authenticated Spotify API call."""
+    if method != 'GET':
+        _spotify_player_cache['ts'] = 0.0
+    elif endpoint == 'me/player':
+        if time.time() - _spotify_player_cache['ts'] < _SPOTIFY_PLAYER_TTL:
+            return _spotify_player_cache['data']
+        result = _spotify_request(method, endpoint)
+        _spotify_player_cache.update(ts=time.time(), data=result)
+        return result
+    return _spotify_request(method, endpoint, data)
+
+def _spotify_request(method, endpoint, data=None):
     if time.time() > spotify_tokens['expires_at']:
         if not spotify_refresh():
             return None

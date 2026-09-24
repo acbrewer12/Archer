@@ -4087,5 +4087,42 @@ class TestSpeakPlayback:
         assert self._run(None) == []
 
 
+class TestSpotifyPlayerShared:
+    """Pollers of me/player share one call within the TTL; controls drop it."""
+
+    def _setup(self):
+        archer._spotify_player_cache.update(ts=0.0, data=None)
+        archer.spotify_tokens.update(access_token='tok', expires_at=time.time() + 3600)
+
+    def _fake(self, calls, playing):
+        class _R:
+            def __init__(self, body): self._b = body
+            def read(self): return self._b
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        def _urlopen(req, timeout=None):
+            calls.append((req.get_method(), req.full_url))
+            return _R(json.dumps({'is_playing': playing[0], 'item': {'name': 'T', 'artists': [], 'album': {}}}).encode())
+        return _urlopen
+
+    def test_pollers_share_one_call_and_controls_refresh(self):
+        self._setup()
+        calls, playing = [], [True]
+        try:
+            with patch('urllib.request.urlopen', side_effect=self._fake(calls, playing)), \
+                 patch.object(archer, '_get_art_cached', return_value=None):
+                c = _authed_client(1)
+                for _ in range(3):
+                    assert json.loads(c.get('/spotify/status').data)['playing'] is True
+                assert sum(1 for m, u in calls if u.endswith('/me/player')) == 1
+                playing[0] = False
+                c.post('/spotify/pause')
+                assert json.loads(c.get('/spotify/status').data)['playing'] is False
+                assert sum(1 for m, u in calls if u.endswith('/me/player')) == 2
+        finally:
+            archer.spotify_tokens.update(access_token=None, expires_at=0)
+            archer._spotify_player_cache.update(ts=0.0, data=None)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
