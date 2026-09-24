@@ -674,6 +674,20 @@ class TestSaveLoadState:
             archer.nav_places.pop('home', None)
             archer.SAVE_FILE = orig
 
+    def test_linked_bluetooth_listed_and_persisted(self):
+        """'link phone' must land in the dict that 'list devices' reads and
+        save_state() persists."""
+        before = dict(archer.bluetooth_devices)
+        saved = {}
+        try:
+            with patch('db.db_save', side_effect=saved.update):
+                archer.handle_command('link phone')
+            assert archer.handle_command('list devices') != 'No devices linked yet.'
+            assert len(saved['bluetooth_devices']) == len(before) + 1
+        finally:
+            archer.bluetooth_devices.clear()
+            archer.bluetooth_devices.update(before)
+
     def test_load_missing_file_doesnt_crash(self, tmp_path):
         orig = archer.SAVE_FILE
         archer.SAVE_FILE = str(tmp_path / 'nonexistent.json')

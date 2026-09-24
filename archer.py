@@ -5367,15 +5367,13 @@ def weather_alert_monitor():
 # ══════════════════════════════════════════
 # BLUETOOTH PROFILE AUTO-DETECTION
 # ══════════════════════════════════════════
-bluetooth_profiles = {}   # mac -> profile_key
-
 def link_bluetooth(mac, profile_key):
-    bluetooth_profiles[mac.upper()] = profile_key
+    bluetooth_devices[mac.upper()] = profile_key
     save_state()
     return f'Bluetooth {mac} linked to {profile_key} profile.'
 
 def check_bluetooth_device(mac):
-    key = bluetooth_profiles.get(mac.upper())
+    key = bluetooth_devices.get(mac.upper())
     if key and key in driver_profiles:
         return key
     return None
