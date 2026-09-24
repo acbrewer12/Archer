@@ -37,7 +37,7 @@ SECRET_PATTERNS=(
     'AIza[A-Za-z0-9_-]{35,}'                # Google API key
     '"private_key"\s*:\s*"-----BEGIN'        # Firebase service account private key
     'sk-[A-Za-z0-9]{32,}'                   # OpenAI-style secret key
-    'ARCHER_SECRET\s*=\s*[^$({<][^'"'"'"\s]{8,}'  # Real value (not placeholder/empty)
+    '(?<![A-Za-z0-9_])ARCHER_SECRET\s*=\s*[^$({<][^'"'"'"\s]{8,}'  # Real value (not placeholder/empty)
     'ARCHER_OWNER_PIN\s*=\s*[0-9]{4,}'      # Actual PIN value
     'ARCHER_PI_TOKEN\s*=\s*[^$({<][^'"'"'"\s]{6,}' # Real Pi token
 )

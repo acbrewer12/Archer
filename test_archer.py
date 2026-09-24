@@ -1754,6 +1754,28 @@ class TestAuthCookieRefresh:
         assert held is not None and held.value != stale
 
 
+class TestLimiterRequired:
+    """Without flask-limiter every @_limiter.limit is a no-op, including the
+    login throttles, so a missing install must stop startup the same way a
+    missing ARCHER_SECRET does, not print a note and run unthrottled."""
+
+    def test_refuses_to_start_without_flask_limiter(self):
+        code = ("import sys; sys.modules['flask_limiter'] = None; "  # import fails
+                "import archer_state")
+        env = dict(os.environ, ARCHER_SECRET='test_secret_xyz')
+        r = subprocess.run([sys.executable, '-c', code], cwd=os.path.dirname(os.path.abspath(__file__)),
+                           env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 1
+        assert 'flask-limiter' in r.stdout and 'Refusing to start' in r.stdout
+
+    def test_starts_with_flask_limiter(self):
+        env = dict(os.environ, ARCHER_SECRET='test_secret_xyz')
+        r = subprocess.run([sys.executable, '-c', 'import archer_state'],
+                           cwd=os.path.dirname(os.path.abspath(__file__)),
+                           env=env, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
 class TestSharedLoginLockout:
     """PIN, master code and invite codes all grant a session, so they share
     one failure budget. Guesses come from different addresses on purpose: a

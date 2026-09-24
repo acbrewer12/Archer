@@ -271,13 +271,11 @@ audio_clients   = []
 audio_lock      = threading.Lock()
 
 # ── RATE LIMITING + SHARED STATE ──────────────────────────────────────────────
-from archer_state import _limiter, _LIMITER_AVAILABLE, sim_flags as _sim_flags_ref
+from archer_state import _limiter, sim_flags as _sim_flags_ref
 # Attach limiter to this Flask app (init_app pattern — no circular import)
 _limiter.init_app(display_app)
 # Keep sim_flags pointing at the same dict object from archer_state
 sim_flags = _sim_flags_ref
-if not _LIMITER_AVAILABLE:
-    print('[ARCHER] flask-limiter not installed — rate limiting disabled')
 
 # ── BLUEPRINT REGISTRATION ────────────────────────────────────────────────────
 from blueprints.fans     import bp as _fans_bp

@@ -20,18 +20,20 @@ import time as _time
 from flask import jsonify
 
 # ── RATE LIMITER (init_app pattern — no circular import) ─────────────────────
+# Required, like the secret below. Every deployment installs it (requirements.txt,
+# the archer-os build scripts), so a missing import means a broken install —
+# and running on without it would silently turn every @_limiter.limit, the
+# login throttles included, into a no-op.
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
-    _limiter = Limiter(key_func=get_remote_address, default_limits=[], storage_uri='memory://')
-    _LIMITER_AVAILABLE = True
 except ImportError:
-    _LIMITER_AVAILABLE = False
-    class _FakeLimiter:
-        def limit(self, *a, **kw): return lambda f: f
-        def shared_limit(self, *a, **kw): return lambda f: f
-        def init_app(self, *a, **kw): pass
-    _limiter = _FakeLimiter()
+    import sys as _sys
+    print('[SECURITY] FATAL: flask-limiter is not installed, so rate limiting would be off. '
+          'Install it with: pip install -r requirements.txt. '
+          'Refusing to start without rate limiting.')
+    _sys.exit(1)
+_limiter = Limiter(key_func=get_remote_address, default_limits=[], storage_uri='memory://')
 
 # ── SHARED SECRET ─────────────────────────────────────────────────────────────
 # Single authoritative source so archer.py and all blueprints use the same value.
