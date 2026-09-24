@@ -18,6 +18,12 @@ import collections
 import hmac
 import hashlib
 import secrets
+import ssl
+
+# One SSL context for every outbound HTTPS call. urlopen's default builds a new
+# context per connection, re-parsing the whole CA bundle each time (~25ms).
+urllib.request.install_opener(urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ssl.create_default_context())))
 
 _USE_TLS = os.environ.get('USE_TLS', 'false').lower() == 'true'
 
