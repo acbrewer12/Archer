@@ -1762,14 +1762,14 @@ class TestLimiterRequired:
     def test_refuses_to_start_without_flask_limiter(self):
         code = ("import sys; sys.modules['flask_limiter'] = None; "  # import fails
                 "import archer_state")
-        env = dict(os.environ, ARCHER_SECRET='test_secret_xyz')
+        env = dict(os.environ)   # ARCHER_SECRET is set at the top of this file
         r = subprocess.run([sys.executable, '-c', code], cwd=os.path.dirname(os.path.abspath(__file__)),
                            env=env, capture_output=True, text=True, timeout=60)
         assert r.returncode == 1
         assert 'flask-limiter' in r.stdout and 'Refusing to start' in r.stdout
 
     def test_starts_with_flask_limiter(self):
-        env = dict(os.environ, ARCHER_SECRET='test_secret_xyz')
+        env = dict(os.environ)   # ARCHER_SECRET is set at the top of this file
         r = subprocess.run([sys.executable, '-c', 'import archer_state'],
                            cwd=os.path.dirname(os.path.abspath(__file__)),
                            env=env, capture_output=True, text=True, timeout=60)
