@@ -30,6 +30,10 @@ jobs:
           cp $GITHUB_WORKSPACE/db.py .
           cp $GITHUB_WORKSPACE/serial_auth.py .
           cp $GITHUB_WORKSPACE/config.py .
+          # Both are imported at module level by archer.py, so leaving either
+          # out crash-loops the Space on startup (ModuleNotFoundError).
+          cp $GITHUB_WORKSPACE/fcm_push.py .
+          cp $GITHUB_WORKSPACE/pin.py .
           cp $GITHUB_WORKSPACE/Dockerfile .
           cp $GITHUB_WORKSPACE/requirements.txt .
           cp $GITHUB_WORKSPACE/archer_*.html . 2>/dev/null || true
