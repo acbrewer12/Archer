@@ -1754,6 +1754,91 @@ class TestAuthCookieRefresh:
         assert held is not None and held.value != stale
 
 
+class TestSharedLoginLockout:
+    """PIN, master code and invite codes all grant a session, so they share
+    one failure budget. Guesses come from different addresses on purpose: a
+    per-address limit alone doesn't stop someone who has many addresses."""
+
+    PIN = '482913'
+
+    def setup_method(self):
+        self._fails = dict(archer._login_fails)
+        archer._login_fails.update(count=0, until=0.0)
+        self._cred = archer._pin.CRED_FILE
+        archer._pin.CRED_FILE = os.path.join(tempfile.mkdtemp(), 'owner.json')
+        assert archer.save_owner_pin(self.PIN)[0]
+        self._master = (archer._master_code_enabled, archer._master_code)
+        archer._master_code_enabled, archer._master_code = True, '777111'
+        self._n = 0
+
+    def teardown_method(self):
+        archer._login_fails.clear()
+        archer._login_fails.update(self._fails)
+        archer._pin.CRED_FILE = self._cred
+        archer._master_code_enabled, archer._master_code = self._master
+        archer.one_time_codes.clear()
+
+    def _post(self, path, body):
+        # A fresh client and address per request, like distinct attackers.
+        self._n += 1
+        c = _CsrfClient(archer.display_app.test_client())
+        return c.post(path, json=body,
+                      environ_base={'REMOTE_ADDR': '203.0.113.%d' % self._n})
+
+    def _login(self, pin):
+        return self._post('/login', {'pin': pin})
+
+    def _code(self, code):
+        return json.loads(self._post('/register_mac', {'code': code, 'mac': 'UNKNOWN'}).data)
+
+    def test_five_wrong_pins_lock_out_the_right_pin(self):
+        for _ in range(5):
+            assert self._login('000000').status_code == 401
+        r = self._login(self.PIN)
+        assert r.status_code == 401
+        assert 'Too many attempts' in r.get_json()['error']
+
+    def test_lockout_lasts_fifteen_minutes(self):
+        for _ in range(5):
+            self._login('000000')
+        remaining = archer._login_fails['until'] - time.time()
+        assert 14 * 60 < remaining <= 15 * 60
+        archer._login_fails['until'] = time.time() - 1   # lock expired
+        assert self._login(self.PIN).status_code == 200
+
+    def test_success_resets_the_count(self):
+        for _ in range(4):
+            self._login('000000')
+        assert self._login(self.PIN).status_code == 200
+        for _ in range(4):
+            self._login('000000')
+        assert self._login(self.PIN).status_code == 200
+
+    def test_wrong_codes_count_toward_the_pin_lockout(self):
+        for _ in range(5):
+            assert self._code('123456')['success'] is False
+        assert self._login(self.PIN).status_code == 401
+
+    def test_master_code_refused_while_locked(self):
+        for _ in range(5):
+            self._login('000000')
+        d = self._code('777111')
+        assert d['success'] is False
+        assert 'Too many attempts' in d['error']
+
+    def test_invite_code_refused_while_locked(self):
+        code = archer.generate_one_time_code('Guest', 3)
+        for _ in range(5):
+            self._login('000000')
+        assert self._code(code)['success'] is False
+        # the lock must not burn the invite: it still works once the lock ends
+        archer._login_fails['until'] = time.time() - 1
+        assert self._code(code)['success'] is True
+
+    def test_master_code_works_when_not_locked(self):
+        assert self._code('777111')['success'] is True
+
+
 # ═══════════════════════════════════════════════════════════════
 # 34. Gatekeeper — handle_connection with timestamp replay protection
 # ═══════════════════════════════════════════════════════════════

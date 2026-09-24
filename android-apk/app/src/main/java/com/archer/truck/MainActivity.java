@@ -51,7 +51,14 @@ public class MainActivity extends Activity {
         // attacker inject executable HTTP content into an otherwise-HTTPS session.
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setUserAgentString(s.getUserAgentString() + " ArcherAndroid/2.0");
+        // ngrok's free plan puts a warning page in front of anything that looks
+        // like a standard browser. Leading with ArcherAndroid/2.0 in place of
+        // Mozilla/5.0 gets through (checked against the live endpoint); merely
+        // appending it, as before, does not.
+        String ua = s.getUserAgentString();
+        s.setUserAgentString(ua.startsWith("Mozilla/5.0")
+            ? "ArcherAndroid/2.0" + ua.substring("Mozilla/5.0".length())
+            : ua + " ArcherAndroid/2.0");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -68,9 +75,10 @@ public class MainActivity extends Activity {
                 // can intercept traffic to that host (e.g. ARP spoofing on the truck's
                 // own hotspot).
                 //
-                // The production ARCHER_URL is https://aydencatman-archer.hf.space (see
-                // gradle.properties / build-apk.yml), which carries a real CA-signed cert,
-                // so this handler should not fire in normal use. Local-Pi builds can
+                // The default ARCHER_URL is the home server through ngrok (see
+                // build-apk.yml), and ngrok and the HF Space both carry real CA-signed
+                // certs, so this handler should not fire in normal use; a Tailscale-only
+                // build is plain HTTP and never reaches it. Local-Pi builds can
                 // optionally serve HTTPS with a self-signed cert (archer.py
                 // _get_tls_context(), gated by USE_TLS) that is generated fresh per
                 // device — there is no stable certificate or public key checked into this

@@ -2,19 +2,24 @@
 <!--
   Replaces the old blanket android:usesCleartextTraffic="true" in AndroidManifest.xml.
 
-  The app's default ARCHER_URL is https://aydencatman-archer.hf.space (see
-  gradle.properties / build-apk.yml) — that origin, and everything else, is left
-  to the platform default, which is HTTPS-only (cleartext disabled) because this
-  app targets API 34.
+  The app's default ARCHER_URL is the home server through ngrok, over HTTPS
+  (see build-apk.yml). Everything not listed below is left to the platform
+  default, which is HTTPS-only (cleartext disabled) because this app targets
+  API 34.
 
-  Cleartext HTTP is allowed ONLY for the truck's own local Pi hotspot, which has
-  no TLS in its default configuration (archer.py run_display_server() falls back
-  to plain HTTP unless USE_TLS=true):
-    - 192.168.4.1  — the Pi's fixed hotspot IP (matches TRUCK_IP in helpers.js)
-    - archer.local — the Pi's mDNS/avahi hostname on the local network
+  Cleartext HTTP is allowed ONLY for:
+    - 100.108.48.64 — the home server's Tailscale IP. Plain HTTP on the wire is
+                      acceptable here only because it travels inside Tailscale's
+                      WireGuard tunnel, which is encrypted end to end; the address
+                      isn't reachable at all off the tailnet.
+    - 192.168.4.1  — the truck Pi's fixed hotspot IP (matches TRUCK_IP in
+                      helpers.js); no TLS by default (archer.py
+                      run_display_server() uses plain HTTP unless USE_TLS=true).
+    - archer.local — the Pi's mDNS/avahi hostname on the local network.
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">100.108.48.64</domain>
         <domain includeSubdomains="false">192.168.4.1</domain>
         <domain includeSubdomains="false">archer.local</domain>
     </domain-config>

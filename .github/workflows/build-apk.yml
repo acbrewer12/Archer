@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       archer_url:
-        description: 'Archer server URL (blank = HuggingFace Space)'
+        description: 'Archer server URL (blank = home server via ngrok)'
         required: false
         default: ''
 
@@ -35,6 +35,11 @@ jobs:
       # ── 3. Android SDK ────────────────────────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          # The action's default also installs the legacy 'tools' package, which
+          # current runner cmdline-tools no longer offer ("Failed to find
+          # package 'tools'"), failing the step.
+          packages: 'platform-tools'
 
       - name: Install SDK Platform + Build Tools
         run: |
@@ -99,7 +104,11 @@ jobs:
         run: |
           URL="$ARCHER_URL"
           if [ -z "$URL" ]; then
-            URL="https://aydencatman-archer.hf.space"
+            # Home server through ngrok (self-host/ngrok.yml): HTTPS, reachable
+            # without Tailscale. For a tailnet-only build, dispatch with
+            # archer_url=http://100.108.48.64:8080 (cleartext for that address
+            # is allowed in network_security_config.xml).
+            URL="https://darnell-unribbed-unmethodically.ngrok-free.dev"
           fi
           echo "Building APK for: $URL"
           find android-apk -name "*.java" \

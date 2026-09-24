@@ -9905,9 +9905,39 @@ OWNER_CRED_FILE = _pin.CRED_FILE
 # persisted: an attacker with physical access could clear a persisted counter
 # anyway, and losing the count on reboot is the right trade for never locking
 # the owner out of their own truck permanently.
+#
+# One budget for every code that grants a session — the owner PIN here and
+# the master/invite codes on /register_mac — counted across all addresses,
+# since the app is reachable from the internet and a per-address limit alone
+# doesn't stop someone with many addresses. 5 misses per 15 minutes makes a
+# 6-digit code impractical to guess; the cost is that a stranger can keep
+# the web login locked, which Tailscale and the console login don't share.
 _login_fails = {'count': 0, 'until': 0.0}
 _LOGIN_MAX_FAILS = 5
-_LOGIN_LOCKOUT_SECS = 30
+_LOGIN_LOCKOUT_SECS = 15 * 60
+
+
+def _login_lockout_error():
+    """'' when a code may be tried, else the message to show."""
+    now = time.time()
+    if now < _login_fails['until']:
+        return f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    return ''
+
+
+def _login_failed():
+    """Count a wrong code. Returns the lockout message once the budget is spent."""
+    _login_fails['count'] += 1
+    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
+        _login_fails['until'] = time.time() + _LOGIN_LOCKOUT_SECS
+        _login_fails['count'] = 0
+        return f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS // 60} min'
+    return ''
+
+
+def _login_succeeded():
+    _login_fails['count'] = 0
+    _login_fails['until'] = 0.0
 
 
 def owner_is_configured():
@@ -9922,21 +9952,15 @@ def save_owner_pin(pin_value):
 
 def verify_owner_pin(pin_value):
     """Constant-time PIN check with a lockout. Returns (ok, error_message)."""
-    now = time.time()
-    if now < _login_fails['until']:
-        return False, f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    locked = _login_lockout_error()
+    if locked:
+        return False, locked
     if not _pin.is_configured():
         return False, 'No PIN is set up on this device'
     if _pin.verify(pin_value):
-        _login_fails['count'] = 0
-        _login_fails['until'] = 0.0
+        _login_succeeded()
         return True, ''
-    _login_fails['count'] += 1
-    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
-        _login_fails['until'] = now + _LOGIN_LOCKOUT_SECS
-        _login_fails['count'] = 0
-        return False, f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS}s'
-    return False, 'Incorrect PIN'
+    return False, _login_failed() or 'Incorrect PIN'
 
 
 _SETUP_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER — Setup</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
@@ -9969,7 +9993,7 @@ button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
 const e=document.getElementById("err"),b=document.getElementById("go");
 async function submit(){ b.disabled=true; e.textContent="";
   const r=await post("/setup",{pin:document.getElementById("p1").value,confirm:document.getElementById("p2").value});
-  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/"; return; }
   e.textContent=(r.d&&r.d.error)||"Setup failed"; b.disabled=false; }
 b.addEventListener("click",submit);
 document.getElementById("p2").addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
@@ -10004,10 +10028,10 @@ button:disabled{background:#1e3d45;color:#6a7a88;cursor:default}
   return {ok:r.ok, d};
 }
 const e=document.getElementById("err"),b=document.getElementById("go"),p=document.getElementById("pin");
-const nxt=new URLSearchParams(location.search).get("next")||"/dashboard";
+const nxt=new URLSearchParams(location.search).get("next")||"/";
 async function submit(){ b.disabled=true; e.textContent="";
   const r=await post("/login",{pin:p.value,next:nxt});
-  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/dashboard"; return; }
+  if(r.ok&&r.d.ok){ location.href=r.d.redirect||"/"; return; }
   e.textContent=(r.d&&r.d.error)||"Incorrect PIN"; p.value=""; b.disabled=false; p.focus(); }
 b.addEventListener("click",submit);
 p.addEventListener("keydown",ev=>{if(ev.key==="Enter")submit();});
@@ -11074,7 +11098,7 @@ def setup_submit():
     ok, err = save_owner_pin(pin)
     if not ok:
         return _js({'ok': False, 'error': err}), 400
-    resp = _mk(_js({'ok': True, 'redirect': '/dashboard'}))
+    resp = _mk(_js({'ok': True, 'redirect': '/'}))
     resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
                     httponly=True, samesite='Lax', secure=_USE_TLS)
     print('[AUTH] Owner PIN configured — first-run setup complete')
@@ -11100,11 +11124,13 @@ def login_submit():
     ok, err = verify_owner_pin(data.get('pin', ''))
     if not ok:
         return _js({'ok': False, 'error': err}), 401
-    nxt = data.get('next') or '/dashboard'
+    # Default to / (the tier page for this session). /dashboard is the
+    # archer-os head-unit screen; the kiosk opens it directly.
+    nxt = data.get('next') or '/'
     # Only ever redirect to a local path — never let the client hand us an
     # absolute URL, which would turn the login into an open redirect.
     if not nxt.startswith('/') or nxt.startswith('//'):
-        nxt = '/dashboard'
+        nxt = '/'
     resp = _mk(_js({'ok': True, 'redirect': nxt}))
     resp.set_cookie('archer_auth', make_auth_jwt(1, 'Owner'), max_age=86400 * 30,
                     httponly=True, samesite='Lax', secure=_USE_TLS)
