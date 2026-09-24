@@ -11489,10 +11489,9 @@ def get_tier_html(tier, name=None):
             html = f.read()
         if name and tier == 2:
             html = html.replace("const passengerName = 'Khloe'", f"const passengerName = '{name}'")
-        # Inject resolved vehicle name (falls back to generic until purchase)
+        # Inject resolved vehicle name (falls back to generic until purchase).
+        # This also covers the 'ARCHER AI — 2006 GMC SIERRA 2500HD' title.
         html = html.replace('2006 GMC SIERRA 2500HD', get_vehicle_name('header'))
-        html = html.replace('ARCHER AI — 2006 GMC SIERRA 2500HD',
-                            f'ARCHER AI — {get_vehicle_name("header")}')
         return html
     
     # Fallback
