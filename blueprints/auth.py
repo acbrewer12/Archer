@@ -134,6 +134,12 @@ def register_mac():
     if not code:
         return jsonify({'success': False, 'error': 'Missing code'})
 
+    # Same failure budget as the owner PIN — checked before the code is looked
+    # at, so a locked-out attempt can't use up a real invite.
+    locked = a._login_lockout_error()
+    if locked:
+        return jsonify({'success': False, 'error': locked})
+
     # Check master Tier 1 code first
     entry = None
     if a._master_code_enabled and a._master_code and _hmac.compare_digest(code, a._master_code):
@@ -143,7 +149,8 @@ def register_mac():
     if not entry:
         entry = a.validate_one_time_code(code)
     if not entry:
-        return jsonify({'success': False, 'error': 'Invalid or expired code'})
+        return jsonify({'success': False, 'error': a._login_failed() or 'Invalid or expired code'})
+    a._login_succeeded()
 
     tier = entry['tier']
     name = entry['name']

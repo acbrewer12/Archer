@@ -9905,9 +9905,39 @@ OWNER_CRED_FILE = _pin.CRED_FILE
 # persisted: an attacker with physical access could clear a persisted counter
 # anyway, and losing the count on reboot is the right trade for never locking
 # the owner out of their own truck permanently.
+#
+# One budget for every code that grants a session — the owner PIN here and
+# the master/invite codes on /register_mac — counted across all addresses,
+# since the app is reachable from the internet and a per-address limit alone
+# doesn't stop someone with many addresses. 5 misses per 15 minutes makes a
+# 6-digit code impractical to guess; the cost is that a stranger can keep
+# the web login locked, which Tailscale and the console login don't share.
 _login_fails = {'count': 0, 'until': 0.0}
 _LOGIN_MAX_FAILS = 5
-_LOGIN_LOCKOUT_SECS = 30
+_LOGIN_LOCKOUT_SECS = 15 * 60
+
+
+def _login_lockout_error():
+    """'' when a code may be tried, else the message to show."""
+    now = time.time()
+    if now < _login_fails['until']:
+        return f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    return ''
+
+
+def _login_failed():
+    """Count a wrong code. Returns the lockout message once the budget is spent."""
+    _login_fails['count'] += 1
+    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
+        _login_fails['until'] = time.time() + _LOGIN_LOCKOUT_SECS
+        _login_fails['count'] = 0
+        return f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS // 60} min'
+    return ''
+
+
+def _login_succeeded():
+    _login_fails['count'] = 0
+    _login_fails['until'] = 0.0
 
 
 def owner_is_configured():
@@ -9922,21 +9952,15 @@ def save_owner_pin(pin_value):
 
 def verify_owner_pin(pin_value):
     """Constant-time PIN check with a lockout. Returns (ok, error_message)."""
-    now = time.time()
-    if now < _login_fails['until']:
-        return False, f'Too many attempts — wait {int(_login_fails["until"] - now)}s'
+    locked = _login_lockout_error()
+    if locked:
+        return False, locked
     if not _pin.is_configured():
         return False, 'No PIN is set up on this device'
     if _pin.verify(pin_value):
-        _login_fails['count'] = 0
-        _login_fails['until'] = 0.0
+        _login_succeeded()
         return True, ''
-    _login_fails['count'] += 1
-    if _login_fails['count'] >= _LOGIN_MAX_FAILS:
-        _login_fails['until'] = now + _LOGIN_LOCKOUT_SECS
-        _login_fails['count'] = 0
-        return False, f'Too many attempts — locked for {_LOGIN_LOCKOUT_SECS}s'
-    return False, 'Incorrect PIN'
+    return False, _login_failed() or 'Incorrect PIN'
 
 
 _SETUP_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>ARCHER — Setup</title><style>@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
