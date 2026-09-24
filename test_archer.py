@@ -4168,6 +4168,29 @@ class TestDbSaveChangedOnly:
         assert all(loaded[f't{n}'] == 49 for n in range(16))
 
 
+class TestBuildCaps:
+    def test_caps_match_per_flag_build_has(self):
+        saved = list(archer.build_tracker['parts'])
+        try:
+            archer.build_tracker['parts'][:] = [
+                {'name': 'HP Tuners Custom Tune', 'status': 'installed'},
+                {'name': 'Flex Fuel Ethanol Sensor', 'status': 'installed'},
+                {'name': 'Forged Pistons', 'status': 'ordered'},   # not installed yet
+            ]
+            caps = archer.get_build_caps()
+            assert caps == {
+                'supercharged':   archer.build_has(*archer._ENGINE_SWAP_KW),
+                'ethanol_sensor': archer.build_has(*archer._ETHANOL_KW),
+                'forged':         archer.build_has(*archer._FORGED_KW),
+                'custom_tune':    archer.build_has(*archer._TUNE_KW),
+                'air_suspension': archer.build_has(*archer._AIR_SUSP_KW),
+            }
+            assert caps['custom_tune'] and caps['ethanol_sensor']
+            assert not caps['forged'] and not caps['supercharged']
+        finally:
+            archer.build_tracker['parts'][:] = saved
+
+
 class TestRevokedTokenPruning:
     @pytest.fixture(autouse=True)
     def _isolate(self):

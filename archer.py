@@ -115,20 +115,26 @@ _FORGED_KW       = ('forged', 'forged internals', 'cp piston', 'eagle rod', 'h-b
 _TUNE_KW         = ('hp tuners', 'efilive', 'custom tune', 'e85 tune')
 _AIR_SUSP_KW     = ('air suspension', 'air ride', 'air bag', 'accuair', 'air lift', 'viair')
 
+def _installed_part_names():
+    return [p['name'].lower() for p in build_tracker['parts']
+            if p.get('status') == 'installed']
+
+def _names_have(names, keywords):
+    return any(kw in name for name in names for kw in keywords)
+
 def build_has(*keywords):
     """True if any installed part name contains any of the given keywords."""
-    installed = [p['name'].lower() for p in build_tracker['parts']
-                 if p.get('status') == 'installed']
-    return any(kw in name for name in installed for kw in keywords)
+    return _names_have(_installed_part_names(), keywords)
 
 def get_build_caps():
     """Current capability flags derived from installed parts."""
+    names = _installed_part_names()  # once for all five flags, not once per flag
     return {
-        'supercharged':   build_has(*_ENGINE_SWAP_KW),
-        'ethanol_sensor': build_has(*_ETHANOL_KW),
-        'forged':         build_has(*_FORGED_KW),
-        'custom_tune':    build_has(*_TUNE_KW),
-        'air_suspension': build_has(*_AIR_SUSP_KW),
+        'supercharged':   _names_have(names, _ENGINE_SWAP_KW),
+        'ethanol_sensor': _names_have(names, _ETHANOL_KW),
+        'forged':         _names_have(names, _FORGED_KW),
+        'custom_tune':    _names_have(names, _TUNE_KW),
+        'air_suspension': _names_have(names, _AIR_SUSP_KW),
     }
 
 def get_build_phase():
