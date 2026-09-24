@@ -4230,6 +4230,20 @@ class TestBootMemoryCheck:
         assert check['status'] == 'fail' and check['detail'] == 'database unreadable'
 
 
+class TestPageCache:
+    def test_serves_cached_until_file_changes(self, tmp_path):
+        page = tmp_path / 'page.html'
+        page.write_text('v1', encoding='utf-8')
+        os.utime(page, ns=(1_000_000_000, 1_000_000_000))
+        assert archer._read_page(str(page)) == 'v1'
+        with patch('builtins.open', side_effect=AssertionError('re-read')):
+            assert archer._read_page(str(page)) == 'v1'   # served from memory
+        page.write_text('v2', encoding='utf-8')
+        os.utime(page, ns=(2_000_000_000, 2_000_000_000))
+        assert archer._read_page(str(page)) == 'v2'       # edit picked up
+        archer._page_cache.pop(str(page), None)
+
+
 class TestTier1ScriptOrder:
     def test_060_state_declared_before_first_update(self):
         """archer_tier1.html runs update() at top level, and update() reads

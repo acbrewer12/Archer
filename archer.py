@@ -11473,6 +11473,20 @@ def audio_stream():
     )
 
 # ── TIER-SPECIFIC HTML GENERATORS ───────────────────────
+_page_cache = {}  # path -> (mtime_ns, text)
+
+def _read_page(path):
+    """Page file contents, re-read only when the file changes on disk.
+    Decoding the 241 KB tier 1 page cost ~0.45 ms on every load."""
+    mtime = os.stat(path).st_mtime_ns
+    hit = _page_cache.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    _page_cache[path] = (mtime, text)
+    return text
+
 def get_tier_html(tier, name=None):
     """Returns tier HTML — loads from file or falls back to basic."""
     import os
@@ -11483,14 +11497,12 @@ def get_tier_html(tier, name=None):
     }
     if tier == 1:
         if os.path.exists('archer_tier1.html'):
-            with open('archer_tier1.html', 'r', encoding='utf-8') as f:
-                return f.read()
+            return _read_page('archer_tier1.html')
         return DISPLAY_HTML.replace("'profile-name'>AYDEN", "'profile-name' style='color:#cc0000'>AYDEN ★")
     
     html_file = tier_files.get(tier)
     if html_file and os.path.exists(html_file):
-        with open(html_file, 'r', encoding='utf-8') as f:
-            html = f.read()
+        html = _read_page(html_file)
         if name and tier == 2:
             html = html.replace("const passengerName = 'Khloe'", f"const passengerName = '{name}'")
         # Inject resolved vehicle name (falls back to generic until purchase).
