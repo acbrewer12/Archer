@@ -2585,7 +2585,7 @@ async function pollLive() {
       const mgEl = document.getElementById('hl-module-grid');
       if (mgEl) {
         const mods = d.module_states;
-        mgEl.innerHTML = Object.entries(mods).map(([key, mod]) => {
+        _setListHtml(mgEl, Object.entries(mods).map(([key, mod]) => {
           const online = mod.online;
           const dot = online ? '#00cc44' : '#cc0000';
           return `<div style="display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 6px">
@@ -2593,7 +2593,7 @@ async function pollLive() {
             <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:${online ? 'var(--text)' : '#555'};letter-spacing:1px">${_escHtml(key)}</span>
             <span style="font-size:8px;color:${online ? 'var(--green)' : '#cc0000'};margin-left:auto">${online ? 'ON' : 'OFF'}</span>
           </div>`;
-        }).join('');
+        }).join(''));
       }
     }
 
@@ -3861,7 +3861,7 @@ function bldRenderParts(parts) {
   if (!list) return;
   set('bld-part-count', parts.length);
   bldUpdateProgressRing(parts);
-  if (!parts.length) { list.innerHTML = ''; return; }
+  if (!parts.length) { _setListHtml(list, ''); return; }
   const order = ['installed_engine','installed_truck','on_hand','ordered'];
   let html = '';
   order.forEach(status => {
@@ -3884,7 +3884,12 @@ function bldRenderParts(parts) {
       </div>`;
     });
   });
-  list.innerHTML = html;
+  _setListHtml(list, html);
+}
+// pollLive() re-renders these lists every second. Rebuilding identical HTML
+// tears down every node, so a tap on EDIT / ✕ that spans a rebuild was lost.
+function _setListHtml(el, html) {
+  if (el._html !== html) { el._html = html; el.innerHTML = html; }
 }
 
 async function bldSearch() {
