@@ -9986,6 +9986,18 @@ def system_health_api():
         'failures': system_health['failures'][-10:],
     })
 
+@functools.lru_cache(maxsize=None)
+def _git_short_hash():
+    """Commit of the running code — fixed for the life of the process, so the
+    git subprocess runs once rather than on every /health poll."""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            stderr=subprocess.DEVNULL, timeout=2
+        ).decode().strip()
+    except Exception:
+        return 'unknown'
+
 @display_app.route('/health')
 def health_endpoint():
     """Comprehensive system health snapshot consumed by archer_init.html fetchVersionInfo().
@@ -10030,16 +10042,7 @@ def health_endpoint():
 
     # Build metadata from env / git
     build_ts  = os.environ.get('ARCHER_BUILD_TS', '')
-    git_hash  = os.environ.get('ARCHER_GIT_HASH', '')
-    if not git_hash:
-        try:
-            import subprocess as _sp
-            git_hash = _sp.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                stderr=_sp.DEVNULL, timeout=2
-            ).decode().strip()
-        except Exception:
-            git_hash = 'unknown'
+    git_hash  = os.environ.get('ARCHER_GIT_HASH', '') or _git_short_hash()
 
     # Overall status determination
     issues = get_system_status()

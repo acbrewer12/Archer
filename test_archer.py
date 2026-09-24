@@ -4049,5 +4049,19 @@ class TestWeatherCompareCache:
             archer.location_data.clear(); archer.location_data.update(orig)
 
 
+class TestHealthGitHash:
+    def test_git_runs_once(self):
+        archer._git_short_hash.cache_clear()
+        try:
+            with patch.dict(os.environ, {'ARCHER_GIT_HASH': ''}), \
+                 patch.object(archer.subprocess, 'check_output', return_value=b'abc1234\n') as co:
+                h1 = json.loads(client.get('/health').data)['git_hash']
+                h2 = json.loads(client.get('/health').data)['git_hash']
+            assert h1 == h2 == 'abc1234'
+            assert co.call_count == 1
+        finally:
+            archer._git_short_hash.cache_clear()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
