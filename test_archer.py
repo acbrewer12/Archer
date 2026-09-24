@@ -1601,7 +1601,7 @@ class TestTripExport:
 # ═══════════════════════════════════════════════════════════════
 # 32. /system_health — degraded mode detection
 # ═══════════════════════════════════════════════════════════════
-class TestSystemHealth:
+class TestSystemHealthDegraded:
     def test_returns_200(self):
         r = client.get('/system_health')
         assert r.status_code == 200
