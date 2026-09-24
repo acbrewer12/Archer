@@ -4124,5 +4124,32 @@ class TestSpotifyPlayerShared:
             archer._spotify_player_cache.update(ts=0.0, data=None)
 
 
+class TestDbSaveChangedOnly:
+    """db_save writes only keys whose value changed, and a reload still sees
+    every key with its latest value."""
+
+    @pytest.fixture
+    def fresh_db(self, tmp_path):
+        import db
+        saved = (db._DB_PATH, getattr(db._local, 'conn', None), dict(db._last_written))
+        db._DB_PATH = str(tmp_path / 'state.db')
+        db._local.conn = None
+        db._last_written.clear()
+        yield db
+        db._DB_PATH, db._local.conn = saved[0], saved[1]
+        db._last_written.clear(); db._last_written.update(saved[2])
+
+    def test_only_changed_rows_written_and_reload_is_complete(self, fresh_db):
+        db = fresh_db
+        conn = db._get_conn()
+        db.db_save({'a': 1, 'b': {'x': [1, 2]}, 'c': 'three'})
+        assert conn.total_changes == 3
+        db.db_save({'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'})
+        assert conn.total_changes == 4
+        db.db_save({'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'})
+        assert conn.total_changes == 4
+        assert db.db_load() == {'a': 1, 'b': {'x': [1, 2, 3]}, 'c': 'three'}
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

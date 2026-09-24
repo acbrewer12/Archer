@@ -34,16 +34,28 @@ def _get_conn() -> sqlite3.Connection:
         _local.conn = conn
     return _local.conn
 
+# JSON text this process last wrote per key. save_state() hands over every key
+# on every call, but most are unchanged; rewriting them all is wasted I/O on
+# the head unit's SD card.
+_last_written: dict = {}
+_write_lock = threading.Lock()
+
 def db_save(data: dict) -> None:
-    """Upsert all key-value pairs into the state table atomically."""
+    """Upsert the key-value pairs whose value changed since the last save, atomically."""
     import time
-    conn = _get_conn()
-    now  = time.time()
-    with conn:
-        conn.executemany(
-            'INSERT OR REPLACE INTO state (key, value, updated) VALUES (?, ?, ?)',
-            [(k, json.dumps(v, default=str), now) for k, v in data.items()]
-        )
+    rows = [(k, json.dumps(v, default=str)) for k, v in data.items()]
+    with _write_lock:
+        changed = [(k, s) for k, s in rows if _last_written.get(k) != s]
+        if not changed:
+            return
+        conn = _get_conn()
+        now  = time.time()
+        with conn:
+            conn.executemany(
+                'INSERT OR REPLACE INTO state (key, value, updated) VALUES (?, ?, ?)',
+                [(k, s, now) for k, s in changed]
+            )
+        _last_written.update(changed)
 
 def db_load() -> dict:
     """Return all state as a flat dict of {key: python_value}."""
