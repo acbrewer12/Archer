@@ -727,6 +727,7 @@ def get_vehicle_name(style='full'):
     return 'SIERRA/SILVERADO 2500HD' if style == 'header' else 'Sierra/Silverado 2500HD'
 
 def save_state():
+    drive_score, drive_grade, _ = calculate_drive_score()
     data = {
         'personal_bests':    personal_bests,
         'music_memories':    music_state['song_memories'],
@@ -776,8 +777,8 @@ def save_state():
         'record_best_et':    record_wall['best_et'],
         'record_best_060':   record_wall['best_060'],
         'weather_alert':     any(v for k,v in weather_alerts.items() if k != 'last_check' and v),
-        'drive_score':       calculate_drive_score()[0],
-        'drive_grade':       calculate_drive_score()[1],
+        'drive_score':       drive_score,
+        'drive_grade':       drive_grade,
         'show_running':      show_sequence['running'],
         'openclaw_connected': openclaw['connected'],
         'openclaw_enabled':  openclaw['enabled'],
