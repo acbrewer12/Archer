@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       archer_url:
-        description: 'Archer server URL (blank = HuggingFace Space)'
+        description: 'Archer server URL (blank = home server over Tailscale)'
         required: false
         default: ''
 
@@ -99,7 +99,11 @@ jobs:
         run: |
           URL="$ARCHER_URL"
           if [ -z "$URL" ]; then
-            URL="https://aydencatman-archer.hf.space"
+            # Home server's private Caddy block, reachable only over Tailscale
+            # (the phone must be on the tailnet). Plain HTTP is allowed for
+            # this address in network_security_config.xml. For a build that
+            # works off-tailnet, dispatch with archer_url set to the HF Space.
+            URL="http://100.108.48.64:8080"
           fi
           echo "Building APK for: $URL"
           find android-apk -name "*.java" \

@@ -68,9 +68,10 @@ public class MainActivity extends Activity {
                 // can intercept traffic to that host (e.g. ARP spoofing on the truck's
                 // own hotspot).
                 //
-                // The production ARCHER_URL is https://aydencatman-archer.hf.space (see
-                // gradle.properties / build-apk.yml), which carries a real CA-signed cert,
-                // so this handler should not fire in normal use. Local-Pi builds can
+                // The default ARCHER_URL is the home server over plain HTTP inside
+                // Tailscale (see build-apk.yml), so this handler never fires for it; an
+                // HF Space build (https://aydencatman-archer.hf.space) carries a real
+                // CA-signed cert, so it should not fire there either. Local-Pi builds can
                 // optionally serve HTTPS with a self-signed cert (archer.py
                 // _get_tls_context(), gated by USE_TLS) that is generated fresh per
                 // device — there is no stable certificate or public key checked into this
