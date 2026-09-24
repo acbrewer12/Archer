@@ -13354,14 +13354,22 @@ def main():
 
     load_state()
 
-    # Export DTC database to JSON so external tools can reference it
+    # Export DTC database to JSON so external tools can reference it — only
+    # when it differs, so a normal boot doesn't rewrite the same file.
     try:
-        with open('dtc_codes.json', 'w') as _dtc_f:
-            json.dump(
-                [{'code': k, 'description': v[0], 'severity': v[1]}
-                 for k, v in sorted(DTC_DATABASE.items())],
-                _dtc_f, indent=2
-            )
+        _dtc_json = json.dumps(
+            [{'code': k, 'description': v[0], 'severity': v[1]}
+             for k, v in sorted(DTC_DATABASE.items())],
+            indent=2
+        )
+        try:
+            with open('dtc_codes.json') as _dtc_f:
+                _dtc_same = _dtc_f.read() == _dtc_json
+        except OSError:
+            _dtc_same = False
+        if not _dtc_same:
+            with open('dtc_codes.json', 'w') as _dtc_f:
+                _dtc_f.write(_dtc_json)
     except OSError:
         pass
 
