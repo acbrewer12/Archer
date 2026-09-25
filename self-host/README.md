@@ -68,6 +68,15 @@ sudo cp Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
+**3b. Make Caddy survive a reboot.** The private block binds the Tailscale IP, which doesn't exist until tailscaled connects; at boot Caddy can get there first and fail (seen on this server after a hard reset). Two files in this folder fix it: `60-archer-tailscale-bind.conf` lets Caddy bind that IP early, and `caddy-tailscale.conf` orders Caddy after tailscaled and restarts it on failure:
+```
+sudo cp 60-archer-tailscale-bind.conf /etc/sysctl.d/ && sudo sysctl --system
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+sudo cp caddy-tailscale.conf /etc/systemd/system/caddy.service.d/tailscale.conf
+sudo systemctl daemon-reload
+```
+After any reboot, `sudo bash boot_check.sh` (read-only) shows whether each service came back by itself, in order.
+
 **4. Install and enable the systemd service** (`archer.service`, in this folder) so archer.py survives reboots and crashes automatically. It already assumes step 0's layout (`archer` user, `/opt/archer`) — only touch `User=`/`WorkingDirectory=`/`ExecStart=` if you installed somewhere else:
 ```
 sudo cp archer.service /etc/systemd/system/
