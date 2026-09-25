@@ -6,6 +6,15 @@
 
 TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
 
+# The unit that owns a listening port — Prometheus's unit name varies by how
+# it was installed, so find it by its port rather than guessing the name.
+port_unit() {
+    local pid
+    pid=$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+    [ -n "$pid" ] && ps -o unit= -p "$pid" | sed 's/\.service$//'
+}
+PROM_UNIT=$(port_unit 9090)
+
 echo "== boot =="
 echo "booted:  $(uptime -s)"
 journalctl --list-boots --no-pager 2>/dev/null | tail -2
@@ -14,7 +23,7 @@ echo "== memory =="
 free -h | head -2
 echo
 echo "== services =="
-for s in tailscaled caddy archer docker grafana-server prometheus prometheus-node-exporter ngrok; do
+for s in tailscaled caddy archer docker grafana-server "${PROM_UNIT:-prometheus}" prometheus-node-exporter ngrok; do
     printf '%-25s enabled=%-9s active=%-9s restarts=%-3s since=%s\n' "$s" \
         "$(systemctl is-enabled "$s" 2>&1)" "$(systemctl is-active "$s")" \
         "$(systemctl show -p NRestarts --value "$s")" \
