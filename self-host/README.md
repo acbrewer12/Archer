@@ -263,6 +263,29 @@ python3 self-host/status_dashboard.py --once     # one frame, then exit
 Needs the `rich` package (`pip install rich`) — not otherwise a
 dependency of archer.py itself, just this one standalone script.
 
+## Console auto-switch (the monitor follows the last SSH login)
+
+The server's physical monitor (tty1) shows whichever account last logged in
+over SSH, attached to that account's tmux session, so the screen mirrors
+what's being done from the phone or PC. Files in `console/`:
+
+- `console-autoswitch.service` — runs `console-attach.sh` on tty1 in place of the login prompt.
+- `console-attach.sh` — attaches tty1 to the last SSH user's tmux session (uses `su`, not `sudo`: `use_pty` in sudoers would put the client on an invisible pty).
+- `record-ssh-login.sh` — run by PAM on each SSH session; records the user and restarts the console service.
+- `bashrc-tmux.sh` — appended to each account's `~/.bashrc`; puts a direct SSH login into that account's tmux session.
+- `tmux.conf` — sizes the shared window to the screen used most recently and leaves the leftover area blank instead of dotted.
+
+Install (as root, from this folder):
+```
+cp console/console-attach.sh console/record-ssh-login.sh /usr/local/bin/ && chmod 755 /usr/local/bin/console-attach.sh /usr/local/bin/record-ssh-login.sh
+cp console/console-autoswitch.service /etc/systemd/system/
+cp console/tmux.conf /etc/tmux.conf
+sed -i '1a session optional pam_exec.so /usr/local/bin/record-ssh-login.sh' /etc/pam.d/sshd
+cat console/bashrc-tmux.sh >> /home/archer/.bashrc      # and each other account
+systemctl daemon-reload && systemctl disable getty@tty1 && systemctl enable --now console-autoswitch
+```
+Ctrl+Alt+F2 still gives a plain login (no tmux) as a fallback console.
+
 ## Real open questions — resolved against the actual source
 
 The original draft of this handoff flagged three things as unconfirmed. Checked directly against `archer.py`:

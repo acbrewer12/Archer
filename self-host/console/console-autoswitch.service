@@ -1,0 +1,19 @@
+[Unit]
+Description=Auto-switch physical console (tty1) to the last SSH user's tmux session
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+ExecStart=/usr/local/bin/console-attach.sh
+Restart=always
+RestartSec=1
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+[Install]
+WantedBy=multi-user.target
