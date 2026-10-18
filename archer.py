@@ -2100,7 +2100,7 @@ Truck data right now:
         if GROQ_KEY:
             try:
                 payload = json.dumps({
-                    "model": "openai/gpt-oss-120b",
+                    "model": "openai/gpt-oss-120b", "reasoning_effort": "low",
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 150, "temperature": 0.7,
                 }).encode()
@@ -6734,7 +6734,7 @@ Archer says:"""
             GROQ_KEY = os.environ.get('GROQ_API_KEY', '')
             if GROQ_KEY:
                 try:
-                    payload = json.dumps({'model': 'openai/gpt-oss-120b',
+                    payload = json.dumps({'model': 'openai/gpt-oss-120b', 'reasoning_effort': 'low',
                                           'messages': [{'role': 'user', 'content': prompt}],
                                           'max_tokens': 80, 'temperature': 0.8}).encode()
                     req = urllib.request.Request(
