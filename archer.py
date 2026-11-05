@@ -329,6 +329,22 @@ def _refresh_auth_cookie(response):
                             httponly=True, samesite='Lax', secure=_USE_TLS)
     return response
 
+_STRIX_VERIFY_META = b'<meta name="strix-verification" content="strix-verify-2efb2848e1c9c848c398a1aebf848774">'
+
+@display_app.after_request
+def _inject_strix_verification(response):
+    """Site-ownership tag for Strix, on the homepage (archer.dpdns.org/).
+    index() returns several different pages (registration, tier dashboards)
+    and sends unknown visitors to /fans, so it is added here once for both
+    rather than in each template."""
+    from flask import request as _r
+    if (_r.path in ('/', '/fans', '/fan') and response.status_code == 200
+            and response.mimetype == 'text/html' and not response.direct_passthrough):
+        body = response.get_data()
+        if b'strix-verification' not in body and b'<head>' in body:
+            response.set_data(body.replace(b'<head>', b'<head>\n' + _STRIX_VERIFY_META, 1))
+    return response
+
 # ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
 _archer_log_buffer = collections.deque(maxlen=500)
 _archer_log_lock   = threading.Lock()
