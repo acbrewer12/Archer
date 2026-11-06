@@ -312,6 +312,14 @@ def csrf_token_endpoint():
                     secure=_USE_TLS, max_age=86400 * 30)
     return resp
 
+@display_app.before_request
+def _strix_verify_file():
+    """Strix domain-verification file. Registered ahead of require_boot() so the
+    login gate never redirects it, whatever Accept header the checker sends."""
+    from flask import request as _r, Response as _R
+    if _r.path == '/.well-known/strix-verify.txt':
+        return _R('strix-verify-2efb2848e1c9c848c398a1aebf848774', mimetype='text/plain')
+
 @display_app.after_request
 def _refresh_auth_cookie(response):
     """Rolling session: re-stamp archer_auth cookie on every authenticated
