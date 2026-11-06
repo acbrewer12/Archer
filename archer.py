@@ -312,6 +312,14 @@ def csrf_token_endpoint():
                     secure=_USE_TLS, max_age=86400 * 30)
     return resp
 
+@display_app.before_request
+def _strix_verify_file():
+    """Strix domain-verification file. Registered ahead of require_boot() so the
+    login gate never redirects it, whatever Accept header the checker sends."""
+    from flask import request as _r, Response as _R
+    if _r.path == '/.well-known/strix-verify.txt':
+        return _R('strix-verify-2efb2848e1c9c848c398a1aebf848774', mimetype='text/plain')
+
 @display_app.after_request
 def _refresh_auth_cookie(response):
     """Rolling session: re-stamp archer_auth cookie on every authenticated
@@ -327,6 +335,22 @@ def _refresh_auth_cookie(response):
     if cookie and response.status_code < 400 and not view_set_it:
         response.set_cookie('archer_auth', cookie, max_age=86400 * 30,
                             httponly=True, samesite='Lax', secure=_USE_TLS)
+    return response
+
+_STRIX_VERIFY_META = b'<meta name="strix-verification" content="strix-verify-2efb2848e1c9c848c398a1aebf848774">'
+
+@display_app.after_request
+def _inject_strix_verification(response):
+    """Site-ownership tag for Strix, on the homepage (archer.dpdns.org/).
+    index() returns several different pages (registration, tier dashboards)
+    and sends unknown visitors to /fans, so it is added here once for both
+    rather than in each template."""
+    from flask import request as _r
+    if (_r.path in ('/', '/fans', '/fan') and response.status_code == 200
+            and response.mimetype == 'text/html' and not response.direct_passthrough):
+        body = response.get_data()
+        if b'strix-verification' not in body and b'<head>' in body:
+            response.set_data(body.replace(b'<head>', b'<head>\n' + _STRIX_VERIFY_META, 1))
     return response
 
 # ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
