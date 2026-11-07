@@ -75,7 +75,7 @@ async function runSuite(dir) {
   await run("python3", ["-m", "venv", venv], dir);
   const pip = path.join(venv, "bin", "pip");
   const py = path.join(venv, "bin", "python3");
-  const install = await run(pip, ["install", "-q", "-r", "requirements.txt"], dir);
+  const install = await run(pip, ["install", "-q", "-r", "requirements.txt", "pytest"], dir);
   if (!install.ok) return { ok: false, output: `dependency install failed:\n${install.stderr.slice(-4000)}` };
   const test = await run(py, ["-m", "pytest", "test_archer.py", "test_fcm_push.py", "-q"], dir);
   const output = test.stdout + "\n" + test.stderr;
